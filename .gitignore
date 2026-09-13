@@ -1,0 +1,19 @@
+# 사용자별 설정/비밀 (setup/ 의 example 파일만 커밋)
+.env
+config.json
+# 재생성 가능한 산출물
+data/*.sqlite3*
+data/snapshots/
+data/server.log
+data/build.lock
+data/mcp_cache/
+data/q.json
+logs/
+wiki/*.md
+# 사용자 코퍼스 (README 만 유지; 샘플은 setup/sample_corpus_modem/ 에 커밋)
+corpus/*
+!corpus/README.md
+# python
+__pycache__/
+*.pyc
+.venv/

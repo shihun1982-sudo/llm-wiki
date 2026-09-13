@@ -1,0 +1,77 @@
+{
+  "_comment": "front matter 가 없는 문서의 유형/ID 추론 규칙. 위에서부터 첫 매치. glob 은 doc_id(코퍼스 루트 기준 경로) 대상.",
+  "rules": [
+    {
+      "glob": "*issue*/*",
+      "doc_type": "issue"
+    },
+    {
+      "glob": "*/issues/*",
+      "doc_type": "issue"
+    },
+    {
+      "filename_regex": "^ISSUE[-_]",
+      "doc_type": "issue"
+    },
+    {
+      "glob": "*cl*/*",
+      "doc_type": "cl"
+    },
+    {
+      "filename_regex": "^CL[-_]?\\d",
+      "doc_type": "cl"
+    },
+    {
+      "glob": "*sw*design*/*",
+      "doc_type": "sw_design"
+    },
+    {
+      "filename_regex": "^SWD[-_]",
+      "doc_type": "sw_design"
+    },
+    {
+      "glob": "*hw*design*/*",
+      "doc_type": "hw_design"
+    },
+    {
+      "filename_regex": "^HWD[-_]",
+      "doc_type": "hw_design"
+    },
+    {
+      "glob": "*coding*rule*/*",
+      "doc_type": "coding_rule"
+    },
+    {
+      "filename_regex": "^RULE[-_]",
+      "doc_type": "coding_rule"
+    },
+    {
+      "glob": "*weekly*/*",
+      "doc_type": "weekly_report"
+    },
+    {
+      "filename_regex": "^WR[-_]",
+      "doc_type": "weekly_report"
+    },
+    {
+      "glob": "*tc*/*",
+      "doc_type": "tc_list"
+    },
+    {
+      "filename_regex": "^TC[-_]",
+      "doc_type": "tc_list"
+    }
+  ],
+  "id_from_text": {
+    "issue": "\\bISSUE-\\d{3,7}\\b",
+    "cl": "\\bCL-\\d{3,8}\\b",
+    "sw_design": "\\bSWD-[A-Z0-9_-]+\\b",
+    "hw_design": "\\bHWD-[A-Z0-9_-]+\\b",
+    "coding_rule": "\\bRULE-[A-Z0-9_-]+\\b",
+    "weekly_report": "\\bWR-\\d{4}-W\\d{2}\\b",
+    "tc_list": "\\bTC-[A-Z0-9_-]+\\b"
+  },
+  "date_from_filename": [
+    "(20\\d{2})[-_.]?(\\d{2})[-_.]?(\\d{2})"
+  ]
+}

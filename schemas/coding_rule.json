@@ -1,0 +1,31 @@
+{
+  "title": "코딩 규칙 가이드",
+  "extends": "common",
+  "id_pattern": "^RULE-[A-Z0-9_-]+$",
+  "fields": {
+    "status": {
+      "type": "enum",
+      "values": [
+        "active",
+        "deprecated"
+      ],
+      "required": false
+    },
+    "scope": {
+      "type": "list",
+      "required": false,
+      "desc": "적용 범위 (모듈/언어)"
+    }
+  },
+  "sections": {
+    "recommended": [
+      "규칙",
+      "근거",
+      "예시",
+      "예외"
+    ],
+    "required": [
+      "규칙"
+    ]
+  }
+}

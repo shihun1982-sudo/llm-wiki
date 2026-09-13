@@ -1,0 +1,5 @@
+# Python 3.7+ 호환 (표준 라이브러리 위주)
+numpy>=1.18
+pypdf>=3.0
+# 선택: 로컬 시맨틱 임베딩 (설치 시 EMBED_PROVIDER=st 사용 가능, Python 3.8+ 권장)
+# sentence-transformers

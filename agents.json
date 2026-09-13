@@ -1,0 +1,137 @@
+{
+  "_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} 치환. provider 는 headless:<이름>.",
+  "opencode": {
+    "desc": "OpenCode CLI (opencode run --format json). 모델은 provider/model 형식 (예 anthropic/claude-sonnet-4-5).",
+    "command": [
+      "opencode",
+      "run",
+      "--format",
+      "json",
+      "-m",
+      "{model}",
+      "{prompt}"
+    ],
+    "prompt_mode": "arg",
+    "files_flag": "-f",
+    "output": "ndjson",
+    "text_paths": [
+      "part.text",
+      "text",
+      "content",
+      "message.content",
+      "result"
+    ],
+    "usage_paths": {
+      "input": [
+        "usage.input_tokens",
+        "tokens.input",
+        "part.tokens.input"
+      ],
+      "output": [
+        "usage.output_tokens",
+        "tokens.output",
+        "part.tokens.output"
+      ]
+    },
+    "model": "",
+    "timeout_s": 300,
+    "cwd": "{project_root}",
+    "env": {},
+    "max_output_chars": 400000
+  },
+  "claude": {
+    "desc": "Claude Code CLI headless (claude -p --output-format json).",
+    "command": [
+      "claude",
+      "-p",
+      "--output-format",
+      "json",
+      "--model",
+      "{model}",
+      "{prompt}"
+    ],
+    "prompt_mode": "arg",
+    "files_flag": "",
+    "output": "json",
+    "text_paths": [
+      "result",
+      "content",
+      "text"
+    ],
+    "usage_paths": {
+      "input": [
+        "usage.input_tokens"
+      ],
+      "output": [
+        "usage.output_tokens"
+      ]
+    },
+    "model": "claude-sonnet-5",
+    "timeout_s": 300,
+    "cwd": "{project_root}",
+    "env": {},
+    "max_output_chars": 400000
+  },
+  "codex": {
+    "desc": "OpenAI Codex CLI (codex exec --json).",
+    "command": [
+      "codex",
+      "exec",
+      "--json",
+      "-m",
+      "{model}",
+      "{prompt}"
+    ],
+    "prompt_mode": "arg",
+    "files_flag": "",
+    "output": "ndjson",
+    "text_paths": [
+      "item.text",
+      "text",
+      "content",
+      "message"
+    ],
+    "usage_paths": {
+      "input": [
+        "usage.input_tokens"
+      ],
+      "output": [
+        "usage.output_tokens"
+      ]
+    },
+    "model": "",
+    "timeout_s": 300,
+    "cwd": "{project_root}",
+    "env": {},
+    "max_output_chars": 400000
+  },
+  "mock": {
+    "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트.",
+    "command": [
+      "C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-m",
+      "llmwiki.headless",
+      "--mock"
+    ],
+    "prompt_mode": "stdin",
+    "files_flag": "--file",
+    "output": "ndjson",
+    "text_paths": [
+      "part.text",
+      "text"
+    ],
+    "usage_paths": {
+      "input": [
+        "usage.input_tokens"
+      ],
+      "output": [
+        "usage.output_tokens"
+      ]
+    },
+    "model": "mock",
+    "timeout_s": 60,
+    "cwd": "{project_root}",
+    "env": {},
+    "max_output_chars": 100000
+  }
+}

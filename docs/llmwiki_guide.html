@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>LLM Wiki v3 인터랙티브 가이드</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--page:#f9f9f7;--card:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s7:#4a3aa7;--crit:#d03b3b;--node:#f3f8fe;--hi:#fff8e6;--code:#1a1a19;--codeink:#c3c2b7}
+[data-theme=dark]{--page:#121311;--card:#1c1d1b;--ink:#ecebe6;--ink2:#b9b7ae;--muted:#8a887f;--grid:#2c2d2a;--axis:#4a4b46;--node:#1f2b3a;--hi:#2e2712;--code:#0b0c0b;--codeink:#c3c2b7}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"Segoe UI","Malgun Gothic",Roboto,sans-serif;color:var(--ink);background:var(--page)}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--grid);padding:10px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header b{font-size:16px}header nav{display:flex;gap:4px;flex-wrap:wrap}header nav a{padding:4px 10px;border-radius:12px;border:1px solid var(--grid);color:var(--ink2);text-decoration:none;font-size:12px;cursor:pointer}header nav a.active{background:var(--s1);color:#fff;border-color:var(--s1)}
+header .sp{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:12px}
+main{max-width:1240px;margin:0 auto;padding:16px 18px 60px}
+section{display:none}section.active{display:block}
+h2{font-size:20px;margin:6px 0 4px}h3{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink2);margin:16px 0 6px}
+.lead{color:var(--ink2);margin-bottom:12px}
+.cards{display:flex;gap:10px;flex-wrap:wrap}.card{background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:10px 12px;flex:1 1 220px;cursor:pointer}.card:hover,.card.sel{border-color:var(--s1);box-shadow:0 0 0 2px var(--s1)}.card h4{margin:0 0 4px;font-size:13px}.card .m{font-size:11px;color:var(--muted);font-family:Consolas,monospace}.card p{margin:4px 0 0;font-size:12px;color:var(--ink2)}
+.layer{margin-bottom:14px}.layer .lt{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.detail{background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:12px;margin-top:12px;font-size:13px;position:sticky;top:56px}
+.detail h4{margin:0 0 6px}.detail code,.chain code,td code{background:var(--page);padding:1px 5px;border-radius:3px;font-size:12px;font-family:Consolas,"D2Coding",monospace}
+.cols{display:flex;gap:16px;flex-wrap:wrap}.col{flex:1;min-width:300px}.col.wide{flex:2}
+.chain{display:flex;gap:6px;flex-wrap:wrap;align-items:stretch;margin:6px 0 10px}.node{flex:0 0 160px;background:var(--node);border:1.5px solid var(--s1);border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;min-height:60px}.node.sel{box-shadow:0 0 0 2px var(--s1)}.node.opt{border-style:dashed}.node b{display:block;font-size:12px}.node .k{font-family:Consolas,monospace;color:var(--muted);font-size:10px}.arrow{align-self:center;color:var(--axis);font-size:16px}
+.step{background:var(--card);border:1px solid var(--grid);border-left:4px solid var(--s1);border-radius:6px;padding:10px 12px;margin:8px 0;font-size:13px}.step h4{margin:0 0 4px;font-size:14px}.step .why{color:var(--ink2);margin:4px 0}
+pre{background:var(--code);color:var(--codeink);padding:10px;border-radius:6px;overflow:auto;font:12px/1.45 Consolas,"D2Coding",monospace;white-space:pre-wrap}
+table{border-collapse:collapse;width:100%;font-size:12.5px;background:var(--card)}th,td{border-bottom:1px solid var(--grid);padding:6px 8px;text-align:left;vertical-align:top}th{background:var(--page);color:var(--ink2)}
+.chip{display:inline-block;font-size:10px;border:1px solid var(--grid);border-radius:8px;padding:0 6px;margin:1px 2px;background:var(--card)}.chip.t{border-color:var(--s1);color:var(--s1)}.chip.u{border-color:var(--s4);color:#9a6a00;background:var(--hi)}
+input[type=text],select{font:inherit;padding:6px 8px;border:1px solid var(--axis);border-radius:4px;background:var(--card);color:var(--ink)}
+.stepper{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.stepper button{font:inherit;padding:4px 10px;border-radius:12px;border:1px solid var(--grid);background:var(--card);color:var(--ink2);cursor:pointer;font-size:12px}.stepper button.active{background:var(--s1);color:#fff;border-color:var(--s1)}
+.hint{background:var(--hi);border-left:3px solid var(--s4);padding:6px 10px;border-radius:0 4px 4px 0;font-size:12px;margin:6px 0}
+.small{font-size:12px}.muted{color:var(--muted)}
+@media (max-width:800px){.detail{position:static}}
+</style>
+</head>
+<body>
+<header>
+  <b>LLM Wiki v3 가이드</b>
+  <nav id="nav">
+    <a data-s="overview" class="active">개요</a><a data-s="arch">구조 지도</a><a data-s="flows">동작 흐름 (단계별)</a><a data-s="cli">CLI 카탈로그</a><a data-s="files">설정 파일 지도</a><a data-s="data">데이터 모델</a><a data-s="ui">Web UI · MCP</a><a data-s="ops">운영 · 문제 해결</a>
+  </nav>
+  <div class="sp"><label>테마 <select id="theme"><option value="light">light</option><option value="dark">dark</option></select></label></div>
+</header>
+<main>
+
+<section id="s-overview" class="active">
+  <h2>무엇을 하는 시스템인가</h2>
+  <p class="lead">모뎀 HW 제어 임베디드 SW 조직의 문서(Issue · Change List · SW/HW 설계 · 코딩 규칙 · 주간 보고 · TC …)를 색인해 <b>FTS + 벡터 + 그래프</b>로 검색하고, <b>근거가 있는 내용만</b> 구조화된 답변으로 돌려주며, 근거가 부족하면 단계적으로 확장 검색한 뒤 <b>insufficient data</b>로 답하고 <b>포렌식</b>을 남긴다. 누적된 포렌식·피드백은 사람이 승인하는 <b>자가진화 제안</b>이 된다.</p>
+  <div class="cols">
+    <div class="col"><h3>핵심 흐름</h3>
+      <div class="chain"><div class="node"><b>코퍼스 · MCP raw</b><span class="k">md + front matter</span></div><div class="arrow">→</div><div class="node"><b>Build</b><span class="k">FTS · 벡터 · 그래프(provenance)</span></div><div class="arrow">→</div><div class="node"><b>Query</b><span class="k">규칙/LLM 확장 → 융합 → 근거 판정 → 답변 → claim 검증</span></div><div class="arrow">→</div><div class="node"><b>Evolve</b><span class="k">포렌식 → 제안 → HITL</span></div></div>
+      <h3>설계 원칙</h3>
+      <ul class="small"><li>CLI = Web = MCP = eval = trial — 모두 같은 <code>Pipeline.build()/query()</code>.</li><li>모든 단계는 <b>토글</b>로 on/off, <b>튜닝 파라미터</b>로 조정, <b>프로파일 trace</b>(request_id) + <b>로그</b>(run_id) 로 추적.</li><li>설정·규칙·프롬프트·스키마는 전부 <b>파일</b> — 포팅 시 코드 수정 없음.</li><li>외부 API 없이도 동작(추출식 답변·규칙 그래프·hash 임베딩). 붙이면 LLM 단계가 켜짐.</li></ul>
+    </div>
+    <div class="col"><h3>5분 시작</h3>
+<pre>setup\install.bat
+python -m llmwiki health
+python -m llmwiki build --full --trace
+python -m llmwiki query "ISSUE-2001 의 원인과 수정 CL 은?" --trace
+python -m llmwiki serve        # http://127.0.0.1:8765/</pre>
+      <div class="hint">자기 코퍼스: <code>config.json → corpus_dirs</code> 수정 후 <code>build --full</code>. 문서 형식은 <b>설정 파일 지도 › schemas</b> 와 <code>docs/CORPUS_CONTRACT.md</code>.</div>
+      <h3>문서</h3><ul class="small"><li>BRINGUP_GUIDE.md — 새 환경 포팅 절차</li><li>CLI_FLOWS.md — 모든 명령의 단계별 동작과 실제 출력</li><li>ARCHITECTURE_V3.md — 구조 도식·데이터 모델·흐름 표</li><li>CORPUS_CONTRACT.md — 문서 계약</li><li>ANALYSIS_REPORT_0913.md / IMPLEMENTATION_PLAN_0913.md — 요구 분석·판정·계획</li></ul>
+    </div>
+  </div>
+</section>
+
+<section id="s-arch">
+  <h2>구조 지도 <span class="small muted">— 카드를 클릭하면 역할·주요 함수·관련 파일이 오른쪽에 표시됩니다</span></h2>
+  <div class="cols"><div class="col wide" id="arch-layers"></div><div class="col"><div class="detail" id="arch-detail">모듈을 선택하세요.</div></div></div>
+</section>
+
+<section id="s-flows">
+  <h2>동작 흐름 (단계별) <span class="small muted">— 흐름을 고르고 단계를 눌러 예제·설명·확인 포인트를 봅니다</span></h2>
+  <div class="stepper" id="flow-pick"></div>
+  <div class="chain" id="flow-chain"></div>
+  <div id="flow-step"></div>
+</section>
+
+<section id="s-cli">
+  <h2>CLI 카탈로그</h2>
+  <p class="lead small">공통 옵션: <code>--trace</code>(프로파일 출력) <code>--json</code> <code>--debug 0|1|2</code> <code>--preset quality,token</code> 토글 플래그 <code>--fts/--no-fts …</code>(56개 자동 생성) 역할 모델 <code>--answer-model …</code>. 상세 출력 예는 CLI_FLOWS.md.</p>
+  <div style="margin-bottom:8px"><input type="text" id="cli-filter" placeholder="명령/키워드 필터 (예: build, forensic, 시간)" style="width:360px"> <select id="cli-group"><option value="">전체 영역</option></select></div>
+  <div id="cli-table"></div>
+</section>
+
+<section id="s-files">
+  <h2>설정 파일 지도</h2>
+  <p class="lead small">우선순위: 환경변수 <code>LLMWIKI_*</code> &gt; config.json &gt; 코드 기본값. 파일 위치는 <code>LLMWIKI_&lt;NAME&gt;_PATH</code> 로 바꿀 수 있고 <code>config paths</code> 로 확인.</p>
+  <div id="files-table"></div>
+</section>
+
+<section id="s-data">
+  <h2>데이터 모델 (SQLite 단일 파일 data/llmwiki.sqlite3)</h2>
+  <div id="data-table"></div>
+  <h3>정합성</h3><p class="small">삭제/rename 된 문서의 청크·FTS·임베딩·멘션·관계·위키 페이지가 정리되고(증분 빌드), <code>build verify [--fix]</code> 가 FTS↔청크 수, 임베딩 coverage, 댕글링, 고아 엔티티, 위키 stale 페이지, doc_meta 누락을 검사한다. 임베딩은 내용 해시 캐시로 rename 시 재계산이 없다.</p>
+</section>
+
+<section id="s-ui">
+  <h2>Web UI · MCP</h2>
+  <div class="cols"><div class="col">
+    <h3>Web UI — 워크플로 기준 7그룹</h3>
+    <table><tr><th>그룹</th><th>화면</th><th>무엇을 하나</th></tr>
+    <tr><td>🔎 Ask</td><td>질의·답변 / 채널 디버그</td><td>프리셋 체크(품질/속도/토큰) · mode(fast/deep) · 근거 판정 · claim 검증 · pin 📌 · 포렌식 · 프로파일 워터폴</td></tr>
+    <tr><td>📚 Corpus</td><td>빌드·상태 / 임베딩·coverage / 문서 계약·lint / MCP 소스</td><td>증분·전체 빌드, health, verify(fix), 진행률·alerts, coverage 표, precompute, lint 목록·스키마 예시, MCP test/ingest</td></tr>
+    <tr><td>🕸 Knowledge</td><td>그래프 / 위키 / 그래프 규칙</td><td>provenance·유형 필터, 노드 상세(doc_refs·관계 출처·confidence), 위키 편집 노트, id_patterns·link_rules 편집</td></tr>
+    <tr><td>📈 Quality</td><td>Trial 비교 / 평가 / 포렌식</td><td>trial 실행·2~4개 비교(지표 Δ·질문별 승패·설정 diff·추천), matrix 평가, 포렌식 목록·요약·LLM 소견·consolidate, fusion 비교</td></tr>
+    <tr><td>🌱 Evolve</td><td>제안(HITL) / 메모리</td><td>상태별 제안 승인·거절(strength), evolution_log, 에피소드·decay·consolidate</td></tr>
+    <tr><td>⚙ Settings</td><td>모델·프로바이더 / 프리셋 / 튜닝 / 질의 규칙 사전 / Pin / 프롬프트 / config.json</td><td>역할별 모델(headless 포함), OpenAI/rerank 엔드포인트, agents.json, 프리셋 diff·적용, 튜닝 표, 규칙 add/test, 프롬프트 편집, 유효 설정(출처)</td></tr>
+    <tr><td>🩺 Observability</td><td>요청 프로파일 / 로그 / 구조·흐름 / 시스템·규모 / 질의 로그 / 콘솔</td><td>워터폴·단계 표·비교, run_id 로그 조회, 구조 카드에 마지막 실행 시간 겹쳐 보기, 용량 전망·워처·유지보수, CLI 전체 실행</td></tr></table>
+    <p class="small">사이드바: 프리셋 체크박스 · 토글 그룹(서버 정의 자동 생성) · 프로바이더 오버라이드 · <b>CLI 동등 명령</b>. 테마: light/dark/high-contrast/solarized (<code>web/static/themes/</code> 에 CSS 추가로 확장).</p>
+  </div><div class="col">
+    <h3>MCP 서버 (읽기 + 제안)</h3>
+<pre>claude mcp add llmwiki -- python -m llmwiki mcp   # cwd = 프로젝트 루트</pre>
+    <table><tr><th>도구</th><th>용도</th></tr>
+    <tr><td><code>wiki_query(question, k, mode=fast|normal|deep, doc_types, preset)</code></td><td>구조화 답변 + 근거 + 판정/groundedness. deep = deep_research 프리셋(unified search)</td></tr>
+    <tr><td><code>wiki_search(channel, query, k)</code></td><td>fts/vector/graph 단일 채널</td></tr>
+    <tr><td><code>wiki_related(text, doc_types)</code></td><td>이슈 분석 결과와 유사한 문서 + 연결된 CL/Issue/TC (provenance)</td></tr>
+    <tr><td><code>wiki_doc(id)</code></td><td>문서 전문 + 메타 + 관계 (doc_id 또는 ISSUE-/CL- ID)</td></tr>
+    <tr><td><code>wiki_entity(name)</code></td><td>노드 상세·doc_refs·관계</td></tr>
+    <tr><td><code>wiki_propose(kind, payload, reason)</code></td><td>분석 결과·정정·관계·코퍼스 갭을 <b>제안</b>으로 기록 (색인 직접 변경 없음, HITL)</td></tr>
+    <tr><td><code>wiki_status()</code></td><td>통계·프로바이더·문서 유형·provenance</td></tr></table>
+    <div class="hint">Use case(구현 지원 · 코드 리뷰 · 이슈 분석 · 리팩토링 · unified search)별 skill/agent 는 이 도구 위에 별도로 만든다. wiki 는 검색 원시 기능과 deep 모드만 제공한다.</div>
+  </div></div>
+</section>
+
+<section id="s-ops">
+  <h2>운영 · 문제 해결</h2>
+  <div class="cols"><div class="col">
+    <h3>매일 운영</h3>
+    <ol class="small"><li>OS 스케줄러가 <code>python -m llmwiki build</code> 호출 (<code>setup/schedule_build.ps1 -Register</code>). 파일 락으로 중복 방지, 실패는 exit≠0 + logs/build.log.</li><li><code>build status</code> / Web › Corpus 에서 진행률·alerts·coverage 확인. 중단되면 다음 build 가 자동 재개.</li><li>주 1회 <code>memory decay</code>, <code>evolve status</code> 로 제안 검토, <code>forensic summary</code> 로 반복 갭 확인.</li><li>튜닝 변경은 <code>trial run/compare</code> 로 전후 비교 후 적용.</li></ol>
+    <h3>디버깅 순서</h3>
+    <ol class="small"><li><code>query "…" --trace</code> → 어느 단계에서 hit 이 0인지, 판정(verdict)·groundedness.</li><li><code>forensic last</code> → 단계별 소견·제안.</li><li><code>logs grep --request &lt;id&gt;</code> → 같은 run_id 의 로그(LLM 호출·오류).</li><li><code>rules test "…"</code> / <code>time "…"</code> / <code>search fts "…"</code> 로 확장·시간·채널 개별 확인.</li><li>수정: <code>rules add</code>, <code>pin add</code>, 문서 추가, 튜닝 → <code>trial compare</code>.</li></ol>
+  </div><div class="col">
+    <h3>증상 → 조치</h3>
+    <table><tr><th>증상</th><th>조치</th></tr>
+    <tr><td>build aborted: health check failed</td><td><code>health</code> 의 ✘ 항목(코퍼스 경로·프로바이더). 초기화 전에 검사하므로 기존 색인 유지</td></tr>
+    <tr><td>another build is running</td><td>락 보유 프로세스 확인(<code>build status</code>). 죽은 락은 자동 회수</td></tr>
+    <tr><td>답변 위에 "ℹ LLM 미사용" (구조화 추출식 답변)</td><td><code>models test</code>; Ollama 는 <code>ollama pull</code>; OpenAI-compatible 은 base_url/모델 id</td></tr>
+    <tr><td>근거 부족(insufficient)</td><td><code>forensic last</code> → 동의어/약어 추가, 문서 추가, <code>fallback_loop</code> 토글, deep 모드</td></tr>
+    <tr><td>[미확인] 표기</td><td>claim_check 미지원 문장. <code>claim_policy</code>(mark/drop/refine), <code>answer_refine</code>, answer_guide.md</td></tr>
+    <tr><td>coverage &lt; 100%</td><td><code>embed report</code> 실패 청크 → 다음 build 재개; 429 지속이면 embed_batch 축소</td></tr>
+    <tr><td>dim mismatch</td><td>임베더/차원 변경 → <code>build --full</code> (캐시로 이전 차원 복귀는 무비용)</td></tr>
+    <tr><td>시간 질의 오동작</td><td><code>timezone</code>/<code>week_start</code>, <code>time "…"</code>; 문서 date 없으면 파일명/mtime 추론</td></tr>
+    <tr><td>CL→Issue 관계 없음</td><td>CL 의 related.issues(lint error) 또는 id_patterns</td></tr></table>
+  </div></div>
+</section>
+</main>
+<script>
+const $=(s,r)=>(r||document).querySelector(s),$$=(s,r)=>Array.from((r||document).querySelectorAll(s));const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// ---------------- nav / theme ----------------
+$$('#nav a').forEach(a=>a.onclick=()=>{$$('#nav a').forEach(x=>x.classList.remove('active'));a.classList.add('active');$$('main section').forEach(s=>s.classList.remove('active'));$('#s-'+a.dataset.s).classList.add('active');window.scrollTo(0,0);});
+const th=$('#theme');try{th.value=localStorage.getItem('guide.theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}catch(e){}
+const applyTheme=()=>{if(th.value==='dark')document.documentElement.dataset.theme='dark';else delete document.documentElement.dataset.theme;try{localStorage.setItem('guide.theme',th.value)}catch(e){}};th.onchange=applyTheme;applyTheme();
+// ---------------- 구조 지도 ----------------
+const ARCH=[
+ {layer:'인터페이스',items:[
+  {n:'cli.py',t:'CLI (argparse 단일 진입점)',d:'40+ 서브커맨드. Web 콘솔은 run_captured() 로 같은 코드를 in-process 실행. --preset 은 요청 후 복원. build 는 초기화 전에 health 를 먼저 검사.',f:['build_parser()','run()','_run_cmd()','run_captured()']},
+  {n:'web/server.py + static/',t:'Web UI 서버 (http.server) + 바닐라 JS 7그룹',d:'JSON API 60+ 엔드포인트, 빌드/평가/trial/precompute/fusion 은 백그라운드 job, 요청 단위 오버라이드(_with_overrides)와 프리셋 적용/복원, 워처 스레드, 테마 CSS.',f:['Handler.do_GET/do_POST','_with_overrides()','_start_job()','js/core.js buildSidebar()']},
+  {n:'mcp.py',t:'MCP stdio 서버',d:'wiki_query(mode/doc_types/preset) · wiki_search · wiki_related · wiki_doc · wiki_entity · wiki_propose · wiki_status. 색인은 바꾸지 않고 제안만.',f:['handle()','call_tool()','_query_with()']},
+  {n:'architecture.py',t:'구조 레지스트리',d:'build/query/evolve/watch 흐름의 단계·토글·튜닝·CLI·trace 이름 정의. Web 구조 탭과 CLI arch 가 공유.',f:['FLOWS','registry()','render_text()']}]},
+ {layer:'설정 · 관측',items:[
+  {n:'config.py',t:'Settings/Toggles · env 오버라이드 · 경로 레지스트리',d:'56 토글, 역할 8종(answer/rerank/extract/summary/review/expand/verify/forensic). 모든 키 LLMWIKI_<KEY>, 토글 LLMWIKI_TOGGLE_<NAME>. path_for(name) 으로 파일 위치 통일. TOGGLE_GROUPS 로 UI 사이드바 자동 생성.',f:['load_settings()','env_overrides()','effective_settings()','path_for()']},
+  {n:'tuning.py · presets.py · prompts.py',t:'튜닝 레지스트리 · 프리셋 · 프롬프트 파일',d:'튜닝 130+ 항목(단계·타입·범위·impact·rebuild). 프리셋은 toggles+tuning+settings 묶음(뒤가 우선, 충돌 보고). 프롬프트는 prompts/*.md 원천, mtime 재로드.',f:['Tuning.get/set','presets.apply/restore/diff','prompts.get()/answer_system()']},
+  {n:'logging_setup.py · profiler.py',t:'JSONL 로그 + run_id · 단계 trace',d:'llmwiki/error/build/query 로그 로테이션. Profiler 가 요청마다 run_id 발급 → 단계 종료를 로그로, trace 는 requests 테이블에. logs grep --request 로 연결.',f:['setup_logging()','push_run/pop_run','Profiler.stage()','finish()']},
+  {n:'health.py · buildlock.py',t:'사전 점검 · 파일 락',d:'Python/FTS5/DB/WAL/디스크/코퍼스/벡터 메모리/임베딩 차원/프로바이더/MCP/lint. 빌드 락은 pid 기록·stale 회수.',f:['run_health()','BuildLock']}]},
+ {layer:'코퍼스 · 저장',items:[
+  {n:'corpus.py · schema.py',t:'로더/청커 · 문서 계약',d:'md/txt/csv/html/pdf, stat_skip, front matter(미니 YAML/pyyaml) 파싱, 헤딩 청킹. 스키마 로드/lint/유형·ID·날짜 추론/schema_version 마이그레이션/메타 토큰.',f:['iter_corpus()','chunk_document()','parse_front_matter()','normalize_meta()','lint_document()']},
+  {n:'store.py',t:'SQLite 저장소',d:'docs·chunks·chunks_fts(+trigram)·doc_meta·embeddings(float32/16)·embedding_cache·doc_vectors·entities·relations(provenance)·mentions·communities·requests(run_id)·forensics·episodes·trials·answer_cache·kv. 마이그레이션은 ADD COLUMN + 신규 테이블. verify(fix).',f:['upsert_doc()','put_embeddings()','cache_get/put','add_relation(provenance)','verify()']},
+  {n:'mcp_client.py',t:'외부 MCP 소스 클라이언트',d:'stdio JSON-RPC 클라이언트. mcp_sources.json 의 tool 매핑으로 raw record → 계약 문서(md+front matter) ingest, 질의 enrich. --mock-server 로 테스트.',f:['MCPClient','ingest()','enrich()','test_sources()']}]},
+ {layer:'빌드',items:[
+  {n:'pipeline.py',t:'빌드/평가/시스템 오케스트레이션',d:'health → mcp_ingest → load_corpus → diff(rename) → chunk_index(lint·메타 토큰) → embed(EmbedRunner) → graph_build → doc_vectors → wiki → prune(+stale 위키) → verify → warm → precompute. build_status(), answer_signature().',f:['Pipeline.build()','_build()','evaluate()','build_status()']},
+  {n:'embed_run.py',t:'임베딩 러너',d:'내용 해시 캐시 → 적응형 배치(실패 절반/성공 1.5배) → N 배치마다 commit·진행률(kv) → WAL 체크포인트 → 실패 청크 기록 → alerts → embed_runs. 중단 후 build 가 missing 만 재개.',f:['EmbedRunner.run()','embed_report()']},
+  {n:'graph_rules.py · graph_build.py · graph_llm.py',t:'그래프 추출',d:'사전·정규식 + id_patterns(ISSUE-/CL-…) + link_rules(결정적 관계, provenance=rule) + front matter related(explicit) + 공동출현(cooccur) + LLM(llm). 문서 노드 = 문서 ID. degrees → doc_refs → 커뮤니티.',f:['RuleExtractor.extract_chunk()','find_ids()','explicit_relations()','build_graph_for_chunks()','finalize_graph()']},
+  {n:'precompute.py · wiki.py',t:'답변 캐시 · 문서 카드 벡터 · 위키',d:'answer_cache(build_version 키), precompute run(평가셋+빈번 질의), doc_vectors(문서 카드 임베딩 채널), 엔티티 위키 페이지(편집 노트 보존).',f:['run()','build_doc_vectors()','doc_vector_search()','write_wiki()']}]},
+ {layer:'질의 · 답변',items:[
+  {n:'query_engine.py',t:'질의 엔진 (v3)',d:'cache → time_scope → query_rules → router(+llm) → query_expand → pins → _retrieve(fts+rule+alt+related | vector+alt | graph | doc_vector | mcp) → fuse+boost → rerank → context → evidence_check → fallback 루프 → answer → claim_check/refine → forensic → evolve_capture → episode → log.',f:['QueryEngine.run()','_retrieve()','_assess()','RoundConfig.derive()']},
+  {n:'retrieval.py · fusion.py',t:'채널 검색 · 융합/부스트',d:'라우터, FTS(tiered/OR/rule_match/bigram/trigram/PRF), 벡터(float16 블록 내적), 그래프(ID 시드·provenance 가중·doc_refs 후보), 리랭크(api/llm/ce/local + doc 토큰). 융합 rrf/weighted/zscore/dbsf/rrf_boost + post-boost(문서유형·시간·최신성·pin·provenance·피드백·exclude).',f:['route()','fts_search()','graph_search()','rerank()','fusion.fuse()','apply_boosts()','compare_methods()']},
+  {n:'query_rules.py · timeparse.py · pins.py',t:'규칙 확장 · 시간 · pin',d:'acronym/synonym/alias/related/exclude/compound 를 유형별로 다르게 적용, 전/후 프로파일. 한국어 상대/절대 시간 → 날짜 범위(timezone/week_start). 조건부 고정 근거(strength 강화).',f:['expand()','parse()','match_pins()']},
+  {n:'answer.py · evidence.py · forensic.py',t:'컨텍스트/답변/검증 · 충분성/fallback · 포렌식',d:'answer_system+guide 프롬프트, 길이 목표, 추출식 폴백. claim 분해·인용 존재·지원율(휴리스틱/LLM)·groundedness·mark/drop/refine. 충분성 판정·fallback 단계 정의·예산. 진단 규칙 → forensics 테이블 → summary.',f:['generate_answer()','check_claims()','assess()','Budget','diagnose()','record()']},
+  {n:'providers.py · headless.py · rerankers.py',t:'프로바이더',d:'Anthropic(SDK/HTTP) · OpenAI-compatible(chat/embeddings, json_object 자동 폴백) · Ollama(모델 존재 확인) · Voyage · ST · hash · Generic Headless Agent(subprocess, agents.json 템플릿, ndjson/json/text 파서, 파일 첨부) · rerank API(cohere/voyage 포맷).',f:['make_llm()','make_embedder()','HeadlessAgentLLM','rerank_api()']}]},
+ {layer:'자가진화 · 품질',items:[
+  {n:'evolve.py · memory.py',t:'제안/적용/롤백 · 메모리',d:'capture/feedback/llm_review → proposals(kind, confidence, strength) → HITL apply(스냅샷·재빌드·회귀평가·롤백). episodes, 피드백 부스트(감쇠), decay(archive), consolidate(포렌식 → corpus_gap/query_rule/tuning 제안).',f:['capture_query()','apply_proposal()','feedback_weights()','decay()','consolidate()']},
+  {n:'trials.py · evalset.py',t:'회귀 trial · 지표',d:'trial run(설정 스냅샷·프리셋·오버라이드, 요청 후 복원) → 지표(hit@k, MRR, term recall, groundedness, citation precision, insufficient/fallback rate, p95, tokens/q, coverage) → compare(Δ·질문별 승패·설정 diff·추천) → markdown.',f:['run_trial()','compare()','report_md()','score_result()']}]}];
+function renderArch(){$('#arch-layers').innerHTML=ARCH.map(L=>`<div class="layer"><div class="lt">${esc(L.layer)}</div><div class="cards">${L.items.map(it=>`<div class="card" data-n="${esc(it.n)}"><h4>${esc(it.t)}</h4><div class="m">${esc(it.n)}</div></div>`).join('')}</div></div>`).join('');
+ $$('#arch-layers .card').forEach(c=>c.onclick=()=>{$$('#arch-layers .card').forEach(x=>x.classList.remove('sel'));c.classList.add('sel');const it=ARCH.flatMap(L=>L.items).find(x=>x.n===c.dataset.n);$('#arch-detail').innerHTML=`<h4>${esc(it.t)} <code>${esc(it.n)}</code></h4><p>${esc(it.d)}</p><div><b class="small">주요 함수/심볼</b><br>${it.f.map(f=>`<code>${esc(f)}</code>`).join(' ')}</div>`;});}
+renderArch();
+// ---------------- 흐름 스테퍼 ----------------
+const FLOWS={
+ build:{title:'Build (색인)',entry:'python -m llmwiki build [--full] [--trace] · 스케줄러 · Web › Corpus',steps:[
+  {k:'health',t:'Health 검사',opt:true,cmd:'python -m llmwiki build --full --trace',what:'Python/FTS5, DB quick_check, WAL 크기, 디스크, 코퍼스 폴더 존재/파일 수, 벡터 메모리 전망, 저장된 임베딩 차원 vs 현재 임베더, (llm_graph 시) extract/summary LLM ping, 임베더 1건 임베딩, rerank/MCP.',out:'health: OK (fail=0 warn=0)\n  ✔ corpus_dirs   files=38 dirs=1 missing=[]\n  ✔ embedding_dim stored=[(\'hash\', 4096, 190)] current=(\'hash\', 4096)',look:'fail 이 있으면 빌드가 시작되지 않는다(초기화 전). --force 강행, --no-health-check 생략. warn 은 result.alerts.',tg:['health_check'],tu:[]},
+  {k:'mcp_ingest',t:'MCP 소스 ingest',opt:true,cmd:'python -m llmwiki mcp-source ingest --dry-run',what:'mcp_sources.json 의 enabled 소스마다 ingest tool 호출 → record 를 front matter 문서로 data/mcp_cache/<src>/<type>/<id>.md 에 저장(변경 없으면 skip). 이후 일반 문서처럼 색인.',out:'{"sources": {"mock": {"tools": {"list_issues": 2, "list_cls": 1}, "written": 3, "skipped": 0}}, "written": 3}',look:'errors 배열, written/skipped. 토글 mcp_sources 가 꺼져 있으면 단계 skip.',tg:['mcp_sources'],tu:[]},
+  {k:'load_corpus',t:'코퍼스 로드',cmd:'',what:'corpus_dirs(+mcp_cache) 재귀 스캔. stat_skip: mtime/size 같으면 읽지 않음. md/txt 는 front matter 분리(본문만 청킹, 해시는 원문). 위키 편집 노트를 overlay 문서로 추가.',out:'load_corpus  {"docs": 38, "read": 38, "skipped_by_stat": 0, "tokenizer": "heuristic"}',look:'skipped_by_stat 이 대부분이면 증분이 잘 동작하는 것. missing_dirs, unsupported.',tg:['stat_skip','incremental'],tu:['tokenizer']},
+  {k:'diff',t:'변경 감지 (rename 포함)',cmd:'',what:'DB 해시와 비교해 changed/removed/new. 삭제된 문서와 해시가 같은 신규 문서는 renamed 로 기록(임베딩은 캐시 재사용).',out:'diff  {"changed": 1, "unchanged": 37, "removed": 1, "new": 1, "renamed": 1}',look:'incremental 을 끄면 매번 전체 changed.',tg:['incremental'],tu:[]},
+  {k:'chunk_index',t:'청킹 · FTS · 문서 계약',cmd:'python -m llmwiki corpus lint',what:'삭제 문서 정리 → 헤딩 청킹 → chunks_fts(heading/body/tokens+메타 토큰: id, doctype_x, tags, modules, rev, related ids, date) → doc_meta(normalize_meta) + lint. fts_trigram 이면 chunks_tri.',out:'chunk_index {"chunks": 190, "doc_types": {"issue": 10, "cl": 10, …}, "lint_errors": 0, "lint_warnings": 4, "inferred_meta": 2}',look:'lint_errors>0 이면 alerts. inferred_meta 는 front matter 없는 문서 수.',tg:['schema_lint','fts_trigram'],tu:['chunk_max_chars','chunk_overlap_chars','chunk_min_chars','tokenizer']},
+  {k:'embed',t:'임베딩 (캐시·재개·적응형)',cmd:'python -m llmwiki embed report',what:'대상 = 변경 청크 ∪ 임베딩 없는 청크. 내용 해시 캐시 조회(hash 임베더 제외) → 배치 임베딩(실패 시 절반, 연속 성공 시 1.5배, 목표 지연 초과 시 축소) → N 배치마다 commit·kv embed_progress·WAL 체크포인트 → 1건 배치도 실패하면 그 청크만 failed → 10건 연속 실패 시 중단(alert).',out:'embed {"todo": 190, "embedded": 190, "failed": 0, "cache_hits": 0, "batches": 3, "final_batch": 97, "resized": 2, "status": "done"}',look:'coverage(embed report) 100% 인지. failed>0 이면 다음 build 가 resume_missing 으로 재개.',tg:['embed','embed_adaptive','idf_refit_incremental'],tu:['embed_batch','embed_batch_max','embed_batch_target_ms','embed_commit_every','wal_checkpoint_mb','embed_store_dtype']},
+  {k:'graph_build',t:'그래프 (provenance)',cmd:'python -m llmwiki graph --provenance explicit --limit 20',what:'rule_extract: 사전 엔티티, 결정사항, 문서 ID 언급(id_patterns → 노드, link_rules → 관계 provenance=rule), front matter related(explicit), 공동출현(cooccur), 날짜/금액 → llm_extract(옵션) → degrees → doc_refs(노드 ↔ 원본 문서) → communities(전체 빌드).',out:'graph_build {"explicit_relations": 52, "id_relations": 92, "provenance": {"explicit": 52, "rule": 92, "cooccur": 25}}',look:'CL→Issue 가 explicit 로 생겼는지, cooccur 폭증 여부(cooccur_min_w).',tg:['rule_graph','llm_graph','explicit_relations','communities','community_summary','incremental_communities'],tu:['cooccur_window','cooccur_min_w','llm_graph_budget','community_iters']},
+  {k:'doc_vectors',t:'문서 카드 벡터',opt:true,cmd:'python -m llmwiki precompute doc-vectors',what:'문서마다 제목·메타·헤딩 개요·첫 문단 카드를 임베딩 → doc_vectors. 질의 시 doc_vector 채널.',out:'doc_vectors {"doc_vectors": 37, "provider": "hash"}',look:'긴 설계 문서 검색 recall 에 유용. 토글 doc_vector.',tg:['doc_vector'],tu:['channel_w_doc_vector']},
+  {k:'wiki_pages',t:'위키 페이지',cmd:'python -m llmwiki wiki',what:'엔티티별 md(설명·문서 참조·관계(provenance)·근거·편집 노트) + INDEX. 증분은 touched 엔티티만. wiki_min_degree 로 페이지 수 억제.',out:'wiki_pages {"written": 58, "removed_stale": 0, "mode": "full"}',look:'편집 노트(## 편집 노트)는 다음 빌드에 overlay 색인.',tg:['wiki_pages','wiki_full_rewrite'],tu:['wiki_min_degree']},
+  {k:'prune',t:'정리 · 정합성 검증',cmd:'python -m llmwiki build verify --fix',what:'고아 엔티티(+stale 위키 페이지) · 댕글링 · 타 프로바이더 벡터 · FTS optimize · WAL checkpoint → verify(FTS↔청크, coverage, 댕글링, 고아, 위키 stale, doc_meta 누락).',out:'verify {"ok": true, "problems": [], "counts": {"docs": 38, "chunks": 190, "entities": 58, "relations": 169}}',look:'problems 가 있으면 alerts + build verify --fix.',tg:['fts_optimize','verify_after_build'],tu:[]},
+  {k:'warm_cache',t:'예열 · 사전 계산',opt:true,cmd:'python -m llmwiki precompute run',what:'벡터 행렬·엔티티 인덱스 적재. precompute_after_build 면 평가셋+빈번 질의 답변을 answer_cache 에 저장(build_version 키).',out:'warm_cache {"vectors": 190, "matrix_mb": 3.1, "entities_indexed": 58}',look:'첫 질의 지연 제거.',tg:['warm_cache','precompute_after_build'],tu:[]}]},
+ query:{title:'Query (질의 → 답변)',entry:'python -m llmwiki query "…" [--preset] [--trace] · Web › Ask · MCP wiki_query',steps:[
+  {k:'cache',t:'캐시',cmd:'python -m llmwiki query "HW rev B1 t_setup" --precompute',what:'query_cache(메모리, 질의+토글+튜닝+빌드버전 키) → precompute(영속 answer_cache). 적중 시 LLM/검색 생략.',out:'cache_hit {"saved_ms": 980, "saved_tokens": 0}',look:'재빌드 시 build_version 이 바뀌어 자동 무효화.',tg:['query_cache','precompute'],tu:['query_cache_size']},
+  {k:'time_scope',t:'시간 표현 해석',cmd:'python -m llmwiki time "지난주 리뷰한 CL"',what:'"어제/지난주/3일전/최근 한 달/2026년 8월/Q3/상반기…" → [from,to] (timezone, week_start). 검색 질의에서 표현 제거, 이후 boost(기본) 또는 filter.',out:'{"from": "2026-08-31", "to": "2026-09-06", "expr": "지난주", "query": "리뷰한 CL"}',look:'time_mode=filter 는 0건이면 boost 로 완화. 문서 날짜는 doc_meta.ts(front matter → 파일명 → mtime).',tg:['time_scope'],tu:['time_mode','time_boost_w','recency_half_life_days']},
+  {k:'query_rules',t:'규칙 기반 확장',cmd:'python -m llmwiki rules test "PDCCH 재시작 오류"',what:'query_rules.json: acronym(구문 OR + 치환 alt, 가중 1.0) · synonym(OR syn_w + alt) · alias(canonical 치환 + 그래프 시드) · related(별도 보조 리스트 related_w) · exclude(NOT + 후처리 페널티) · compound(토크나이저). ID 토큰(ISSUE-2001) 내부는 매칭하지 않음.',out:'query_rules {"fired": 3, "types": ["acronym", "synonym"], "alt": 3, "related": 0, "exclude": []}',look:'profile_expansion 토글이면 확장 전/후 hit 차이(expansion_profile)를 trace 에 기록.',tg:['query_rules','profile_expansion'],tu:['syn_w','related_w','exclude_penalty','acronym_phrase']},
+  {k:'router',t:'라우터 (+LLM)',cmd:'',what:'키워드 수·엔티티 매칭(ID 노드 포함)·관계어·숫자 → keyword/relational/semantic/hybrid 가중치. 질의 단어로 문서 유형 힌트(이슈→issue, 규칙→coding_rule…). router_llm 이면 LLM 의도/유형 분류 병합.',out:'router {"kind": "relational", "weights": {"fts": 1.3, "vector": 0.9, "graph": 0.85}, "doc_types": ["issue", "cl"]}',look:'channel_w_* 튜닝이 곱해진다.',tg:['router','router_llm'],tu:['router_kw_fts','router_rel_graph','channel_w_fts','channel_w_vector','channel_w_graph']},
+  {k:'query_expand',t:'LLM 확장 · 분해',opt:true,cmd:'python -m llmwiki query "…" --query-expand --query-decompose',what:'expand 역할 LLM 이 추가 질의 n개 + 다중 홉 sub-query 생성. 원 질의는 항상 유지, 추가 질의는 별도 리스트로 융합(query_expand_w).',out:'query_expand {"alt_queries": ["RX DMA underrun 발생 원인", …], "sub_queries": [...]}',look:'LLM 없으면 skipped. fallback expand 단계에서도 호출.',tg:['query_expand','query_decompose'],tu:['query_expand_n','query_expand_w','query_decompose_max']},
+  {k:'retrieve',t:'채널 검색',cmd:'python -m llmwiki search graph "CL-55301 수정 이슈"',what:'fts(원 질의 tiered) + fts_rule(확장식) + fts_alt(대체 질의) + fts_related · vector(+alt) · graph(라우터+규칙 시드 → n-hop, provenance 가중, doc_refs 문서 후보, 키워드 커버리지 재가중) · doc_vector · (fallback mcp) enrich. pin 주입.',out:'graph_search {"seeds": [["ISSUE-2001", 7.0]], "provenance": {"explicit": 12, "rule": 20, "cooccur": 13}, "doc_ref_candidates": 4}',look:'각 채널 hits/top, 0건이면 forensic 이 원인 추정.',tg:['fts','vector','graph','doc_vector','pins'],tu:['top_k_fts','fts_mode','prf_enabled','graph_hops','provenance_w','graph_doc_refs_n']},
+  {k:'fuse',t:'융합 · 부스트',cmd:'python -m llmwiki fusion compare',what:'rrf/weighted/zscore/dbsf/rrf_boost 로 리스트 융합 → post-boost: 문서유형(doc_type_boost·라우터 힌트 ×1.2) · 시간 범위(1+time_boost_w) · 최신성 · pin(pin_boost) · provenance(그래프 후보) · 피드백(감쇠) · exclude 페널티. hit.boosts 에 기록.',out:'boost {"router_type": 23, "provenance": 6, "top": [["…/ISSUE-2001.md#2", 0.1453, {"router_type": 1.2}]]}',look:'trial/fusion compare 로 방식 선택. rrf 가 기본(강건).',tg:['pins','feedback_boost'],tu:['fusion_method','fusion_multi_bonus','doc_type_boost','pin_boost','provenance_boost','feedback_boost_w']},
+  {k:'rerank',t:'리랭크',cmd:'python -m llmwiki tuning set rerank_method=api',what:'auto: rerank_url 있으면 API(Cohere/Jina/vLLM/Voyage 포맷) → LLM(rerank 역할, rerank_llm 토글) → local(커버리지·합의·길이·헤딩 + 문서 ID 토큰). 실패 시 local 폴백.',out:'rerank_local {"top": [["…/ISSUE-2001.md#2", 0.6573], …]}',look:'토큰 0 을 원하면 rerank_llm 끄기 또는 api/cross_encoder.',tg:['rerank','rerank_llm'],tu:['rerank_method','rerank_candidates','rerank_w_cover','rerank_heading_bonus']},
+  {k:'context',t:'컨텍스트',cmd:'',what:'상위 top_k_final 청크를 [C#] 블록으로. 오버랩/유사 문단 dedupe, 문장 압축(trim), 인접 청크, 그래프 관계(provenance 표시), MCP enrich 결과.',out:'context {"chars": 1465, "citations": 8, "dropped_duplicates": 0}',look:'chars 가 max 에 닿으면 근거 잘림(포렌식 소견).',tg:['context_trim','dedupe_hits','evidence_compress'],tu:['top_k_final','context_max_chars','context_neighbors','dedupe_similarity']},
+  {k:'evidence',t:'근거 판정 · fallback',cmd:'python -m llmwiki query "…" --fallback-loop --evidence-check-llm',what:'휴리스틱(hit 유무, 키워드 커버리지, ID 매칭, 상위 점수, 채널 합의, 글자수) → sufficient/weak/insufficient; 옵션 LLM 판정(missing, followup). 부족하면 예산(attempt/token/latency) 안에서 rules → expand → graph → wide → mcp 순으로 라운드 재검색, 개선되면 채택.',out:'evidence_check {"verdict": "insufficient", "reasons": ["keyword coverage 0.33 < 0.50"]}\nfallback {"level": "rules", "verdict": "insufficient", "improved": false}',look:'insufficient 면 LLM 답변 대신 insufficient_data 응답(토큰 절약) + 포렌식 자동.',tg:['evidence_check','evidence_check_llm','fallback_loop','mcp_sources'],tu:['evidence_min_cover','evidence_min_score','fallback_max_attempts','fallback_token_budget','fallback_latency_ms','fallback_levels']},
+  {k:'answer',t:'답변 생성',cmd:'python -m llmwiki prompts show answer_guide',what:'prompts/answer_system.md(규칙) + answer_guide.md(구조: 핵심 → 상세 설명 → 근거 표 → 미확인 → 상충) + 길이 목표. LLM 없으면 같은 구조를 근거 원문 문장으로 채운 추출식 답변(핵심·문서별 상세·관계·근거 표·미확인 용어). weak 면 경고 배너.',out:'answer_llm {"cited": [1,2,4], "answer_chars": 1830, "length_target": "normal"}',look:'너무 짧으면 근거/컨텍스트 잘림·length_target, 너무 길면 근거 밖 서술(포렌식).',tg:['llm_answer'],tu:['answer_length_target','answer_max_tokens','answer_effort']},
+  {k:'claim',t:'claim 검증',cmd:'python -m llmwiki tuning set claim_policy=drop',what:'답변을 문장으로 분해 → 사실 문장(숫자·ID·서술)마다 [C#] 존재 + 인용 근거에 핵심 토큰(ID·수치·명사)이 있는 비율(support) → supported/partial/unsupported; 옵션 LLM/NLI 판정. groundedness·citation_precision. 미지원은 [미확인] 표기/제거/재작성.',out:'claim_check {"n_factual": 6, "supported": 5, "unsupported": 1, "groundedness": 0.83}',look:'groundedness < claim_min_groundedness 면 경고 + 포렌식.',tg:['claim_check','claim_check_llm','answer_refine'],tu:['claim_support_min','claim_policy','claim_min_groundedness']},
+  {k:'after',t:'포렌식 · 자가진화 · 로그',cmd:'python -m llmwiki forensic last',what:'근거 부족/낮은 groundedness 면 diagnose(단계별 규칙) → forensics 테이블. evolve_capture(갭 제안) → episode(메모리) → query_log/requests(trace, run_id) → logs/.',out:'forensic #12 request=444 verdict=insufficient\n  [error] fts_search FTS 0건 — 질의 용어가 코퍼스에 없거나 표기가 다름',look:'logs grep --request <id> 로 같은 요청의 로그.',tg:['forensic_auto','evolve_capture','log_stages'],tu:['forensic_min_events']}]},
+ evolve:{title:'Self-evolving (제안 → 승인 → 검증)',entry:'evolve status|apply|reject · memory decay|consolidate · Web › Evolve',steps:[
+  {k:'capture',t:'제안 생성',cmd:'python -m llmwiki evolve status',what:'질의 갭(시드 없음·낮은 점수·무인용) · 피드백(👎+정정 → wiki_note) · LLM 리뷰 · 포렌식 consolidate(반복 corpus_gap/query_rule/tuning) · MCP wiki_propose.',out:'pending=3  #5 corpus_gap conf=0.70 strength=1.30 [forensics] {"topic": "블루투스 코덱"}',look:'origin/strength/confidence.',tg:['evolve_capture','evolve_from_forensics'],tu:['evolve_min_confidence','forensic_min_events']},
+  {k:'decay',t:'메모리 decay',cmd:'python -m llmwiki memory decay',what:'proposals.strength × 0.5^(경과/반감기). 임계 미만 미승인 제안은 archived(삭제 안 함). pin strength 도 감쇠, 재사용·긍정 피드백 시 강화.',out:'{"proposals_decayed": 4, "proposals_archived": 1, "pins_decayed": 0}',look:'스케줄에 주 1회.',tg:['memory_decay'],tu:['memory_half_life_days','memory_archive_strength']},
+  {k:'apply',t:'승인 · 적용 (HITL)',cmd:'python -m llmwiki evolve apply 5',what:'스냅샷(DB·rules·wiki·config) → 종류별 적용(synonym/alias/entity/relation/wiki_note/query_rule/corpus_gap 기록; tuning 은 사람이) → 필요 시 재빌드 → 회귀 평가 → 악화 시 롤백.',out:'{"status": "applied", "before": {"hit@k": 0.88}, "after": {"hit@k": 0.92}}',look:'evolve_auto_apply 는 기본 OFF.',tg:['evolve_auto_apply'],tu:[]},
+  {k:'trial',t:'회귀 trial',cmd:'python -m llmwiki trial compare baseline t1',what:'설정 스냅샷과 지표(hit@k·MRR·groundedness·citation precision·insufficient/fallback rate·p95·tokens·coverage) 저장 → 2~4개 비교(Δ, 질문별 승/패, 설정 diff, 추천).',out:'| hit@k | 0.88 | 0.92 | +0.040 |',look:'평가 경로 = 사용자 경로(같은 query()).',tg:[],tu:[]}]}};
+let curFlow='build',curStep=0;
+function renderFlowPick(){$('#flow-pick').innerHTML=Object.keys(FLOWS).map(k=>`<button class="${k===curFlow?'active':''}" data-f="${k}">${esc(FLOWS[k].title)}</button>`).join('');$$('#flow-pick button').forEach(b=>b.onclick=()=>{curFlow=b.dataset.f;curStep=0;renderFlowPick();renderChain();});}
+function renderChain(){const f=FLOWS[curFlow];$('#flow-chain').innerHTML=f.steps.map((s,i)=>`<div class="node ${s.opt?'opt':''} ${i===curStep?'sel':''}" data-i="${i}"><b>${i+1}. ${esc(s.t)}</b><span class="k">${esc(s.k)}</span></div>`+(i<f.steps.length-1?'<div class="arrow">→</div>':'')).join('');$$('#flow-chain .node').forEach(n=>n.onclick=()=>{curStep=+n.dataset.i;renderChain();});renderStep();}
+function renderStep(){const f=FLOWS[curFlow],s=f.steps[curStep];$('#flow-step').innerHTML=`<div class="step"><div class="muted small">진입: ${esc(f.entry)}</div><h4>${curStep+1}/${f.steps.length} · ${esc(s.t)} <code>${esc(s.k)}</code>${s.opt?' <span class="chip u">옵션</span>':''}</h4><p class="why"><b>하는 일</b> — ${esc(s.what)}</p>${s.cmd?`<b class="small">예제 명령</b><pre>${esc(s.cmd)}</pre>`:''}<b class="small">출력/trace 예</b><pre>${esc(s.out)}</pre><div class="hint"><b>확인 포인트</b> — ${esc(s.look)}</div><div>${s.tg.map(t=>`<span class="chip t">토글 ${esc(t)}</span>`).join('')}${s.tu.map(t=>`<span class="chip u">튜닝 ${esc(t)}</span>`).join('')}</div><div class="stepper" style="margin-top:8px"><button id="prev" ${curStep===0?'disabled':''}>← 이전</button><button id="next" ${curStep===f.steps.length-1?'disabled':''}>다음 →</button></div></div>`;$('#prev').onclick=()=>{curStep--;renderChain();};$('#next').onclick=()=>{curStep++;renderChain();};}
+renderFlowPick();renderChain();
+// ---------------- CLI 카탈로그 ----------------
+const CLI=[
+ ['빌드/운영','health [--quick] [--for-build]','환경·프로바이더·DB·디스크·코퍼스 점검 (빌드 전 자동)','health.py'],
+ ['빌드/운영','build [--full] [--force] [--no-reset] [--purge-logs]','증분/전체 색인. --full 은 health 통과 후 초기화. 락·health·verify·alerts','pipeline.py'],
+ ['빌드/운영','build status','진행 중 빌드(락 pid)·임베딩 진행률·마지막 빌드·lint 요약','pipeline.build_status'],
+ ['빌드/운영','build verify [--fix]','정합성 검사 (FTS↔청크, coverage, 댕글링, 고아, 위키 stale, doc_meta)','store.verify'],
+ ['빌드/운영','embed report|status|runs|clear-cache','coverage(유형별)·실패·캐시·실행 이력·진행률','embed_run.py'],
+ ['빌드/운영','corpus lint [--all] | types | schema <t> | example <t> | lint-file <path> | stats','문서 계약 검사/스키마/예시','schema.py'],
+ ['빌드/운영','mcp-source list|test|ingest [--since --dry-run]|enrich "q"|fetch <src> <tool> [json]','외부 MCP 소스 (Mango 등)','mcp_client.py'],
+ ['빌드/운영','watch [--interval] [--once]','stat 스캔 → 변경 시 증분 빌드 (보조 경로)','pipeline.auto_build_tick'],
+ ['빌드/운영','maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|purge_requests','DB 유지보수','pipeline.maintenance'],
+ ['빌드/운영','system [--target-docs --daily-new --horizon-days]','규모 전망·빌드 이력·질의 지연·캐시·워처','pipeline.system_info'],
+ ['질의','query "…" [--k] [--no-log] [--preset a,b] [--trace] [--json] [--debug 0|1|2] [--no-<toggle>]','질의 → 구조화 답변·근거·판정·claim·포렌식','query_engine.py'],
+ ['질의','search fts|vector|graph "…" [--k]','단일 채널 디버그','retrieval.py'],
+ ['질의','rules show|stats|path|add <type> <term> <values…>|remove <type> <term> [v]|test "q"','규칙 기반 질의 확장 사전','query_rules.py'],
+ ['질의','time "지난주 …"','한국어 시간 표현 파싱 확인','timeparse.py'],
+ ['질의','pin list|add (--doc|--chunk) [--keywords|--query|--always|--doc-types] [--weight]|remove <id>|test "q"','고정 근거','pins.py'],
+ ['질의','precompute run [--from-log N]|status|clear [--stale]|doc-vectors','답변 사전 계산 캐시·문서 카드 벡터','precompute.py'],
+ ['질의','forensic last|list|summary|<request_id> [--llm]','포렌식 진단/조회/집계','forensic.py'],
+ ['품질','eval [--k] [--matrix] [--questions f] [--preset]','회귀 평가 (사용자 경로와 동일)','pipeline.evaluate'],
+ ['품질','trial run --name A [--preset p] [--set k=v]… [--questions f] | list | compare A B [C D] [--md] | report A | show A','trial 저장·비교','trials.py'],
+ ['품질','fusion show|compare [--methods rrf,zscore,…] [--k] [--questions f]','융합 방식 비교','fusion.py'],
+ ['진화','evolve status|list|apply <id> [--no-eval]|reject <id> [note]|review|feedback <qid> <±1> [note]','제안 관리 (HITL)','evolve.py'],
+ ['진화','memory status|decay|consolidate|episodes','에피소드·감쇠·통합','memory.py'],
+ ['진화','wiki [--min-degree]','위키 페이지 재생성','wiki.py'],
+ ['설정','config show [--effective]|set k=v…|reset|paths','설정 보기(출처 포함)/변경/파일 위치','config.py'],
+ ['설정','models [show|test|set k=v…]','역할별 LLM/임베더/rerank API/agents 상태·연결 테스트','providers.py'],
+ ['설정','tuning show [--stage]|set k=v…|reset [k]|doc','튜닝 파라미터 (docs/TUNING.md 생성)','tuning.py'],
+ ['설정','preset list|show <n>|apply <a> [<b>…] [--save]|diff <n>','프리셋 (품질/속도/토큰/offline/deep_research)','presets.py'],
+ ['설정','prompts list|show <n>|reset <n>|path <n>','프롬프트/답변 가이드 파일','prompts.py'],
+ ['관측','requests list [--kind] [--limit]|last|show <id>','요청별 프로파일 trace','store.requests'],
+ ['관측','logs tail [-n] [--file llmwiki|error|build|query]|grep --request <id>|--run <run_id>|--text|--level|--since 1h|files|dir','JSONL 로그 조회 (run_id 연결)','logging_setup.py'],
+ ['관측','arch [--flow query|build|evolve|watch]','구조·흐름·토글·튜닝 텍스트 도식','architecture.py'],
+ ['관측','graph [--limit] [--community] [--provenance explicit,rule,…] [--types issue,cl]','그래프 요약/간선(provenance·confidence)','pipeline.graph_export'],
+ ['관측','entity <name|e:id>','엔티티 상세 (doc_refs·관계 출처)','pipeline.entity_detail'],
+ ['관측','docs | stats','문서 목록(유형/ID/날짜) / 인덱스 통계·프로바이더','store.py'],
+ ['인터페이스','serve [--port 8765] [--host]','Web UI (7그룹, 테마, 콘솔)','web/server.py'],
+ ['인터페이스','mcp','MCP stdio 서버 (wiki_* 7종)','mcp.py']];
+function renderCli(){const f=($('#cli-filter').value||'').toLowerCase(),g=$('#cli-group').value;const rows=CLI.filter(r=>(!g||r[0]===g)&&(!f||r.join(' ').toLowerCase().includes(f)));$('#cli-table').innerHTML='<table><tr><th>영역</th><th>명령</th><th>설명</th><th>모듈</th></tr>'+rows.map(r=>`<tr><td>${esc(r[0])}</td><td><code>python -m llmwiki ${esc(r[1])}</code></td><td>${esc(r[2])}</td><td class="muted small">${esc(r[3])}</td></tr>`).join('')+'</table>';}
+$('#cli-group').innerHTML='<option value="">전체 영역</option>'+[...new Set(CLI.map(r=>r[0]))].map(g=>`<option>${esc(g)}</option>`).join('');$('#cli-filter').oninput=renderCli;$('#cli-group').onchange=renderCli;renderCli();
+// ---------------- 설정 파일 ----------------
+const FILES=[['config.json','코퍼스 경로, 프로바이더/역할별 모델(8역할), 56 토글, 운영 수치(배치·WAL·로그·timezone), OpenAI/rerank 엔드포인트','즉시(서버 reload) · config set','config.py Settings/Toggles'],['.env','API 키(ANTHROPIC/OPENAI/VOYAGE/RERANK/MCP 토큰) + LLMWIKI_<KEY>, LLMWIKI_TOGGLE_<NAME>, LLMWIKI_<ROLE>_MODEL, LLMWIKI_<NAME>_PATH','프로세스 시작','config.env_overrides()'],['tuning.json','알고리즘 상수 130+ (기본값과 다른 값만) — 단계: chunk_index embed graph_build time_scope query_rules router query_expand fts_search vector_search graph_search rrf_fuse rerank context evidence answer claim forensic','즉시 · tuning set · Web 튜닝','tuning.py TUNABLES'],['presets.json','quality/speed/token/offline/deep_research — toggles+tuning+settings 묶음, 뒤가 우선·충돌 보고','--preset(요청 단위) · preset apply --save','presets.py'],['query_rules.json','acronym/synonym/alias/related/exclude/compound 사전','즉시 · rules add/test','query_rules.py'],['data/rules.json','그래프 엔티티 사전·관계 정규식 · id_patterns · link_rules · explicit_rels · related_key_type · types_for_cooccur','재빌드 · Web 그래프 규칙','graph_rules.py'],['schemas/*.json','common + 유형별 스키마(fields/required/enum/id_pattern/sections) · infer.json(경로/파일명/제목 추론) · migrations.json(schema_version)','lint/빌드 · corpus types','schema.py'],['prompts/*.md','answer_system · answer_guide · rerank · expand · extract · summarize · review · evidence_check · claim_check · forensic · router · compress','즉시(mtime) · prompts show','prompts.py'],['pins.json','조건부 고정 근거(when: always/keywords/query/doc_types), strength','즉시 · pin add','pins.py'],['agents.json','headless 에이전트 명령 템플릿(opencode/claude/codex/mock): command·prompt_mode·files_flag·output·text_paths·usage_paths·timeout','즉시 · provider=headless:<name>','headless.py'],['mcp_sources.json','외부 MCP 소스: command/env/timeout · ingest[](tool·args·result_path·doc_type·필드 매핑) · enrich[]','즉시 · mcp-source test','mcp_client.py'],['eval/questions.json','회귀 평가셋 [{q, expect_docs, expect_terms}]','eval · trial','evalset.py'],['logs/','llmwiki.log · error.log · build.log · query.log (JSON Lines, 로테이션)','logs tail/grep','logging_setup.py'],['data/','llmwiki.sqlite3 · rules.json · mcp_cache/ · snapshots/ · build.lock','–','store.py']];
+$('#files-table').innerHTML='<table><tr><th>파일</th><th>내용</th><th>반영</th><th>모듈</th></tr>'+FILES.map(r=>`<tr><td><code>${esc(r[0])}</code></td><td>${esc(r[1])}</td><td class="small">${esc(r[2])}</td><td class="muted small">${esc(r[3])}</td></tr>`).join('')+'</table>';
+// ---------------- 데이터 모델 ----------------
+const DATA=[['docs','doc_id, hash, mtime, size, title, kind, meta','문서·증분 diff'],['doc_meta','doc_type, ext_id, date/ts, tags, modules, hw_chip/rev, related, period, lint','문서 계약 정규화 메타'],['chunks / chunks_fts / chunks_tri','chunk_id, heading, text / FTS5(heading, body, tokens+메타토큰) / trigram','청크·색인·폴백'],['embeddings / embedding_cache / doc_vectors','chunk_id, provider, dim, vec / (provider, model, sha) / doc_id, card','벡터(float32/16)·캐시·문서 카드'],['entities / entities_fts','entity_id, name, type, aliases, degree, community, doc_refs, n_docs','노드(문서 ID 노드) + 원본 문서 참조'],['relations','src, dst, rel, weight, confidence, provenance(explicit/rule/cooccur/llm/human), chunk_id','간선'],['mentions / communities','entity↔chunk / 요약','그래프 검색·위키'],['requests','id, kind, run_id, ms, tokens, config, result, trace','요청 프로파일'],['query_log / episodes','질의·피드백 / strength, last_reinforced','자가진화·피드백 부스트'],['forensics','request_id, verdict, groundedness, findings, suggestions, topics','포렌식 누적'],['proposals / evolution_log / synonyms','kind, payload, confidence, status, strength','제안(HITL)'],['trials','name, build_version, config, summary, rows','회귀 비교'],['answer_cache / embed_runs / kv','key, build_version / run 통계 / build_version·last_build·embed_progress·lint_summary','캐시·상태']];
+$('#data-table').innerHTML='<table><tr><th>테이블</th><th>키 컬럼</th><th>용도</th></tr>'+DATA.map(r=>`<tr><td><code>${esc(r[0])}</code></td><td class="small">${esc(r[1])}</td><td>${esc(r[2])}</td></tr>`).join('')+'</table>';
+</script>
+</body>
+</html>

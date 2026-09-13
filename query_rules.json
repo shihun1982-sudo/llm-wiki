@@ -1,0 +1,153 @@
+{
+  "_comment": "규칙 기반 질의 확장 사전. 유형별 적용 방식이 다름 (acronym=동치 구문, synonym=OR 가중, alias=정규화 치환, related=보조 리스트, exclude=NOT+페널티, compound=복합어 분리).",
+  "acronym": {
+    "PDCCH": [
+      "Physical Downlink Control Channel"
+    ],
+    "PDSCH": [
+      "Physical Downlink Shared Channel"
+    ],
+    "PUSCH": [
+      "Physical Uplink Shared Channel"
+    ],
+    "AGC": [
+      "Automatic Gain Control",
+      "자동 이득 제어"
+    ],
+    "DMA": [
+      "Direct Memory Access"
+    ],
+    "PA": [
+      "Power Amplifier",
+      "전력 증폭기"
+    ],
+    "PHY": [
+      "Physical Layer",
+      "물리 계층"
+    ],
+    "HARQ": [
+      "Hybrid ARQ"
+    ],
+    "RF": [
+      "Radio Frequency"
+    ],
+    "FIFO": [
+      "First In First Out"
+    ],
+    "ISR": [
+      "Interrupt Service Routine",
+      "인터럽트 서비스 루틴"
+    ],
+    "CL": [
+      "Change List"
+    ],
+    "TC": [
+      "Test Case",
+      "테스트 케이스"
+    ],
+    "VP": [
+      "Virtual Platform",
+      "가상 플랫폼"
+    ]
+  },
+  "synonym": {
+    "재시작": [
+      "리셋",
+      "restart",
+      "reset",
+      "재기동"
+    ],
+    "오류": [
+      "에러",
+      "error",
+      "실패",
+      "fault"
+    ],
+    "지연": [
+      "딜레이",
+      "delay",
+      "latency"
+    ],
+    "수정": [
+      "fix",
+      "패치",
+      "patch"
+    ],
+    "검증": [
+      "verify",
+      "테스트",
+      "validation"
+    ],
+    "타이밍": [
+      "timing",
+      "시간"
+    ],
+    "레지스터": [
+      "register",
+      "reg"
+    ],
+    "인터럽트": [
+      "interrupt",
+      "IRQ"
+    ],
+    "이슈": [
+      "issue",
+      "문제",
+      "결함",
+      "버그"
+    ]
+  },
+  "alias": {
+    "모뎀B": "MDM9x-B1",
+    "modem b1": "MDM9x-B1",
+    "코딩룰": "coding rule",
+    "코딩 규칙": "coding rule"
+  },
+  "related": {
+    "DMA underrun": [
+      "FIFO overflow",
+      "버퍼 언더런",
+      "DMA 타임아웃"
+    ],
+    "AGC": [
+      "RSSI",
+      "gain table"
+    ],
+    "PA": [
+      "TX power",
+      "송신 전력"
+    ],
+    "PHY 재시작": [
+      "PHY init",
+      "PHY reset sequence"
+    ]
+  },
+  "exclude": {
+    "시뮬레이터": [
+      "simulator",
+      "simulation"
+    ],
+    "예제": [
+      "sample",
+      "example"
+    ]
+  },
+  "compound": {
+    "재전송타이머": [
+      "재전송",
+      "타이머"
+    ],
+    "전력제어": [
+      "전력",
+      "제어"
+    ],
+    "이득테이블": [
+      "이득",
+      "테이블"
+    ],
+    "인터럽트핸들러": [
+      "인터럽트",
+      "핸들러"
+    ]
+  }
+}

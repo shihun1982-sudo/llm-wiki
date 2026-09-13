@@ -1,0 +1,5 @@
+# 선택 패키지 (Python 3.9+ 권장). 설치: pip install -r setup/requirements-optional.txt
+anthropic>=0.40            # Claude SDK (없으면 raw HTTP 로 동작)
+sentence-transformers      # 로컬 의미 임베더(embed_provider=st) / 크로스인코더 리랭크(rerank_method=cross_encoder)
+kiwipiepy                  # 한국어 형태소 분석기 (tuning tokenizer=kiwi|auto) — 설치 없으면 heuristic 폴백
+pyyaml                     # front matter 파서 (없으면 내장 미니 YAML 파서 사용)

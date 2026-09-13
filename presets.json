@@ -1,0 +1,166 @@
+{
+  "_comment": "설정 프리셋. toggles/tuning/settings 를 묶어 `preset apply <name>` 또는 --preset 으로 적용. 새 프리셋은 항목 추가.",
+  "quality": {
+    "desc": "품질 최적화 — LLM 개입 단계(확장·근거 판정·claim 검증·fallback)를 모두 켜고 후보/컨텍스트를 넓힘. 지연·토큰 ↑.",
+    "toggles": {
+      "router": true,
+      "rerank": true,
+      "rerank_llm": true,
+      "llm_answer": true,
+      "context_trim": false,
+      "dedupe_hits": true,
+      "query_rules": true,
+      "time_scope": true,
+      "query_expand": true,
+      "query_decompose": true,
+      "evidence_check": true,
+      "evidence_check_llm": true,
+      "fallback_loop": true,
+      "claim_check": true,
+      "claim_check_llm": true,
+      "answer_refine": true,
+      "pins": true,
+      "forensic_auto": true
+    },
+    "tuning": {
+      "fts_mode": "tiered",
+      "prf_enabled": true,
+      "context_neighbors": 1,
+      "query_expand_n": 3,
+      "fallback_max_attempts": 3,
+      "answer_length_target": "long",
+      "rerank_method": "auto"
+    },
+    "settings": {
+      "top_k_fts": 20,
+      "top_k_vector": 20,
+      "top_k_graph": 16,
+      "top_k_final": 10,
+      "rerank_candidates": 24,
+      "context_max_chars": 14000,
+      "answer_max_tokens": 4000,
+      "answer_effort": "high"
+    }
+  },
+  "speed": {
+    "desc": "속도 최적화 — LLM 호출을 답변 1회로 줄이고 후보 수·홉 수를 낮춤. 캐시·프리컴퓨트 사용.",
+    "toggles": {
+      "rerank_llm": false,
+      "query_expand": false,
+      "query_decompose": false,
+      "evidence_check": true,
+      "evidence_check_llm": false,
+      "fallback_loop": false,
+      "claim_check": true,
+      "claim_check_llm": false,
+      "answer_refine": false,
+      "query_cache": true,
+      "precompute": true,
+      "context_trim": true,
+      "dedupe_hits": true
+    },
+    "tuning": {
+      "fts_mode": "or",
+      "prf_enabled": false,
+      "context_neighbors": 0,
+      "rerank_method": "local",
+      "answer_length_target": "normal"
+    },
+    "settings": {
+      "top_k_fts": 10,
+      "top_k_vector": 10,
+      "top_k_graph": 8,
+      "top_k_final": 6,
+      "graph_hops": 1,
+      "rerank_candidates": 12,
+      "context_max_chars": 7000,
+      "answer_effort": "low"
+    }
+  },
+  "token": {
+    "desc": "토큰 최적화 — 입력 컨텍스트 압축·중복 제거·LLM 판정 최소화. 답변 LLM 외 호출 0회 목표.",
+    "toggles": {
+      "rerank_llm": false,
+      "query_expand": false,
+      "query_decompose": false,
+      "evidence_check_llm": false,
+      "fallback_loop": false,
+      "claim_check": true,
+      "claim_check_llm": false,
+      "answer_refine": false,
+      "evidence_compress": false,
+      "context_trim": true,
+      "dedupe_hits": true,
+      "query_cache": true
+    },
+    "tuning": {
+      "rerank_method": "local",
+      "context_neighbors": 0,
+      "context_graph_relations": 5,
+      "answer_length_target": "short"
+    },
+    "settings": {
+      "top_k_final": 5,
+      "context_max_chars": 5000,
+      "context_chunk_chars": 700,
+      "answer_max_tokens": 1200,
+      "answer_effort": "low"
+    }
+  },
+  "offline": {
+    "desc": "오프라인 — LLM/외부 API 없이 추출식 답변·로컬 리랭크·규칙 확장만 사용.",
+    "toggles": {
+      "llm_answer": false,
+      "rerank_llm": false,
+      "query_expand": false,
+      "evidence_check_llm": false,
+      "claim_check_llm": false,
+      "answer_refine": false,
+      "llm_graph": false,
+      "community_summary": false,
+      "mcp_sources": false
+    },
+    "tuning": {
+      "rerank_method": "local"
+    },
+    "settings": {
+      "llm_provider": "none"
+    }
+  },
+  "deep_research": {
+    "desc": "심층 조사(unified search) — 확장·분해·fallback 을 최대로, 긴 구조화 답변. MCP/에이전트 활용 시 함께 사용.",
+    "toggles": {
+      "query_rules": true,
+      "time_scope": true,
+      "query_expand": true,
+      "query_decompose": true,
+      "evidence_check": true,
+      "evidence_check_llm": true,
+      "fallback_loop": true,
+      "claim_check": true,
+      "claim_check_llm": true,
+      "answer_refine": true,
+      "rerank_llm": true,
+      "forensic_auto": true
+    },
+    "tuning": {
+      "query_expand_n": 4,
+      "fallback_max_attempts": 4,
+      "fallback_token_budget": 60000,
+      "fallback_latency_ms": 120000,
+      "context_neighbors": 1,
+      "answer_length_target": "long"
+    },
+    "settings": {
+      "top_k_fts": 30,
+      "top_k_vector": 30,
+      "top_k_graph": 20,
+      "top_k_final": 14,
+      "graph_hops": 3,
+      "rerank_candidates": 32,
+      "context_max_chars": 20000,
+      "answer_max_tokens": 6000,
+      "answer_effort": "high"
+    }
+  }
+}

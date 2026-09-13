@@ -1,0 +1,8 @@
+{
+  "_comment": "단계별 튜닝 파라미터 오버라이드. 키/기본값/설명은 docs/TUNING.md 또는 `python -m llmwiki tuning show`. 기본값과 같은 값은 저장하지 않습니다.",
+  "query_expand_n": 3,
+  "fallback_max_attempts": 3,
+  "prf_enabled": true,
+  "context_neighbors": 1,
+  "answer_length_target": "long"
+}

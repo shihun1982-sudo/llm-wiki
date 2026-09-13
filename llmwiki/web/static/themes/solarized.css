@@ -1,0 +1,9 @@
+:root[data-theme="solarized"]{
+  --surface:#fdf6e3; --page:#fdf6e3; --card:#fefbf0; --ink:#073642; --ink2:#586e75; --muted:#93a1a1; --grid:#eee8d5; --axis:#d3ccb6;
+  --hover:#f3ecd6; --sel:#ede4c7; --perf-bg:#f6f0dd; --perf-border:#e2d9bd;
+  --s1:#268bd2; --s2:#cb4b16; --s3:#2aa198; --s4:#b58900; --s5:#d33682; --s6:#859900; --s7:#6c71c4; --s8:#dc322f;
+  --good:#859900; --warn:#b58900; --serious:#cb4b16; --critical:#dc322f;
+  --log-bg:#002b36; --log-ink:#93a1a1; --toast-bg:#073642; --toast-ink:#fdf6e3; --btn-ink:#fdf6e3;
+  --node-on:#e8f1f7; --node-off:#f0ead6; --node-err:#f9dcd9; --imp-bg:#f7efd0; --chip-tune-bg:#f7efd0; --chip-tune-ink:#7a5c00; --chip-ms-bg:#e0f2ef; --chip-ms-ink:#1a6f68;
+  --banner-warn-bg:#f7efd0; --banner-err-bg:#f9dcd9; --banner-ok-bg:#e0f2ef;
+}

@@ -1,0 +1,9 @@
+:root[data-theme="high-contrast"]{
+  --surface:#ffffff; --page:#ffffff; --card:#ffffff; --ink:#000000; --ink2:#111111; --muted:#333333; --grid:#000000; --axis:#000000;
+  --hover:#ffff99; --sel:#ffee66; --perf-bg:#ffffff; --perf-border:#000000;
+  --s1:#0000cc; --s2:#cc3300; --s3:#007a3d; --s4:#a36b00; --s5:#b3005a; --s6:#006600; --s7:#4b0082; --s8:#cc0000;
+  --good:#007a3d; --warn:#a36b00; --serious:#cc3300; --critical:#cc0000;
+  --log-bg:#000000; --log-ink:#ffffff; --toast-bg:#000000; --toast-ink:#ffffff; --btn-ink:#ffffff;
+  --node-on:#e6e6ff; --node-off:#eeeeee; --node-err:#ffdddd; --imp-bg:#fff5cc; --chip-tune-bg:#fff5cc; --chip-tune-ink:#5a3a00; --chip-ms-bg:#ddffe9; --chip-ms-ink:#004d26;
+  --banner-warn-bg:#fff5cc; --banner-err-bg:#ffdddd; --banner-ok-bg:#ddffe9;
+}

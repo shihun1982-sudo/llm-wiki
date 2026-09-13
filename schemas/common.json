@@ -1,0 +1,68 @@
+{
+  "title": "모든 문서 공통 필드",
+  "fields": {
+    "schema_version": {
+      "type": "int",
+      "required": true,
+      "desc": "스키마 버전 (현재 1)"
+    },
+    "doc_type": {
+      "type": "string",
+      "required": true,
+      "desc": "issue | cl | sw_design | hw_design | coding_rule | weekly_report | tc_list | (확장)"
+    },
+    "id": {
+      "type": "string",
+      "required": true,
+      "desc": "문서 ID (유형별 규칙). 그래프 노드 ID 가 됨"
+    },
+    "title": {
+      "type": "string",
+      "required": true,
+      "desc": "제목"
+    },
+    "date": {
+      "type": "date",
+      "required": true,
+      "desc": "기준일 YYYY-MM-DD (시간 질의·최신성)"
+    },
+    "author": {
+      "type": "string",
+      "required": false
+    },
+    "status": {
+      "type": "string",
+      "required": false,
+      "desc": "유형별 enum"
+    },
+    "tags": {
+      "type": "list",
+      "required": false,
+      "desc": "검색 태그 (FTS 토큰에 포함)"
+    },
+    "module": {
+      "type": "list",
+      "required": false,
+      "desc": "SW 모듈/컴포넌트 (code map 연결)"
+    },
+    "hw": {
+      "type": "map",
+      "required": false,
+      "desc": "{chip, rev}"
+    },
+    "related": {
+      "type": "map",
+      "required": false,
+      "desc": "{issues:[], cls:[], docs:[], tcs:[]} → explicit 관계"
+    },
+    "summary": {
+      "type": "string",
+      "required": false,
+      "desc": "한 줄 요약 (없으면 첫 문단)"
+    }
+  },
+  "sections": {
+    "recommended": [],
+    "required": []
+  }
+}

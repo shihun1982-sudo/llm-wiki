@@ -1,0 +1,21 @@
+{
+  "title": "주간 업무 보고",
+  "extends": "common",
+  "id_pattern": "^WR-\\d{4}-W\\d{2}(-[A-Za-z0-9_]+)?$",
+  "fields": {
+    "period": {
+      "type": "map",
+      "required": true,
+      "desc": "{from, to}"
+    }
+  },
+  "sections": {
+    "recommended": [
+      "업무 요약",
+      "이슈 요약",
+      "CL 리뷰 요약",
+      "다음 주 계획"
+    ],
+    "required": []
+  }
+}

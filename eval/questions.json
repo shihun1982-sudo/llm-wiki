@@ -1,0 +1,232 @@
+[
+  {
+    "q": "ISSUE-2001 의 원인과 수정 CL 은?",
+    "expect_docs": [
+      "ISSUE-2001"
+    ],
+    "expect_terms": [
+      "FIFO",
+      "CL-55301"
+    ]
+  },
+  {
+    "q": "RX DMA underrun 발생 시 PHY 재시작 실패 원인",
+    "expect_docs": [
+      "ISSUE-2001"
+    ],
+    "expect_terms": [
+      "FIFO"
+    ]
+  },
+  {
+    "q": "CL-55302 는 어떤 이슈를 수정했나?",
+    "expect_docs": [
+      "CL-55302"
+    ],
+    "expect_terms": [
+      "ISSUE-2002"
+    ]
+  },
+  {
+    "q": "AGC 수렴 지연 이슈의 원인은?",
+    "expect_docs": [
+      "ISSUE-2002"
+    ],
+    "expect_terms": [
+      "off-by-one"
+    ]
+  },
+  {
+    "q": "HW rev B1 에서 t_setup 은 몇 ns 인가?",
+    "expect_docs": [
+      "HWD-PHY-TIMING-B1"
+    ],
+    "expect_terms": [
+      "8ns"
+    ]
+  },
+  {
+    "q": "PHY 리셋 해제 후 안정화 대기 시간 (rev A2)",
+    "expect_docs": [
+      "HWD-PHY-TIMING-A2"
+    ],
+    "expect_terms": [
+      "50us"
+    ]
+  },
+  {
+    "q": "ISR 안에서 blocking 대기를 써도 되나?",
+    "expect_docs": [
+      "RULE-ISR-001"
+    ],
+    "expect_terms": [
+      "workqueue"
+    ]
+  },
+  {
+    "q": "레지스터 접근 순서 규칙",
+    "expect_docs": [
+      "RULE-REG-002"
+    ],
+    "expect_terms": [
+      "t_setup"
+    ]
+  },
+  {
+    "q": "RX DMA 드라이버의 code map",
+    "expect_docs": [
+      "SWD-RX-DMA-01"
+    ],
+    "expect_terms": [
+      "drivers/rx_dma.c"
+    ]
+  },
+  {
+    "q": "지난주 주간 보고에서 리뷰한 CL",
+    "expect_docs": [
+      "WR-2026-W36"
+    ],
+    "expect_terms": [
+      "CL-"
+    ]
+  },
+  {
+    "q": "WR-2026-W34 이슈 요약",
+    "expect_docs": [
+      "WR-2026-W34"
+    ],
+    "expect_terms": [
+      "ISSUE-"
+    ]
+  },
+  {
+    "q": "TX 전력이 목표 대비 낮은 문제",
+    "expect_docs": [
+      "ISSUE-2003"
+    ],
+    "expect_terms": [
+      "1.5dB"
+    ]
+  },
+  {
+    "q": "HARQ 재전송 버퍼 포인터 꼬임 수정",
+    "expect_docs": [
+      "ISSUE-2004",
+      "CL-55304"
+    ],
+    "expect_terms": [
+      "ISR"
+    ]
+  },
+  {
+    "q": "PDCCH 디코딩 실패율 증가 이슈",
+    "expect_docs": [
+      "ISSUE-2005"
+    ],
+    "expect_terms": [
+      "PDCCH"
+    ]
+  },
+  {
+    "q": "rev B2 에서 추가된 레지스터",
+    "expect_docs": [
+      "HWD-PHY-TIMING-B2"
+    ],
+    "expect_terms": [
+      "AGC_LOOP_CFG"
+    ]
+  },
+  {
+    "q": "FIFO 임계값 기본값이 바뀐 리비전",
+    "expect_docs": [
+      "HWD-PHY-TIMING-B1"
+    ],
+    "expect_terms": [
+      "0x40"
+    ]
+  },
+  {
+    "q": "RX DMA 검증 TC 의 기대 결과",
+    "expect_docs": [
+      "TC-RX-DMA-001"
+    ],
+    "expect_terms": [
+      "1ms"
+    ]
+  },
+  {
+    "q": "클럭 전환 중 hang 이슈 원인",
+    "expect_docs": [
+      "ISSUE-2007"
+    ],
+    "expect_terms": [
+      "동기화"
+    ]
+  },
+  {
+    "q": "ISSUE-2006 관련 코딩 규칙",
+    "expect_docs": [
+      "RULE-ISR-001",
+      "ISSUE-2006"
+    ],
+    "expect_terms": [
+      "blocking"
+    ]
+  },
+  {
+    "q": "PHY 컨트롤러 드라이버 init 순서",
+    "expect_docs": [
+      "SWD-PHY-CTRL-02"
+    ],
+    "expect_terms": [
+      "리셋"
+    ]
+  },
+  {
+    "q": "9월 초 회의에서 논의한 AGC 이슈",
+    "expect_docs": [
+      "meeting_2026-09-02"
+    ],
+    "expect_terms": [
+      "ISSUE-2002"
+    ]
+  },
+  {
+    "q": "Physical Downlink Control Channel 디코더 문제",
+    "expect_docs": [
+      "ISSUE-2005"
+    ],
+    "expect_terms": [
+      "PDCCH"
+    ]
+  },
+  {
+    "q": "재전송타이머 초기화 누락",
+    "expect_docs": [
+      "ISSUE-2006",
+      "ISSUE-2004"
+    ],
+    "expect_terms": [
+      "재전송"
+    ]
+  },
+  {
+    "q": "DMA descriptor 정렬 오류 수정 CL",
+    "expect_docs": [
+      "CL-55308",
+      "ISSUE-2008"
+    ],
+    "expect_terms": [
+      "CL-55308"
+    ]
+  },
+  {
+    "q": "TC-RX-DMA-001 사전 조건",
+    "expect_docs": [
+      "TC-RX-DMA-001"
+    ],
+    "expect_terms": [
+      "FW 3.2"
+    ]
+  }
+]

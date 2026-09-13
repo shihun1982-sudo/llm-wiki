@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>LLM Wiki · FTS + Vector + GraphRAG (self-evolving)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/themes/dark.css">
+<link rel="stylesheet" href="/static/themes/high-contrast.css">
+<link rel="stylesheet" href="/static/themes/solarized.css">
+</head>
+<body>
+<header>
+  <div class="brand">LLM Wiki <span class="sub">FTS + Vector + GraphRAG · self-evolving</span></div>
+  <div id="provider-badge" class="badge">providers: …</div>
+  <div id="stats-badge" class="badge">index: …</div>
+  <div id="watch-badge" class="badge">auto-build: …</div>
+  <div id="alert-badge" class="badge hidden" title="마지막 빌드 알림">alerts</div>
+  <label class="theme">테마 <select id="theme-select"></select></label>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <h3>프리셋 <small>(체크 → 아래 토글에 즉시 반영, 요청 단위)</small></h3>
+    <div class="toggle-group" id="preset-box"></div>
+    <div id="preset-detail" class="preset-detail hidden"></div>
+    <h3>기능 토글 <small>(요청 단위 적용 · <span class="by-preset-legend">■</span> 프리셋이 정한 값)</small></h3>
+    <div id="toggle-groups"></div>
+    <div class="toggle-group"><div class="tg-title">Providers / 디버그 (요청 단위)</div>
+      <label title="이번 요청에만 쓸 LLM 프로바이더. (config) = config.json 값 그대로. auto = ANTHROPIC_API_KEY 있으면 anthropic → Ollama(모델 받아져 있을 때) → none(추출식). openai/headless 는 직접 선택.">LLM <select id="ov-llm"><option value="">(config)</option><option>auto</option><option>anthropic</option><option>openai</option><option>ollama</option><option>headless:opencode</option><option>mock</option><option>none</option></select></label>
+      <label title="이번 요청에만 쓸 answer 역할 모델명. 목록에서 고르거나 직접 입력. × 로 비우면 config 값. 저장은 Settings › 모델·프로바이더.">answer 모델 <span class="clearable"><input id="ov-answer-model" type="text" list="dl-llm-models" placeholder="(config)" style="width:150px"><button type="button" class="clr" data-clear="ov-answer-model" title="비우기 (config 값 사용)">×</button></span></label>
+      <label title="이번 요청에만 쓸 rerank 역할 모델명.">rerank 모델 <span class="clearable"><input id="ov-rerank-model" type="text" list="dl-llm-models" placeholder="(config)" style="width:150px"><button type="button" class="clr" data-clear="ov-rerank-model" title="비우기 (config 값 사용)">×</button></span></label>
+      <label>Embed <select id="ov-embed"><option value="">(config)</option><option>auto</option><option>hash</option><option>voyage</option><option>openai</option><option>ollama</option><option>st</option></select></label>
+      <label>top_k <input id="ov-k" type="number" min="1" max="30" placeholder="8" style="width:60px"></label>
+      <label>debug <select id="ov-debug"><option value="">(config)</option><option value="0">0 요약</option><option value="1">1 디버그</option><option value="2">2 프롬프트 샘플</option></select></label>
+      <datalist id="dl-llm-models"></datalist>
+    </div>
+    <div class="toggle-group">
+      <button id="btn-save-config" class="secondary">토글을 config.json 에 저장</button>
+      <button id="btn-reset-toggles" class="secondary">config 값으로 되돌리기</button>
+    </div>
+    <div class="cli-hint"><div class="tg-title">CLI 동등 명령</div><code id="cli-equiv">python -m llmwiki …</code></div>
+  </aside>
+
+  <main>
+    <nav class="groups">
+      <button data-group="ask" class="active">🔎 Ask</button>
+      <button data-group="corpus">📚 Corpus</button>
+      <button data-group="knowledge">🕸 Knowledge</button>
+      <button data-group="quality">📈 Quality</button>
+      <button data-group="evolve">🌱 Evolve</button>
+      <button data-group="settings">⚙ Settings</button>
+      <button data-group="observability">🩺 Observability</button>
+    </nav>
+    <nav class="tabs" data-group="ask"><button data-tab="query" class="active">질의 · 답변</button><button data-tab="search">채널 디버그</button></nav>
+    <nav class="tabs hidden" data-group="corpus"><button data-tab="build">빌드 · 상태</button><button data-tab="embed">임베딩 · coverage</button><button data-tab="contract">문서 계약 · lint</button><button data-tab="sources">MCP 소스</button></nav>
+    <nav class="tabs hidden" data-group="knowledge"><button data-tab="graph">그래프</button><button data-tab="wiki">위키</button><button data-tab="rules">그래프 규칙</button></nav>
+    <nav class="tabs hidden" data-group="quality"><button data-tab="trials">Trial 비교</button><button data-tab="eval">평가</button><button data-tab="forensics">포렌식</button></nav>
+    <nav class="tabs hidden" data-group="evolve"><button data-tab="evolve">제안 (HITL)</button><button data-tab="memory">메모리</button></nav>
+    <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="config">config.json</button></nav>
+    <nav class="tabs hidden" data-group="observability"><button data-tab="requests">요청 프로파일</button><button data-tab="logs">로그</button><button data-tab="arch">구조 · 흐름</button><button data-tab="system">시스템 · 규모</button><button data-tab="qlog">질의 로그</button><button data-tab="console">콘솔 (CLI)</button></nav>
+
+    <!-- ================= ASK ================= -->
+    <section id="tab-query" class="tab active">
+      <div class="row">
+        <input id="q" type="text" placeholder="질문을 입력하세요. 예) ISSUE-2001 의 원인과 수정 CL 은?  ·  지난주 리뷰한 CL  ·  HW rev B1 t_setup" />
+        <select id="q-mode" title="fast=speed 프리셋 · deep=deep_research 프리셋(확장·fallback 최대)"><option value="">normal</option><option value="fast">fast</option><option value="deep">deep (심층 조사)</option></select>
+        <button id="btn-query">질의</button>
+        <label class="inline"><input type="checkbox" id="q-log" checked> 로그/자가진화 기록</label>
+      </div>
+      <div class="samples" id="samples"></div>
+      <div id="query-out" class="hidden">
+        <div class="statrow" id="q-stats"></div>
+        <div id="q-banner" class="banner hidden"></div>
+        <div class="cols">
+          <div class="col">
+            <h3>답변 <span id="answer-mode" class="pill"></span> <span id="answer-ms" class="pill"></span> <span id="answer-cached" class="pill hidden">cached</span> <span id="answer-ground" class="pill"></span></h3>
+            <div id="answer" class="answer"></div>
+            <div class="feedback">
+              <button class="secondary" data-fb="1">👍 도움됨</button>
+              <button class="secondary" data-fb="-1">👎 틀림/부족</button>
+              <input id="fb-note" type="text" placeholder="정정 내용 (선택) → wiki 편집 노트 제안으로 저장">
+              <button class="secondary mini" id="btn-q-forensic">🔬 포렌식</button>
+              <span id="fb-result" class="muted"></span>
+            </div>
+            <div id="q-forensic" class="small hidden"></div>
+            <h3>근거 판정 · 검증 · 계획</h3>
+            <div id="q-evidence" class="kv"></div>
+            <h3>근거 문단 <small class="muted">회색 = 컨텍스트에서 제외 · 📌 = pin · 배지 = 부스트</small></h3>
+            <div id="hits"></div>
+          </div>
+          <div class="col">
+            <h3>단계별 프로파일 <small class="muted">이름 클릭 → meta · debug · samples</small> <button class="mini" id="btn-q-inspect">요청 프로파일에서 상세 보기</button></h3>
+            <div id="trace"></div>
+            <h3>라우터 / 시드 / 모델</h3>
+            <div id="route" class="kv"></div>
+            <h3>그래프 관계 (검색에 사용)</h3>
+            <div id="graph-rels" class="small"></div>
+            <h3>자가진화 제안</h3>
+            <div id="q-proposals" class="small muted"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-search" class="tab">
+      <div class="row">
+        <select id="s-channel"><option value="fts">fts</option><option value="vector">vector</option><option value="graph">graph</option></select>
+        <input id="s-q" type="text" placeholder="단일 채널 검색 디버그">
+        <input id="s-k" type="number" value="8" style="width:60px">
+        <button id="btn-search">검색</button>
+        <input id="rules-test-q" type="text" placeholder="규칙 확장 테스트 (query_rules)" style="max-width:280px"><button id="btn-rules-test" class="secondary">확장 보기</button>
+        <input id="time-test-q" type="text" placeholder="시간 표현 테스트" style="max-width:200px"><button id="btn-time-test" class="secondary">파싱</button>
+      </div>
+      <div id="search-out"></div>
+      <div id="search-trace"></div>
+    </section>
+
+    <!-- ================= CORPUS ================= -->
+    <section id="tab-build" class="tab">
+      <div class="row">
+        <button id="btn-build">증분 빌드</button>
+        <button id="btn-build-full" class="danger">전체 리빌드</button>
+        <label class="inline" title="색인 테이블을 비우고 처음부터 다시 만듭니다. 질의 로그·제안·동의어·위키 편집 노트는 보존"><input type="checkbox" id="build-reset" checked> 완전 초기화</label>
+        <button id="btn-scan" class="secondary" title="파일을 읽지 않고 stat 만으로 변경 여부 확인">변경 스캔만</button>
+        <button id="btn-health" class="secondary">Health 검사</button>
+        <button id="btn-verify" class="secondary">정합성 검증</button>
+        <button id="btn-verify-fix" class="secondary">검증 + 정리(fix)</button>
+        <span id="scan-result" class="muted small"></span>
+      </div>
+      <div class="muted small">코퍼스: <code id="corpus-dirs"></code> · 스케줄: OS 스케줄러(작업 스케줄러/cron)에서 <code>python -m llmwiki build</code> 호출 권장 (setup/schedule_build.ps1). 서버 워처는 Observability › 시스템.</div>
+      <div id="build-status" class="statrow"></div>
+      <div id="build-alerts"></div>
+      <pre id="build-log" class="log"></pre>
+      <div id="build-result"></div>
+      <div id="build-trace"></div>
+      <div id="health-out"></div>
+      <div id="verify-out"></div>
+      <h3>색인된 문서 <small class="muted">클릭 → 청크 보기 · 유형/ID/날짜는 문서 계약(front matter) 또는 추론</small></h3>
+      <div class="row"><input id="docs-filter" type="text" placeholder="필터 (doc_id / 유형 / ID)" style="max-width:320px"><span id="docs-count" class="muted small"></span></div>
+      <div id="docs"></div>
+    </section>
+
+    <section id="tab-embed" class="tab">
+      <div class="row"><button id="btn-embed-refresh" class="secondary">새로고침</button><button id="btn-embed-cache-clear" class="secondary">임베딩 캐시 비우기</button><button id="btn-docvec" class="secondary">문서 카드 벡터 재생성</button><span class="muted small">배치 크기·WAL 은 품질/질의 지연과 무관한 실행 안정성 계층입니다. 품질에 영향을 주는 것은 coverage 뿐입니다.</span></div>
+      <div id="embed-progress"></div>
+      <div class="cols"><div class="col"><h3>Coverage</h3><div id="embed-cov"></div></div><div class="col"><h3>실행 이력 (embed_runs)</h3><div id="embed-runs"></div><h3>캐시 · 설정</h3><div id="embed-cfg" class="kv"></div></div></div>
+      <h3>답변 사전 계산 (precompute)</h3>
+      <div class="row"><button id="btn-pc-run" class="secondary">평가셋 + 최근 질의 사전 계산</button><button id="btn-pc-clear" class="secondary">캐시 비우기</button><span id="pc-status" class="muted small"></span></div>
+      <pre id="pc-log" class="log" style="max-height:120px"></pre>
+    </section>
+
+    <section id="tab-contract" class="tab">
+      <div class="row"><button id="btn-lint-refresh" class="secondary">새로고침</button><label class="inline"><input type="checkbox" id="lint-all"> 문제 없는 문서도</label><span id="lint-summary" class="muted small"></span></div>
+      <div class="cols">
+        <div class="col wide"><div id="lint-table"></div></div>
+        <div class="col"><h3>문서 유형 스키마 <small class="muted">schemas/*.json</small></h3><div id="schema-types"></div><h3>예시 문서</h3><select id="schema-example-type"></select><pre id="schema-example" class="pre" style="max-height:420px"></pre></div>
+      </div>
+    </section>
+
+    <section id="tab-sources" class="tab">
+      <div class="row"><button id="btn-src-test" class="secondary">연결 테스트</button><button id="btn-src-ingest">ingest (raw data → mcp_cache)</button><label class="inline"><input type="checkbox" id="src-dry"> dry-run</label><button id="btn-src-save" class="secondary">mcp_sources.json 저장</button><span id="src-msg" class="muted small"></span></div>
+      <div class="muted small">외부 MCP(예: Mango — issue / CL / build binary raw data). tool 이름·인자·결과 경로는 매핑으로 선언. 토글 <code>mcp_sources</code> 가 켜져 있어야 빌드 ingest / 질의 enrich(fallback mcp 단계) 에 사용됩니다.</div>
+      <div id="src-out" class="small"></div>
+      <textarea id="src-json" spellcheck="false"></textarea>
+    </section>
+
+    <!-- ================= KNOWLEDGE ================= -->
+    <section id="tab-graph" class="tab">
+      <div class="row">
+        <label>노드 수 <input id="g-limit" type="number" value="120" style="width:70px"></label>
+        <label>커뮤니티 <select id="g-comm"><option value="all">all</option></select></label>
+        <label>출처 <select id="g-prov"><option value="">all</option><option>explicit</option><option>rule</option><option>human</option><option>llm</option><option>cooccur</option></select></label>
+        <input id="g-types" type="text" placeholder="유형 필터 (issue,cl)" style="max-width:160px">
+        <input id="g-find" type="text" placeholder="엔티티 검색/하이라이트">
+        <button id="btn-graph">그래프 로드</button>
+        <span class="muted">노드 클릭 → 상세(문서 참조·provenance) · 드래그 가능</span>
+      </div>
+      <div id="g-prov-counts" class="muted small"></div>
+      <div class="cols">
+        <div class="col wide"><canvas id="gcanvas" width="900" height="600"></canvas><div id="g-legend" class="legend"></div></div>
+        <div class="col"><div id="g-detail" class="small">노드를 클릭하세요.</div><h3>커뮤니티</h3><div id="g-comms" class="small"></div></div>
+      </div>
+    </section>
+
+    <section id="tab-wiki" class="tab">
+      <div class="cols">
+        <div class="col narrow"><input id="w-filter" type="text" placeholder="페이지 필터"><div id="w-list" class="list"></div></div>
+        <div class="col wide">
+          <div class="row"><strong id="w-name">INDEX</strong><button id="btn-w-save" class="secondary">저장 (편집 노트는 다음 빌드에 색인)</button><button id="btn-w-rebuild" class="secondary">저장 후 증분 빌드</button></div>
+          <textarea id="w-content" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-rules" class="tab">
+      <div class="row"><button id="btn-rules-save" class="secondary">규칙 저장 (다음 빌드에 반영)</button><span class="muted small">data/rules.json — 엔티티 사전 · 관계 정규식 · ID 패턴(id_patterns) · 결정적 링크 규칙(link_rules) · front matter 관계 매핑(explicit_rels)</span></div>
+      <textarea id="rules-json" spellcheck="false"></textarea>
+    </section>
+
+    <!-- ================= QUALITY ================= -->
+    <section id="tab-trials" class="tab">
+      <div class="row">
+        <input id="tr-name" type="text" placeholder="trial 이름" style="max-width:180px">
+        <select id="tr-preset"><option value="">(프리셋 없음)</option></select>
+        <input id="tr-sets" type="text" placeholder="설정 오버라이드 k=v, k=v (예 fusion_method=zscore, top_k_final=10)" style="min-width:320px">
+        <label>k <input id="tr-k" type="number" value="5" style="width:60px"></label>
+        <button id="btn-tr-run">Trial 실행 (현재 토글 + 위 설정)</button>
+        <button id="btn-tr-refresh" class="secondary">새로고침</button>
+      </div>
+      <pre id="tr-log" class="log" style="max-height:100px"></pre>
+      <div class="row"><span class="muted small">비교할 trial 을 2~4개 체크 →</span><button id="btn-tr-compare" class="secondary">비교</button><button id="btn-tr-md" class="secondary">markdown 복사</button><button id="btn-fusion-compare" class="secondary" title="평가셋을 fusion 방식별로 실행">fusion 방식 비교</button></div>
+      <div id="tr-list"></div>
+      <div id="tr-compare"></div>
+    </section>
+
+    <section id="tab-eval" class="tab">
+      <div class="row">
+        <label>k <input id="e-k" type="number" value="5" style="width:60px"></label>
+        <button id="btn-eval">현재 토글로 평가</button>
+        <button id="btn-eval-matrix">채널 조합 비교 (matrix)</button>
+        <span class="muted">eval/questions.json (편집 가능) · 평가는 사용자 질의와 완전히 같은 경로(Pipeline.query)를 사용</span>
+      </div>
+      <pre id="eval-log" class="log"></pre>
+      <div id="eval-out"></div>
+    </section>
+
+    <section id="tab-forensics" class="tab">
+      <div class="row"><button id="btn-fx-refresh" class="secondary">새로고침</button><input id="fx-req" type="number" placeholder="request id" style="width:110px"><button id="btn-fx-run" class="secondary">진단 실행</button><button id="btn-fx-llm" class="secondary">LLM 소견 추가</button><button id="btn-fx-consolidate" class="secondary">누적 소견 → 제안 (consolidate)</button></div>
+      <div id="fx-summary" class="statrow"></div>
+      <div class="cols"><div class="col narrow-wide"><div id="fx-list"></div></div><div class="col wide"><div id="fx-detail" class="muted">목록에서 선택하거나 request id 로 진단하세요.</div></div></div>
+    </section>
+
+    <!-- ================= EVOLVE ================= -->
+    <section id="tab-evolve" class="tab">
+      <div class="row">
+        <button id="btn-ev-refresh" class="secondary">새로고침</button>
+        <button id="btn-ev-review">LLM 리뷰로 제안 생성</button>
+        <label class="inline"><input type="checkbox" id="ev-eval" checked> 적용 시 회귀평가 (악화 시 자동 롤백)</label>
+        <label>상태 <select id="ev-status"><option value="proposed">proposed</option><option value="applied">applied</option><option value="archived">archived</option><option value="rejected">rejected</option><option value="rejected_regression">rejected_regression</option><option value="failed">failed</option></select></label>
+        <span id="ev-summary" class="muted"></span>
+      </div>
+      <div class="row">
+        <details><summary>수동 제안 추가</summary>
+          <div class="row">
+            <select id="mp-kind"><option>synonym</option><option>alias</option><option>entity</option><option>relation</option><option>wiki_note</option><option>query_rule</option><option>corpus_gap</option><option>chunk_params</option></select>
+            <input id="mp-payload" type="text" style="width:420px" placeholder='payload JSON 예) {"term":"캐파","expansion":"생산능력"}'>
+            <input id="mp-reason" type="text" placeholder="이유">
+            <button id="btn-mp-add" class="secondary">추가</button>
+          </div>
+        </details>
+      </div>
+      <h3>제안 (HITL) <small class="muted">strength 는 memory decay 로 감쇠·재사용 시 강화</small></h3>
+      <div id="ev-pending"></div>
+      <h3>적용 이력 / evolution_log</h3>
+      <div id="ev-log" class="small"></div>
+      <h3>동의어 사전 (evolve synonyms)</h3>
+      <div id="ev-syn" class="small"></div>
+    </section>
+
+    <section id="tab-memory" class="tab">
+      <div class="row"><button id="btn-mem-refresh" class="secondary">새로고침</button><button id="btn-mem-decay" class="secondary">decay 실행</button><button id="btn-mem-consolidate" class="secondary">consolidate (포렌식 → 제안)</button><span class="muted small">episodic(질의 에피소드) · semantic(승인된 규칙/제안/pin) · decay(반감기 memory_half_life_days)</span></div>
+      <div id="mem-status" class="statrow"></div>
+      <h3>최근 에피소드</h3>
+      <div id="mem-episodes"></div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section id="tab-models" class="tab">
+      <div class="row">
+        <button id="btn-models-save">저장 &amp; 프로바이더 재로드</button>
+        <button id="btn-models-test" class="secondary">전체 연결 테스트</button>
+        <button id="btn-models-reload" class="secondary">다시 읽기</button>
+        <span id="models-msg" class="muted small"></span>
+      </div>
+      <div class="cols">
+        <div class="col">
+          <h3>임베딩 (벡터 검색)</h3>
+          <div class="form" id="embed-form"></div>
+          <h3>전역 LLM 기본값</h3>
+          <div class="form" id="llm-form"></div>
+          <h3>OpenAI-compatible · rerank 엔드포인트</h3>
+          <div class="form" id="endpoint-form"></div>
+          <div class="muted small" id="models-note"></div>
+        </div>
+        <div class="col wide">
+          <h3>역할별 LLM <small class="muted">비우면 전역값 상속 · provider 에 headless:&lt;agent&gt; 지정 가능</small></h3>
+          <div id="roles-table"></div>
+          <h3>연결 테스트 결과</h3>
+          <div id="models-test" class="small"></div>
+          <h3>Headless agents (agents.json) <button class="mini secondary" id="btn-agents-save">저장</button></h3>
+          <textarea id="agents-json" spellcheck="false" style="min-height:220px"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-presets" class="tab">
+      <div class="row"><button id="btn-preset-refresh" class="secondary">새로고침</button><button id="btn-preset-save" class="secondary">presets.json 저장</button><span class="muted small">프리셋 = 토글 + 튜닝 + config 값 묶음. 사이드바 체크는 요청 단위, 여기서 '적용(저장)' 은 config.json/tuning.json 에 기록.</span></div>
+      <div id="preset-cards"></div>
+      <div id="preset-diff"></div>
+      <textarea id="presets-json" spellcheck="false"></textarea>
+    </section>
+
+    <section id="tab-tuning" class="tab">
+      <div class="row">
+        <button id="btn-tuning-save">변경 저장</button>
+        <button id="btn-tuning-reset" class="secondary">전체 초기화</button>
+        <button id="btn-tuning-reload" class="secondary">다시 읽기</button>
+        <label>단계 <select id="tuning-stage"><option value="">전체</option></select></label>
+        <label class="inline"><input type="checkbox" id="tuning-changed"> 변경된 항목만</label>
+        <span id="tuning-msg" class="muted small"></span>
+      </div>
+      <div class="muted small" id="tuning-path"></div>
+      <div id="tuning-table"></div>
+    </section>
+
+    <section id="tab-qrules" class="tab">
+      <div class="row">
+        <select id="qr-type"><option>acronym</option><option>synonym</option><option>alias</option><option>related</option><option>exclude</option><option>compound</option></select>
+        <input id="qr-term" type="text" placeholder="용어" style="max-width:200px"><input id="qr-values" type="text" placeholder="값 (쉼표 구분; alias/compound 는 canonical/부분)" style="max-width:320px">
+        <button id="btn-qr-add" class="secondary">추가</button>
+        <input id="qr-test" type="text" placeholder="확장 테스트 질의" style="max-width:260px"><button id="btn-qr-test" class="secondary">테스트</button>
+        <button id="btn-qr-save">JSON 저장</button><span id="qr-msg" class="muted small"></span>
+      </div>
+      <div class="muted small">acronym=완전 동치(구문 OR, 벡터 치환) · synonym=준동치(OR, syn_w) · alias=표기 정규화(치환) · related=연관어(별도 리스트 related_w) · exclude=제외(NOT+페널티) · compound=복합어 분리(색인·질의 토크나이저)</div>
+      <div id="qr-test-out" class="kv hidden"></div>
+      <textarea id="qrules-json" spellcheck="false"></textarea>
+    </section>
+
+    <section id="tab-pins" class="tab">
+      <div class="row">
+        <input id="pin-doc" type="text" placeholder="문서 id 부분 문자열 (예 RULE-ISR-001)" style="max-width:260px">
+        <input id="pin-chunk" type="text" placeholder="또는 chunk_id" style="max-width:220px">
+        <input id="pin-keywords" type="text" placeholder="조건: 키워드 (쉼표)" style="max-width:200px">
+        <input id="pin-query" type="text" placeholder="조건: 질의" style="max-width:200px">
+        <label class="inline"><input type="checkbox" id="pin-always"> 항상</label>
+        <button id="btn-pin-add">Pin 추가</button><span class="muted small">조건에 맞는 질의에서 해당 근거를 상단에 고정 (pin_boost)</span>
+      </div>
+      <div id="pin-list"></div>
+    </section>
+
+    <section id="tab-prompts" class="tab">
+      <div class="cols">
+        <div class="col narrow"><div id="prompt-list" class="list"></div></div>
+        <div class="col wide">
+          <div class="row"><strong id="prompt-name">answer_guide</strong><button id="btn-prompt-save">저장 (즉시 반영)</button><button id="btn-prompt-reset" class="secondary">기본값으로</button><span id="prompt-msg" class="muted small"></span></div>
+          <div class="muted small">prompts/*.md — answer_system(규칙) + answer_guide(구조·상세도) 가 답변 시스템 프롬프트가 됩니다. TASK= 첫 줄은 유지하세요.</div>
+          <textarea id="prompt-content" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab">
+      <div class="row"><button id="btn-config-save">저장 &amp; 프로바이더 재로드</button><button id="btn-config-reload" class="secondary">다시 읽기</button><button id="btn-config-effective" class="secondary">유효 설정 (출처)</button><span id="config-msg" class="muted"></span></div>
+      <div id="config-effective" class="hidden"></div>
+      <textarea id="config-json" spellcheck="false"></textarea>
+      <div class="muted small" id="config-paths"></div>
+    </section>
+
+    <!-- ================= OBSERVABILITY ================= -->
+    <section id="tab-requests" class="tab">
+      <div class="row">
+        <button id="btn-req-refresh" class="secondary">새로고침</button>
+        <label>종류 <select id="req-kind"><option value="">all</option><option>query</option><option>build</option><option>eval</option><option>search</option></select></label>
+        <label>개수 <input id="req-limit" type="number" value="60" style="width:70px"></label>
+        <label>비교 대상 #<input id="req-compare" type="number" placeholder="id" style="width:80px"></label>
+        <span class="muted small">모든 요청의 단계별 시간·SQL·LLM 토큰·디버그 메타·프롬프트 샘플(debug 2). run_id 로 로그와 연결됩니다.</span>
+      </div>
+      <div class="cols">
+        <div class="col narrow-wide"><div id="req-list"></div></div>
+        <div class="col wide"><div id="req-inspector" class="muted">왼쪽 목록에서 요청을 선택하세요.</div></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab">
+      <div class="row">
+        <select id="log-file"><option value="llmwiki">llmwiki.log</option><option value="error">error.log</option><option value="build">build.log</option><option value="query">query.log</option></select>
+        <input id="log-request" type="number" placeholder="request id" style="width:110px">
+        <input id="log-run" type="text" placeholder="run_id" style="width:140px">
+        <input id="log-text" type="text" placeholder="포함 문자열" style="max-width:200px">
+        <select id="log-level"><option value="">level ≥</option><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+        <select id="log-since"><option value="">전체</option><option value="10m">10분</option><option value="1h">1시간</option><option value="1d">1일</option></select>
+        <input id="log-n" type="number" value="200" style="width:80px">
+        <button id="btn-logs-load" class="secondary">조회</button>
+        <span id="log-dir" class="muted small"></span>
+      </div>
+      <div id="log-files" class="muted small"></div>
+      <div id="log-table"></div>
+    </section>
+
+    <section id="tab-arch" class="tab">
+      <div class="row">
+        <button id="btn-arch-refresh" class="secondary">새로고침</button>
+        <label>흐름 <select id="arch-flow"><option value="all">전체</option><option value="query">User Request (질의)</option><option value="build">Data Build (색인)</option><option value="evolve">Self-Evolving</option><option value="watch">Auto Build</option></select></label>
+        <label class="inline"><input type="checkbox" id="arch-last" checked> 마지막 실행 시간 겹쳐 보기</label>
+        <label class="inline"><input type="checkbox" id="arch-live" checked> 사이드바 토글 상태 반영</label>
+        <span class="muted small">단계 카드를 클릭하면 설명 · impact · 토글 · 설정 · 튜닝 · CLI · 마지막 실행 meta 가 오른쪽에 표시됩니다.</span>
+      </div>
+      <div class="arch-legend"><span><i class="lg on"></i> 토글 ON</span><span><i class="lg off"></i> 토글 OFF</span><span><i class="lg tune"></i> 튜닝 파라미터 수</span><span><i class="lg ms"></i> 마지막 실행 ms (%)</span></div>
+      <div class="cols">
+        <div class="col wide" id="arch-flows"></div>
+        <div class="col" id="arch-detail"><div class="muted">단계를 선택하세요.</div></div>
+      </div>
+    </section>
+
+    <section id="tab-system" class="tab">
+      <div class="row">
+        <button id="btn-sys-refresh" class="secondary">새로고침</button>
+        <label>목표 문서 수 <input id="sys-target" type="number" value="5000" style="width:80px"></label>
+        <label>일일 추가 <input id="sys-daily" type="number" value="50" style="width:60px"></label>
+        <label>기간(일) <input id="sys-days" type="number" value="365" style="width:60px"></label>
+      </div>
+      <div class="cols">
+        <div class="col">
+          <h3>인덱스 / 용량 전망</h3><div id="sys-index"></div>
+          <h3>빌드 이력 (ms)</h3><div id="sys-builds"></div>
+          <h3>질의 지연</h3><div id="sys-latency"></div>
+        </div>
+        <div class="col">
+          <h3>자동 빌드 워처 (서버 내장 · 보조 경로)</h3>
+          <div class="row">
+            <button id="btn-watch-start">시작</button><button id="btn-watch-stop" class="secondary">중지</button>
+            <label>주기(초) <input id="watch-interval" type="number" value="300" style="width:70px"></label>
+            <button id="btn-watch-scan" class="secondary">지금 스캔</button><button id="btn-watch-tick" class="secondary">스캔+빌드</button>
+          </div>
+          <div id="sys-watch" class="kv"></div>
+          <h3>캐시</h3><div id="sys-caches" class="kv"></div>
+          <h3>유지보수</h3>
+          <div class="row" id="sys-maint">
+            <button class="secondary" data-m="warm_cache">캐시 예열</button><button class="secondary" data-m="clear_cache">캐시 비우기</button>
+            <button class="secondary" data-m="fts_optimize">FTS optimize</button><button class="secondary" data-m="wal_checkpoint">WAL checkpoint</button>
+            <button class="secondary" data-m="vacuum">VACUUM</button><button class="secondary" data-m="refresh_doc_refs">doc_refs 재계산</button><button class="secondary" data-m="purge_requests">requests 비우기</button>
+          </div>
+          <div id="sys-maint-out" class="muted small"></div>
+          <h3>성능/토큰/실행 세부 설정 <small class="muted">저장 시 config.json 반영</small></h3>
+          <div class="form" id="perf-form"></div>
+          <div class="row"><button id="btn-perf-save">설정 저장</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-qlog" class="tab">
+      <div class="row"><button id="btn-logs" class="secondary">새로고침</button><span class="muted small">자가진화용 질의 로그 (피드백 포함). 프로파일 상세는 요청 프로파일 탭.</span></div>
+      <div id="logs"></div>
+      <div id="logs-trace"></div>
+    </section>
+
+    <section id="tab-console" class="tab">
+      <div class="row">
+        <span class="muted">python -m llmwiki</span>
+        <input id="c-cmd" type="text" style="flex:1" placeholder='예) query "ISSUE-2001 원인" --trace --debug 2 | health | build status | embed report | trial list | forensic last | --help'>
+        <button id="btn-console">실행</button>
+      </div>
+      <div class="samples" id="console-samples"></div>
+      <pre id="console-out" class="log tall"></pre>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+<script src="/static/js/core.js"></script>
+<script src="/static/js/ask.js"></script>
+<script src="/static/js/corpus.js"></script>
+<script src="/static/js/knowledge.js"></script>
+<script src="/static/js/quality.js"></script>
+<script src="/static/js/evolve.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/observability.js"></script>
+<script>LW.boot();</script>
+</body>
+</html>

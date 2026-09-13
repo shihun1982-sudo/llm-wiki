@@ -1,0 +1,10 @@
+:root[data-theme="dark"]{
+  --surface:#161715; --page:#121311; --card:#1c1d1b; --ink:#ecebe6; --ink2:#b9b7ae; --muted:#8a887f; --grid:#2c2d2a; --axis:#4a4b46;
+  --hover:#243040; --sel:#27394f; --perf-bg:#1a2230; --perf-border:#2d4160;
+  --s1:#5ea0f0; --s2:#f0865a; --s3:#3ec897; --s4:#f2b73a; --s5:#f096bb; --s6:#4fbf4f; --s7:#8f7ef0; --s8:#f06060;
+  --good:#3ec84a; --warn:#f2b73a; --serious:#f09070; --critical:#f06060;
+  --log-bg:#0b0c0b; --log-ink:#c3c2b7; --toast-bg:#ecebe6; --toast-ink:#121311; --btn-ink:#0b0b0b;
+  --node-on:#1f2b3a; --node-off:#232421; --node-err:#3a2020; --imp-bg:#2e2712; --chip-tune-bg:#2e2712; --chip-tune-ink:#f2c96a; --chip-ms-bg:#12302a; --chip-ms-ink:#6ee0b2;
+  --banner-warn-bg:#2e2712; --banner-err-bg:#3a2020; --banner-ok-bg:#12302a;
+  color-scheme:dark;
+}

@@ -1,0 +1,7 @@
+[
+  {"q": "품질 검증 추가 예산 금액과 담당은?", "expect_docs": ["product-review"], "expect_terms": ["12억원", "품질팀"]},
+  {"q": "알파 프로젝트 출시일은 언제인가?", "expect_docs": ["product-review"], "expect_terms": ["9월 15일"]},
+  {"q": "베타코프의 가격 정책은?", "expect_docs": ["market_note"], "expect_terms": ["15%"]},
+  {"q": "감마텍 미팅 목적은?", "expect_docs": ["schedule"], "expect_terms": ["물량"]},
+  {"q": "가격 정책 재검토는 누가 담당하고 마감은 언제인가?", "expect_docs": ["product-review"], "expect_terms": ["CFO", "6/20"]}
+]

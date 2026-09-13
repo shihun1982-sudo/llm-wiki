@@ -1,0 +1,25 @@
+{
+  "title": "검증 TC 목록",
+  "extends": "common",
+  "id_pattern": "^TC-[A-Z0-9_-]+$",
+  "fields": {
+    "status": {
+      "type": "enum",
+      "values": [
+        "draft",
+        "active",
+        "retired"
+      ],
+      "required": false
+    }
+  },
+  "sections": {
+    "recommended": [
+      "목적",
+      "사전 조건",
+      "절차",
+      "기대 결과"
+    ],
+    "required": []
+  }
+}

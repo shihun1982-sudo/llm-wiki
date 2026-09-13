@@ -1,0 +1,4 @@
+{
+  "_comment": "고정 근거. when: always | keywords[] | query | doc_types[]. doc(문서 id 부분 문자열) 또는 chunk(청크 id). pin add … 로 관리.",
+  "pins": []
+}

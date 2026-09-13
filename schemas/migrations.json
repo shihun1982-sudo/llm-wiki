@@ -1,0 +1,13 @@
+{
+  "_comment": "schema_version 마이그레이션. 'from->to': {rename: {old: new}, default: {field: value}}. 빌드 시 메타를 최신 버전으로 정규화(파일은 수정하지 않음).",
+  "0->1": {
+    "rename": {
+      "type": "doc_type",
+      "created": "date",
+      "issue_id": "id"
+    },
+    "default": {
+      "schema_version": 1
+    }
+  }
+}

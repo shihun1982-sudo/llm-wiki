@@ -1,0 +1,33 @@
+{
+  "title": "HW 설계 문서 (타이밍 · 레지스터 · revision history)",
+  "extends": "common",
+  "id_pattern": "^HWD-[A-Z0-9_-]+$",
+  "fields": {
+    "hw": {
+      "type": "map",
+      "required": true,
+      "desc": "{chip, rev} 필수"
+    },
+    "status": {
+      "type": "enum",
+      "values": [
+        "draft",
+        "released",
+        "obsolete"
+      ],
+      "required": false
+    }
+  },
+  "sections": {
+    "recommended": [
+      "개요",
+      "레지스터",
+      "타이밍",
+      "SW 제어 시퀀스",
+      "Revision History"
+    ],
+    "required": [
+      "Revision History"
+    ]
+  }
+}

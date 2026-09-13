@@ -1,0 +1,145 @@
+{
+  "_comment": "외부 MCP 소스. enabled=false 이거나 toggles.mcp_sources=false 면 사용하지 않음. 값 치환: {since} {query} {project_root} ${ENV}.",
+  "mango": {
+    "desc": "Mango MCP — issue / CL / build binary raw data (tool 이름·스키마는 실제 서버에 맞게 수정)",
+    "enabled": false,
+    "transport": "stdio",
+    "command": [
+      "python",
+      "-m",
+      "mango_mcp"
+    ],
+    "cwd": "",
+    "env": {
+      "MANGO_TOKEN": "${MANGO_MCP_TOKEN}"
+    },
+    "timeout_s": 60,
+    "ingest": [
+      {
+        "tool": "list_issues",
+        "args": {
+          "since": "{since}"
+        },
+        "result_path": "items",
+        "doc_type": "issue",
+        "id_field": "id",
+        "title_field": "title",
+        "text_field": "description",
+        "date_field": "updated_at",
+        "fields": {
+          "status": "status",
+          "tags": "labels",
+          "related.cls": "cl_ids"
+        }
+      },
+      {
+        "tool": "list_cls",
+        "args": {
+          "since": "{since}"
+        },
+        "result_path": "items",
+        "doc_type": "cl",
+        "id_field": "id",
+        "title_field": "subject",
+        "text_field": "message",
+        "date_field": "merged_at",
+        "fields": {
+          "related.issues": "issue_ids",
+          "author": "author"
+        }
+      },
+      {
+        "tool": "list_builds",
+        "args": {
+          "since": "{since}"
+        },
+        "result_path": "items",
+        "doc_type": "build",
+        "id_field": "build_id",
+        "title_field": "name",
+        "text_field": "summary",
+        "date_field": "built_at",
+        "fields": {
+          "related.cls": "cl_ids",
+          "tags": "targets"
+        }
+      }
+    ],
+    "enrich": [
+      {
+        "tool": "search",
+        "args": {
+          "q": "{query}",
+          "limit": 5
+        },
+        "result_path": "items",
+        "id_field": "id",
+        "title_field": "title",
+        "text_field": "snippet",
+        "doc_type": "issue"
+      }
+    ]
+  },
+  "mock": {
+    "desc": "테스트용 목업 MCP 서버 (네트워크 없음)",
+    "enabled": false,
+    "transport": "stdio",
+    "command": [
+      "C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-m",
+      "llmwiki.mcp_client",
+      "--mock-server"
+    ],
+    "cwd": "",
+    "env": {},
+    "timeout_s": 30,
+    "ingest": [
+      {
+        "tool": "list_issues",
+        "args": {
+          "since": "{since}"
+        },
+        "result_path": "items",
+        "doc_type": "issue",
+        "id_field": "id",
+        "title_field": "title",
+        "text_field": "description",
+        "date_field": "updated_at",
+        "fields": {
+          "status": "status",
+          "tags": "labels",
+          "related.cls": "cl_ids"
+        }
+      },
+      {
+        "tool": "list_cls",
+        "args": {
+          "since": "{since}"
+        },
+        "result_path": "items",
+        "doc_type": "cl",
+        "id_field": "id",
+        "title_field": "subject",
+        "text_field": "message",
+        "date_field": "merged_at",
+        "fields": {
+          "related.issues": "issue_ids"
+        }
+      }
+    ],
+    "enrich": [
+      {
+        "tool": "search",
+        "args": {
+          "q": "{query}",
+          "limit": 3
+        },
+        "result_path": "items",
+        "id_field": "id",
+        "title_field": "title",
+        "text_field": "snippet",
+        "doc_type": "issue"
+      }
+    ]
+  }
+}

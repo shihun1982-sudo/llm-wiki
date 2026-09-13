@@ -1,0 +1,30 @@
+{
+  "title": "SW 설계 문서 (아키텍처 · code map · 리뷰 규칙)",
+  "extends": "common",
+  "id_pattern": "^SWD-[A-Z0-9_-]+$",
+  "fields": {
+    "status": {
+      "type": "enum",
+      "values": [
+        "draft",
+        "approved",
+        "deprecated"
+      ],
+      "required": false
+    },
+    "module": {
+      "type": "list",
+      "required": true
+    }
+  },
+  "sections": {
+    "recommended": [
+      "개요",
+      "구조",
+      "인터페이스",
+      "동작 흐름",
+      "제약"
+    ],
+    "required": []
+  }
+}
