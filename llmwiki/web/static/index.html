@@ -16,6 +16,7 @@
   <div id="stats-badge" class="badge">index: …</div>
   <div id="watch-badge" class="badge">auto-build: …</div>
   <div id="alert-badge" class="badge hidden" title="마지막 빌드 알림">alerts</div>
+  <div id="user-badge" class="badge" title="로그인 사용자 · 역할">…</div>
   <label class="theme">테마 <select id="theme-select"></select></label>
 </header>
 
@@ -57,7 +58,7 @@
     <nav class="tabs hidden" data-group="knowledge"><button data-tab="graph">그래프</button><button data-tab="wiki">위키</button><button data-tab="rules">그래프 규칙</button></nav>
     <nav class="tabs hidden" data-group="quality"><button data-tab="trials">Trial 비교</button><button data-tab="eval">평가</button><button data-tab="forensics">포렌식</button></nav>
     <nav class="tabs hidden" data-group="evolve"><button data-tab="evolve">제안 (HITL)</button><button data-tab="memory">메모리</button></nav>
-    <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="config">config.json</button></nav>
+    <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="config">config.json</button><button data-tab="security">보안 · 사용자</button></nav>
     <nav class="tabs hidden" data-group="observability"><button data-tab="requests">요청 프로파일</button><button data-tab="logs">로그</button><button data-tab="arch">구조 · 흐름</button><button data-tab="system">시스템 · 규모</button><button data-tab="qlog">질의 로그</button><button data-tab="console">콘솔 (CLI)</button></nav>
 
     <!-- ================= ASK ================= -->
@@ -69,6 +70,7 @@
         <label class="inline"><input type="checkbox" id="q-log" checked> 로그/자가진화 기록</label>
       </div>
       <div class="samples" id="samples"></div>
+      <div id="q-live" class="live hidden"></div>
       <div id="query-out" class="hidden">
         <div class="statrow" id="q-stats"></div>
         <div id="q-banner" class="banner hidden"></div>
@@ -131,6 +133,7 @@
       <div class="muted small">코퍼스: <code id="corpus-dirs"></code> · 스케줄: OS 스케줄러(작업 스케줄러/cron)에서 <code>python -m llmwiki build</code> 호출 권장 (setup/schedule_build.ps1). 서버 워처는 Observability › 시스템.</div>
       <div id="build-status" class="statrow"></div>
       <div id="build-alerts"></div>
+      <div id="build-live" class="live hidden"></div>
       <pre id="build-log" class="log"></pre>
       <div id="build-result"></div>
       <div id="build-trace"></div>
@@ -270,6 +273,7 @@
       <div class="row">
         <button id="btn-models-save">저장 &amp; 프로바이더 재로드</button>
         <button id="btn-models-test" class="secondary">전체 연결 테스트</button>
+        <button id="btn-models-test-live" class="secondary" title="ping 외에 역할별 provider/model 당 실제 완성 호출 1회 — PAT 권한·헤더·모델명·headless 실행까지 확인 (토큰 소량 소비)">실제 호출 테스트 (--live)</button>
         <button id="btn-models-reload" class="secondary">다시 읽기</button>
         <span id="models-msg" class="muted small"></span>
       </div>
@@ -355,6 +359,29 @@
       <div id="config-effective" class="hidden"></div>
       <textarea id="config-json" spellcheck="false"></textarea>
       <div class="muted small" id="config-paths"></div>
+    </section>
+    <section id="tab-security" class="tab">
+      <div class="row"><button id="btn-sec-refresh" class="secondary">새로고침</button><button id="btn-sec-reload" class="secondary" title="security.json 을 다시 읽음 (파일을 직접 편집한 뒤)">security.json 다시 읽기</button><button id="btn-snap-create" class="secondary" title="지금 상태를 data/snapshots/ 에 저장">스냅샷 만들기</button><span id="sec-msg" class="muted"></span></div>
+      <div id="sec-summary" class="statrow"></div>
+      <div class="cols">
+        <div class="col">
+          <h3>사용자 <small class="muted">(로컬 ID/비밀번호 계정 · SSO 사용자의 역할 지정)</small></h3>
+          <div id="sec-users"></div>
+          <div class="form" id="sec-add-form">
+            <label>id <input id="su-name" type="text" style="min-width:140px"> 역할 <select id="su-role"><option>viewer</option><option>operator</option><option>admin</option></select> 비밀번호 <input id="su-pass" type="password" style="min-width:140px" placeholder="(비우면 SSO 전용)"> <button id="btn-user-add" class="mini">추가</button></label>
+            <div class="muted small">viewer = 질의·검색·읽기 · operator = 증분 빌드/제안 적용/규칙 편집 등 복구 가능한 변경 · admin = 설정·사용자·전체 초기화</div>
+          </div>
+          <h3 style="margin-top:14px">내 비밀번호 변경 <small class="muted">(로컬 계정)</small></h3>
+          <div class="form"><label>현재 <input id="pw-old" type="password" style="min-width:120px"> 새 비밀번호 <input id="pw-new" type="password" style="min-width:120px"> <button id="btn-pw-change" class="mini secondary">변경</button></label></div>
+        </div>
+        <div class="col">
+          <h3>스냅샷 <small class="muted">(전체 초기화 전 자동 저장 · 수동 저장 · 복원)</small></h3>
+          <div id="sec-snapshots"></div>
+          <h3 style="margin-top:14px">감사 로그 <small class="muted">(logs/audit.jsonl — 누가 언제 무엇을)</small></h3>
+          <div id="sec-audit"></div>
+        </div>
+      </div>
+      <div class="muted small" style="margin-top:8px">설정 파일: <code id="sec-path"></code> · SSO(OIDC/헤더) 설정과 역할 매핑은 docs/SECURITY.md</div>
     </section>
 
     <!-- ================= OBSERVABILITY ================= -->

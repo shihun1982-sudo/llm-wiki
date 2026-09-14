@@ -3,7 +3,7 @@
 
 요청 { "model", "query", "documents": [...], "top_n" } — Cohere / Jina / vLLM(/v1/rerank, /v2/rerank) / TEI 공통.
 응답 cohere 스타일: {"results":[{"index":i,"relevance_score":s}]}   voyage 스타일: {"data":[{"index":i,"relevance_score":s}]}
-설정: settings.rerank_url, rerank_model, rerank_api_style(cohere|voyage), .env RERANK_API_KEY
+설정: settings.rerank_url, rerank_api_model, rerank_api_style(cohere|voyage), .env RERANK_API_KEY
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def rerank_api(settings, query: str, docs: List[str], top_n: int = 0, timeout: i
     if not url:
         raise LLMError("rerank_url 이 설정되지 않았습니다")
     body: Dict[str, Any] = {"query": query, "documents": docs}
-    if settings.rerank_model:
-        body["model"] = settings.rerank_model
+    if settings.rerank_api_model:
+        body["model"] = settings.rerank_api_model
     if top_n:
         body["top_n"] = int(top_n)
     if settings.rerank_api_style == "voyage":
@@ -63,7 +63,7 @@ def rerank_api(settings, query: str, docs: List[str], top_n: int = 0, timeout: i
             out.append((idx, sc))
     out.sort(key=lambda x: -x[1])
     usage = data.get("usage") or data.get("meta", {}).get("billed_units") or {}
-    return out, {"ms": ms, "model": data.get("model", settings.rerank_model), "usage": usage, "n": len(out)}
+    return out, {"ms": ms, "model": data.get("model", settings.rerank_api_model), "usage": usage, "n": len(out)}
 
 
 def ping_rerank_api(settings) -> Dict[str, Any]:

@@ -1,5 +1,5 @@
 {
-  "_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} 치환. provider 는 headless:<이름>.",
+  "_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다.",
   "opencode": {
     "desc": "OpenCode CLI (opencode run --format json). 모델은 provider/model 형식 (예 anthropic/claude-sonnet-4-5).",
     "command": [
@@ -106,9 +106,9 @@
     "max_output_chars": 400000
   },
   "mock": {
-    "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트.",
+    "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트. {python} = 현재 인터프리터(이식성).",
     "command": [
-      "C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "{python}",
       "-m",
       "llmwiki.headless",
       "--mock"

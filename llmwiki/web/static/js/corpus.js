@@ -15,8 +15,11 @@
     return s;
   }
   async function runBuild(full, reset) {
-    $('#build-log').textContent = 'starting…'; $('#build-result').innerHTML = ''; $('#build-trace').innerHTML = '';
+    $('#build-log').textContent = '작업 요청 중…'; $('#build-result').innerHTML = ''; $('#build-trace').innerHTML = '';
     const j = await api('/api/build', { full, reset: !!reset, overrides: overrides() });
+    if (!j.job) { $('#build-log').textContent = j.cancelled ? '취소됨' : '요청 실패: ' + (j.error || JSON.stringify(j)); return; }
+    $('#build-log').textContent = 'job ' + j.job + ' 시작 — 진행 상황은 위 표시와 이 로그에 나타납니다.';
+    // 주의: 진행 중에는 /api/build/status 를 폴링하지 않는다 (서버 락 뒤의 엔드포인트라 빌드가 끝날 때까지 응답이 없다).
     pollJob(j.job, $('#build-log'), (job) => {
       loadBuildStatus();
       if (job.status !== 'done') return;
@@ -26,10 +29,11 @@
       $('#cli-equiv').textContent = job.result.cli;
       renderTrace($('#build-trace'), job.result.trace);
       loadDocs();
-    }, () => loadBuildStatus());
+    });
   }
+  // 확인은 서버 게이트(428 → 단계 확인 모달)가 담당: 증분 = 경고, 전체 리빌드/초기화 = 확인 문구(+비밀번호). 별도 confirm() 없음.
   $('#btn-build').onclick = () => runBuild(false);
-  $('#btn-build-full').onclick = () => { const reset = $('#build-reset').checked; if (confirm(reset ? '색인 테이블을 비우고 처음부터 다시 만듭니다. 질의 로그·제안·동의어·요청 이력·위키 편집 노트·임베딩 캐시는 보존됩니다. 진행할까요?' : '전체 리빌드는 그래프/임베딩을 모두 다시 만듭니다. 진행할까요?')) runBuild(true, reset); };
+  $('#btn-build-full').onclick = () => runBuild(true, $('#build-reset').checked);
   $('#btn-scan').onclick = async () => { const r = await api('/api/watch', { action: 'scan' }); $('#scan-result').textContent = `scan ${r.scan_ms} ms · changed ${r.n_changed} · removed ${r.n_removed}` + (r.n_changed ? ' → ' + r.changed.slice(0, 5).join(', ') : ''); };
   $('#btn-health').onclick = async () => {
     $('#health-out').innerHTML = '검사 중…';

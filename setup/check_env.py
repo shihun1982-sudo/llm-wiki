@@ -70,28 +70,60 @@ def main() -> int:
             line(FAIL, "코퍼스 폴더 없음: %s" % d, "config.json 의 corpus_dirs 를 실제 경로로 수정")
             problems += 1
 
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    line(OK if key else WARN, "ANTHROPIC_API_KEY %s" % ("설정됨" if key else "없음 → LLM 단계는 폴백(추출식 답변/로컬 리랭크)"),
-         "" if key else ".env 에 키를 넣거나 openai_base_url(OpenAI-compatible)/Ollama/headless 에이전트 설정")
+    # ---- 프로바이더/키: 역할별로 실제 어떤 provider 가 쓰이는지 보고, 그 provider 에 필요한 키·URL·실행 파일을 점검 ----
+    providers_used = {s.role_llm(r)["provider"] for r in s.LLM_ROLES} | {s.llm_provider}
+    key_a, tok_a = os.environ.get("ANTHROPIC_API_KEY"), os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    key_o = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
+    line(OK if (key_a or tok_a) else WARN, "ANTHROPIC_API_KEY/AUTH_TOKEN %s" % ("설정됨" if (key_a or tok_a) else "없음"),
+         "" if (key_a or tok_a) else "Anthropic 을 쓰려면 .env 에 키(PAT 는 ANTHROPIC_AUTH_TOKEN) — 아니면 openai_base_url(PAT 게이트웨이)/Ollama/headless")
+    if s.anthropic_base_url:
+        line(OK, "anthropic_base_url=%s (게이트웨이)" % s.anthropic_base_url, "" if (key_a or tok_a) else "게이트웨이 PAT 를 ANTHROPIC_AUTH_TOKEN 또는 ANTHROPIC_API_KEY 에")
+    if "openai" in providers_used or s.embed_provider == "openai":
+        line(OK if key_o else WARN, "OPENAI_API_KEY/LLM_API_KEY %s (openai_base_url=%s, 헤더 %s)" % ("설정됨" if key_o else "없음", s.openai_base_url, s.openai_api_key_header),
+             "" if key_o else "게이트웨이가 인증을 요구하면 .env 에 PAT (로컬 vLLM/Ollama 는 비워도 됨)")
+    elif key_o:
+        line(OK, "OPENAI_API_KEY 설정됨 (현재 openai provider 미사용)")
     line(OK if os.environ.get("VOYAGE_API_KEY") else WARN, "VOYAGE_API_KEY %s" % ("설정됨" if os.environ.get("VOYAGE_API_KEY") else "없음 → 로컬 hash 임베딩(또는 Ollama bge-m3) 사용"))
-    for k in ("OPENAI_API_KEY", "RERANK_API_KEY"):
-        if os.environ.get(k):
-            line(OK, "%s 설정됨" % k)
-    print("llm_provider=%s llm_model=%s embed_provider=%s openai_base_url=%s rerank_url=%s" % (s.llm_provider, s.llm_model, s.embed_provider, s.openai_base_url, s.rerank_url or "-"))
+    if os.environ.get("RERANK_API_KEY"):
+        line(OK, "RERANK_API_KEY 설정됨")
+    print("llm_provider=%s llm_model=%s embed_provider=%s openai_base_url=%s anthropic_base_url=%s rerank_url=%s" % (
+        s.llm_provider, s.llm_model, s.embed_provider, s.openai_base_url, s.anthropic_base_url or "-", s.rerank_url or "-"))
+    if s.llm_provider == "auto" and not (key_a or tok_a):
+        line(WARN, "llm_provider=auto 는 openai/headless 를 고르지 않음", "게이트웨이(PAT)나 opencode 를 쓰려면 llm_provider 또는 llm_roles.<role>.provider 에 명시")
 
+    import urllib.request
     try:
-        import urllib.request
         with urllib.request.urlopen(s.ollama_url + "/api/tags", timeout=0.5) as r:
             tags = json.loads(r.read().decode("utf-8")).get("models", [])
             line(OK, "Ollama 연결됨 (%d 모델)" % len(tags))
     except Exception:
-        line(WARN, "Ollama 없음 (선택 사항)")
+        line(WARN if ("ollama" in providers_used or s.embed_provider == "ollama") else OK, "Ollama 없음 (선택 사항)")
 
     from llmwiki.providers import make_llm, make_embedder
     llm, emb = make_llm(s), make_embedder(s)
     line(OK if llm.available or s.llm_provider in ("auto", "none") else WARN,
          "선택된 LLM: %s (available=%s)" % (llm.name, llm.available))
     line(OK, "선택된 임베더: %s" % emb.name)
+    # 역할별 ping: openai 게이트웨이 / headless 실행 파일 / anthropic 게이트웨이 연결 여부 (토큰 소비 없음)
+    seen = set()
+    for role in s.LLM_ROLES:
+        cfg = s.role_llm(role)
+        key = (cfg["provider"], cfg["model"])
+        if key in seen or cfg["provider"] in ("none", "mock", "auto"):
+            continue
+        seen.add(key)
+        try:
+            r = make_llm(s, role).ping()
+            line(OK if r.get("ok") else WARN, "ping %s/%s: %s" % (cfg["provider"], cfg["model"], (r.get("detail") or "")[:120]),
+                 "" if r.get("ok") else "python -m llmwiki models test --live 로 실제 호출까지 확인")
+        except Exception as e:
+            line(WARN, "ping %s/%s 실패: %s" % (cfg["provider"], cfg["model"], str(e)[:120]))
+    if s.embed_provider == "openai":
+        try:
+            r = emb.ping()
+            line(OK if r.get("ok") else WARN, "임베딩 엔드포인트 %s: %s" % (s.openai_embed_base_url or s.openai_base_url, (r.get("detail") or "")[:120]))
+        except Exception as e:
+            line(WARN, "임베딩 엔드포인트 실패: %s" % str(e)[:120])
     print()
     if problems:
         print("문제 %d건 — 위 FAIL 항목을 해결한 뒤 다시 실행하세요." % problems)

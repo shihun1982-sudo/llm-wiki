@@ -1,0 +1,23 @@
+{
+  "_comment": "opencode 를 headless(비대화형 subprocess)로 쓰는 예시. 이 파일의 키만 config.json 에 덮어쓰면 된다. 실행 파일은 PATH 에 있거나 agents.json command[0] 에 절대 경로. 적용 후: python -m llmwiki models test --live",
+  "_note_model": "llm_model 은 opencode 의 provider/model 표기(예 anthropic/claude-sonnet-4-5, openai/gpt-4o-mini). 비우면 opencode 의 기본 모델.",
+  "_note_scope": "권장: answer/expand/verify 처럼 질의 시 역할에만 headless 를 두고, 빌드 역할(extract/summary)은 API 프로바이더나 끄기 — llm_graph 는 청크당 프로세스 1개를 띄우므로 매우 느리다.",
+  "_note_windows": "Windows 에서 npm/bun 으로 설치한 opencode 는 opencode.cmd 이며 PATH 에서 자동 해석된다(.cmd 셸 포함). 안 되면 agents.json 의 command[0] 을 C:\\\\Users\\\\<me>\\\\AppData\\\\Roaming\\\\npm\\\\opencode.cmd 처럼 절대 경로로.",
+  "_note_auth": "opencode 자체 인증(opencode auth login 또는 provider 키 환경변수)은 별도. 필요한 환경변수는 .env 에 두면 subprocess 에 전달되고, agents.json 의 opencode.env 로도 줄 수 있다.",
+
+  "llm_provider": "auto",
+  "llm_roles": {
+    "answer": {"provider": "headless:opencode", "model": "anthropic/claude-sonnet-4-5", "effort": "medium"},
+    "expand": {"provider": "headless:opencode", "model": "anthropic/claude-haiku-4-5", "effort": "low"},
+    "verify": {"provider": "headless:opencode", "model": "anthropic/claude-haiku-4-5", "effort": "low"},
+    "rerank": {"provider": "none"}
+  },
+  "llm_timeout": 300,
+  "toggles": {
+    "llm_graph": false,
+    "community_summary": false,
+    "rerank_llm": false
+  },
+
+  "_agents_json_hint": "agents.json 의 opencode 항목: {\"command\": [\"opencode\", \"run\", \"--format\", \"json\", \"-m\", \"{model}\", \"{prompt}\"], \"output\": \"ndjson\", \"timeout_s\": 300}. 출력이 plain text 로 나오는 버전이면 \"output\": \"text\" 로."
+}

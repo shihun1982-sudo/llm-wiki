@@ -13,6 +13,8 @@
 | (루트) `corpus/` | **실제 문서를 넣는 폴더** (git 제외). 문서를 넣은 뒤 `config.json` 의 `corpus_dirs` 를 `["corpus"]` 로 바꾸고 `build --full` |
 | `schedule_build.ps1` / `.sh` | OS 스케줄러(작업 스케줄러/cron)에 증분 빌드 등록 |
 | (루트) `tuning.json` `presets.json` `query_rules.json` `pins.json` `agents.json` `mcp_sources.json` `schemas/` `prompts/` | 첫 실행 시 기본값으로 자동 생성되는 설정/규칙/프롬프트 파일 |
+| `config.example.pat-gateway.json` / `config.example.headless.json` | 사내 LLM 게이트웨이(URL+PAT) / opencode headless 설정 예시 — BRINGUP_GUIDE §4.1~4.3 |
+| (루트) `security.json` | 서버를 여러 사람이 쓸 때의 로그인(로컬 ID/비밀번호 + SSO)·역할·파괴적 작업 정책. `python -m llmwiki security init` 으로 생성 — [docs/SECURITY.md](../docs/SECURITY.md) |
 
 ## 1. 요구사항
 
@@ -54,7 +56,7 @@ run.bat build --full --trace        :: 색인
 run.bat query "질문" --trace         :: 질의 (--preset quality|speed|token|deep_research)
 run.bat eval                        :: 회귀 평가 (eval/questions.json)
 run.bat serve                       :: Web UI http://127.0.0.1:8765/
-run.bat test                        :: 단위 테스트 (51개)
+run.bat test                        :: 단위 테스트 (63개)
 ```
 
 ## 5. 자기 코퍼스에 맞추기

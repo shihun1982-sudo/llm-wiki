@@ -14,9 +14,49 @@ window.LW = (function () {
   const loaders = {};
 
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2800); }
-  async function api(path, body) {
-    const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  // ---------------- 권한 단계 확인(step-up) 모달 ----------------
+  // 서버가 428 + need{confirm|phrase|password} 를 돌려주면 여기서 사용자에게 묻고 같은 요청을 다시 보낸다.
+  // need.level: warn(변경) · admin(관리자 설정) · destructive(색인/DB 삭제 — 확인 문구 + 로컬 계정이면 비밀번호)
+  function stepUp(need, path) {
+    return new Promise((resolve) => {
+      let ov = $('#stepup'); if (ov) ov.remove();
+      ov = document.createElement('div'); ov.id = 'stepup'; ov.className = 'modal-bg';
+      const destructive = need.level === 'destructive';
+      const who = (STATE.auth && STATE.auth.user) || {};
+      ov.innerHTML = `<div class="modal ${destructive ? 'danger' : ''}">
+        <h3>${destructive ? '⚠ 파괴적 작업 확인' : need.level === 'admin' ? '관리자 설정 변경' : '변경 작업 확인'}</h3>
+        <div class="modal-op"><code>${esc(need.op || path)}</code> <span class="pill">${esc(need.label || need.level || '')}</span></div>
+        ${destructive ? `<p class="modal-msg">이 작업은 <b>색인/DB 를 지우거나 통째로 바꿉니다</b>. 다른 사용자의 검색이 중단되고, 다시 만드는 데 시간·토큰이 듭니다.${need.snapshot ? ' 직전 상태는 <b>data/snapshots/</b> 에 자동 저장되어 <code>snapshot restore</code> 로 되돌릴 수 있습니다.' : ''}</p>` : `<p class="modal-msg">되돌릴 수 있는 변경이지만 다른 사용자에게도 영향이 있습니다. 진행할까요?</p>`}
+        ${need.phrase ? `<label>확인 문구 <b>${esc(need.phrase)}</b> 를 그대로 입력<input id="su-phrase" type="text" autocomplete="off" spellcheck="false" placeholder="${esc(need.phrase)}"></label>` : ''}
+        ${need.password ? `<label>비밀번호 재입력 (${esc(who.name || '')})<input id="su-pw" type="password" autocomplete="current-password"></label>` : ''}
+        <div class="modal-actions"><button class="secondary" id="su-cancel">취소</button><button id="su-ok" class="${destructive ? 'danger' : ''}">${destructive ? '삭제하고 진행' : '진행'}</button></div>
+        <div class="muted small">이 작업은 감사 로그(logs/audit.jsonl)에 사용자 이름과 함께 기록됩니다.</div>
+      </div>`;
+      document.body.appendChild(ov);
+      const done = (v) => { ov.remove(); resolve(v); };
+      $('#su-cancel').onclick = () => done(null);
+      ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
+      $('#su-ok').onclick = () => {
+        const extra = { _confirm: true };
+        if (need.phrase) { const v = ($('#su-phrase').value || '').trim(); if (v !== need.phrase) { $('#su-phrase').style.borderColor = 'var(--critical)'; $('#su-phrase').focus(); return; } extra._phrase = v; }
+        if (need.password) { extra._password = $('#su-pw').value; if (!extra._password) { $('#su-pw').focus(); return; } }
+        done(extra);
+      };
+      const first = $('#su-phrase') || $('#su-pw') || $('#su-ok'); if (first) first.focus();
+    });
+  }
+  async function api(path, body, _retry) {
+    const opts = body === undefined ? { headers: { 'X-Requested-With': 'llmwiki' } } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'llmwiki' }, body: JSON.stringify(body) };
+    const r = await fetch(path, opts);
     let j; try { j = await r.json(); } catch (e) { j = { error: 'invalid response ' + r.status }; }
+    if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j; }
+    if (r.status === 428 && j && j.need && !_retry) {
+      const extra = await stepUp(j.need, path);
+      if (!extra) { toast('취소됨'); return { error: 'cancelled', cancelled: true }; }
+      return api(path, Object.assign({}, body || {}, extra), true);
+    }
+    if (r.status === 428 && j && j.need && _retry) { toast('확인 실패: ' + (j.need.password ? '비밀번호가 올바르지 않습니다' : j.error)); return j; }
+    if (r.status === 403) { toast('권한 없음: ' + (j.error || '')); return j; }
     if (j && j.error && !j.result && !Array.isArray(j)) { toast('오류: ' + j.error); console.error(j); }
     return j;
   }
@@ -150,6 +190,14 @@ window.LW = (function () {
     $('#stats-badge').textContent = `docs ${s.docs} · chunks ${s.chunks} · vec ${s.embeddings} · entities ${s.entities} · rels ${s.relations} · requests ${s.requests} · pending ${s.proposals_pending}`;
     const w = j.watcher || {};
     $('#watch-badge').textContent = `auto-build: ${w.enabled ? 'on (' + w.interval + 's)' : 'off'}${w.last_scan ? ' · last scan ' + ts(w.last_scan) : ''}`;
+    STATE.auth = j.auth || null;
+    const ub = $('#user-badge');
+    if (ub) {
+      const a = j.auth || {}, u = a.user || {};
+      if (a.mode === 'off') { ub.innerHTML = `<span title="security.json mode=off/auto(loopback): 로그인 없음. 파괴적 작업은 확인 문구만 요구">🔓 로그인 없음 (local admin)</span>`; }
+      else { ub.innerHTML = `<span title="via ${esc(u.via || '')}">👤 ${esc(u.name || '?')} <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-logout" title="로그아웃">⎋</a>`; const lo = $('#btn-logout'); if (lo) lo.onclick = async (e) => { e.preventDefault(); await api('/api/auth/logout', {}); location.href = '/login'; }; }
+      document.body.dataset.role = u.role || 'admin';
+    }
     const al = j.alerts || [];
     const ab = $('#alert-badge'); ab.classList.toggle('hidden', !al.length); ab.classList.toggle('alert', !!al.length); ab.textContent = al.length ? `⚠ alerts ${al.length}` : ''; ab.title = al.map((a) => `[${a.level}] ${a.check}: ${a.detail}`).join('\n'); ab.onclick = () => { switchGroup('corpus'); switchTab('build'); };
     if ($('#corpus-dirs')) $('#corpus-dirs').textContent = (j.settings.corpus_dirs || []).join('  |  ');
@@ -211,12 +259,66 @@ window.LW = (function () {
           (other ? `<td class="num">${o ? fmt(o.ms) : '-'}</td><td class="num ${d > 0 ? 'worse' : d < 0 ? 'better' : ''}">${d == null ? '' : (d > 0 ? '+' : '') + fmt(d)}</td>` : '') + `<td class="muted small mono">${esc(ms.slice(0, 160))}${ms.length > 160 ? '…' : ''}</td></tr>`;
       }).join('') + '</table>';
   }
+  // ---------------- live progress (progress.py 스냅샷 렌더) ----------------
+  // live = { status, path_labels[], stage_label, detail, done, total, pct, elapsed_s, stage_elapsed_s, llm:{active,provider,model,elapsed_s,calls}, log[] }
+  function fmtS(s) { s = Math.round(s || 0); return s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's'; }
+  function renderLive(el, live, extra) {
+    if (!el) return;
+    if (!live || !live.status) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    el.classList.remove('hidden');
+    const running = live.status === 'running';
+    const path = (live.path_labels || []).join(' › ');
+    const llm = live.llm || {};
+    const pct = live.pct == null ? null : Math.max(0, Math.min(100, live.pct));
+    const bar = pct == null
+      ? (running ? `<div class="progress indet"><i></i><span>${esc(live.detail || '')}</span></div>` : '')
+      : `<div class="progress"><i style="width:${pct}%"></i><span>${live.done}/${live.total} · ${fmt(pct, 0)}%${live.detail ? ' · ' + esc(live.detail) : ''}</span></div>`;
+    const llmTxt = llm.active ? `<span class="pill warn">LLM 응답 대기 ${esc(llm.provider || '')}/${esc(llm.model || '')} · ${fmtS(llm.elapsed_s)}</span>` : (llm.calls ? `<span class="pill">LLM 호출 ${llm.calls}회 · ${fmtS((llm.ms_total || 0) / 1000)}</span>` : '');
+    const head = running
+      ? `<span class="spin"></span><b>${esc(path || live.stage_label || live.label || '진행 중')}</b> <span class="muted small">단계 ${fmtS(live.stage_elapsed_s)} · 전체 ${fmtS(live.elapsed_s)}</span> ${llmTxt}`
+      : `<b>${live.status === 'done' ? '✔ 완료' : '✖ ' + esc(live.status)}</b> <span class="muted small">${fmtS(live.elapsed_s)}${live.detail ? ' · ' + esc(live.detail) : ''}</span>`;
+    // 로그: 기본은 최근 3줄, 클릭하면 누적 전체(펼침 상태는 폴링으로 다시 그려도 유지)
+    const log = live.log || [];
+    const expanded = el.dataset.expanded === '1';
+    const shown = expanded ? log : log.slice(-3);
+    const logHtml = log.length ? `<div class="live-log muted small ${expanded ? 'expanded' : ''}" title="클릭: ${expanded ? '접기' : '누적 로그 전체 보기'}">${esc(shown.join('\n'))}<span class="log-toggle">${expanded ? '▲ 접기' : (log.length > 3 ? `▼ 전체 보기 (${log.length}줄)` : '')}</span></div>` : '';
+    el.innerHTML = `<div class="live-head">${head}${extra || ''}</div>${running ? bar : ''}${logHtml}`;
+    const lg = $('.live-log', el);
+    if (lg) {
+      lg.onclick = () => { el.dataset.expanded = expanded ? '0' : '1'; renderLive(el, live, extra); if (!expanded) { const n = $('.live-log', el); if (n) n.scrollTop = n.scrollHeight; } };
+      if (expanded) lg.scrollTop = lg.scrollHeight;
+    }
+  }
+  // 요청 단위 progress_token 폴링 (Ask 처럼 동기 API 를 기다리는 동안 사용). stop() 을 돌려준다.
+  function watchProgress(token, el, interval) {
+    let busy = false, stopped = false;
+    const tick = async () => {
+      if (busy || stopped) return; busy = true;
+      try { const r = await fetch('/api/progress/' + token); const live = await r.json(); if (!stopped) renderLive(el, live.status === 'unknown' ? { status: 'running', label: '요청 접수 대기…' } : live); } catch (e) { /* 서버 재시작 등 — 조용히 */ }
+      busy = false;
+    };
+    const t = setInterval(tick, interval || 500); tick();
+    return () => { stopped = true; clearInterval(t); };
+  }
+  function liveElFor(logEl) {
+    if (!logEl) return null;
+    let el = logEl.previousElementSibling;
+    if (!el || !el.classList.contains('live')) { el = document.createElement('div'); el.className = 'live hidden'; logEl.parentNode.insertBefore(el, logEl); }
+    return el;
+  }
   async function pollJob(id, logEl, onDone, onTick) {
+    const liveEl = liveElFor(logEl);
+    let busy = false;   // 응답이 늦어도 폴링이 겹쳐 쌓이지 않게
     const t = setInterval(async () => {
-      const j = await api('/api/jobs/' + id);
-      if (logEl) logEl.textContent = (j.log || []).join('\n') + (j.status === 'running' ? '\n…' : '\n[' + j.status + ']' + (j.error ? '\n' + j.error : ''));
+      if (busy) return; busy = true;
+      let j;
+      try { j = await api('/api/jobs/' + id); } catch (e) { busy = false; return; }
+      busy = false;
+      if (!j || j.error === 'no such job') { clearInterval(t); renderLive(liveEl, null); if (logEl) logEl.textContent = 'job not found: ' + id; return; }
+      if (logEl) logEl.textContent = (j.log || []).join('\n') + (j.status === 'running' ? '\n… (진행 중 — 위 진행 표시가 멈춰 있으면 LLM/임베딩 응답 대기 중입니다. elapsed ' + fmtS(j.elapsed_s) + ')' : '\n[' + j.status + ' · ' + fmtS(j.elapsed_s) + ']' + (j.error ? '\n' + j.error : ''));
+      renderLive(liveEl, j.live && j.live.status ? j.live : { status: j.status, label: j.kind, elapsed_s: j.elapsed_s });
       if (onTick) onTick(j);
-      if (j.status !== 'running') { clearInterval(t); onDone(j); loadStatus(); }
+      if (j.status !== 'running') { clearInterval(t); setTimeout(() => renderLive(liveEl, null), 4000); onDone(j); loadStatus(); }
     }, 700);
   }
 
@@ -265,5 +367,5 @@ window.LW = (function () {
     $('#btn-save-config').onclick = async () => { const ov = overrides(); const j = await api('/api/config', { settings: ov }); STATE.settings = j.settings; toast('config.json 저장됨'); loadStatus(); };
     loadStatus().then(() => { updateCli(); (LW.onReady || []).forEach((f) => f()); });
   }
-  return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, boot, onReady: [] };
+  return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, renderLive, watchProgress, fmtS, stepUp, boot, onReady: [] };
 })();

@@ -424,7 +424,7 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
     before = [h.chunk_id for h in cands]
     if settings is not None and (method == "api" or (method == "auto" and settings.rerank_url)):
         from .rerankers import rerank_api
-        with prof.stage("rerank_api", candidates=len(cands), url=settings.rerank_url, model=settings.rerank_model) as st:
+        with prof.stage("rerank_api", candidates=len(cands), url=settings.rerank_url, model=settings.rerank_api_model) as st:
             docs = [((chunks[h.chunk_id]["heading"] + "\n" + chunks[h.chunk_id]["text"][:chunk_chars]) if h.chunk_id in chunks else "") for h in cands]
             try:
                 order, meta = rerank_api(settings, query, docs, top_n=len(cands))

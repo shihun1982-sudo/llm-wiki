@@ -56,8 +56,8 @@ DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
         "model": "", "timeout_s": 300, "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
     },
     "mock": {
-        "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트.",
-        "command": [sys.executable, "-m", "llmwiki.headless", "--mock"],
+        "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트. {python} = 현재 인터프리터(이식성).",
+        "command": ["{python}", "-m", "llmwiki.headless", "--mock"],
         "prompt_mode": "stdin", "files_flag": "--file", "output": "ndjson",
         "text_paths": ["part.text", "text"],
         "usage_paths": {"input": ["usage.input_tokens"], "output": ["usage.output_tokens"]},
@@ -86,7 +86,8 @@ def load_agents() -> Dict[str, Dict[str, Any]]:
 def save_agents(data: Dict[str, Dict[str, Any]]) -> str:
     p = agents_path()
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    out = {"_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} 치환. provider 는 headless:<이름>."}
+    out = {"_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. "
+                       "command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다."}
     out.update(data)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
@@ -183,27 +184,38 @@ class HeadlessAgentLLM(BaseLLM):
         self.available = self.cfg is not None and bool(self.cfg.get("command")) and self._exe_ok()
         self._files: List[str] = []
 
-    def _exe_ok(self) -> bool:
+    def _exe(self) -> str:
+        """command[0] 을 실제 실행 파일 경로로 해석. {python} → 현재 인터프리터.
+        Windows 에서 npm/bun 이 설치한 opencode 는 opencode.cmd 셸 스크립트인데 CreateProcess 는 PATHEXT 를 보지 않으므로
+        shutil.which 로 .cmd/.bat 까지 찾아 절대 경로로 실행해야 한다 (예전엔 ping 은 ok 인데 실제 호출은 WinError 2 로 실패)."""
         cmd = (self.cfg or {}).get("command") or []
         if not cmd:
-            return False
-        exe = cmd[0]
-        return bool(shutil.which(exe) or os.path.exists(exe))
+            return ""
+        exe = str(cmd[0]).replace("{python}", sys.executable).replace("{project_root}", ROOT)
+        exe = os.path.expandvars(os.path.expanduser(exe))
+        return shutil.which(exe) or (exe if os.path.exists(exe) else "")
+
+    def _exe_ok(self) -> bool:
+        return bool(self._exe())
 
     def ping(self) -> Dict[str, Any]:
         if not self.cfg:
             return {"ok": False, "ms": 0.0, "detail": "agent '%s' not in agents.json" % self.agent}
         exe = self.cfg["command"][0]
-        if not self._exe_ok():
-            return {"ok": False, "ms": 0.0, "detail": "executable not found: %s (PATH 확인)" % exe}
-        return {"ok": True, "ms": 0.0, "detail": "%s found (%s); model=%s" % (exe, shutil.which(exe) or exe, self.model or "(agent default)")}
+        path = self._exe()
+        if not path:
+            return {"ok": False, "ms": 0.0, "detail": "executable not found: %s (PATH 확인, 또는 agents.json command[0] 에 절대 경로)" % exe}
+        return {"ok": True, "ms": 0.0, "detail": "%s found (%s); model=%s — 실제 실행 확인은 'models test --live'" % (exe, path, self.model or "(agent default)")}
 
     def _render(self, tpl: List[str], prompt: str, prompt_file: str) -> List[str]:
         out: List[str] = []
-        for a in tpl:
+        for i, a in enumerate(tpl):
+            if i == 0:
+                out.append(self._exe() or a)
+                continue
             if a == "{prompt}" and self.cfg.get("prompt_mode", "arg") != "arg":
                 continue
-            a = a.replace("{model}", self.model or "").replace("{prompt_file}", prompt_file).replace("{project_root}", ROOT)
+            a = a.replace("{model}", self.model or "").replace("{prompt_file}", prompt_file).replace("{project_root}", ROOT).replace("{python}", sys.executable)
             if "{prompt}" in a:
                 a = a.replace("{prompt}", prompt)
             if a == "" and "-m" in out[-1:] and not self.model:   # 모델 미지정이면 -m 플래그 제거
@@ -216,7 +228,7 @@ class HeadlessAgentLLM(BaseLLM):
         if not self.cfg:
             raise LLMError("headless agent '%s' 가 agents.json 에 없습니다" % self.agent)
         if not self._exe_ok():
-            raise LLMError("headless agent 실행 파일을 찾을 수 없습니다: %s" % self.cfg["command"][0])
+            raise LLMError("headless agent 실행 파일을 찾을 수 없습니다: %s (PATH 또는 agents.json command[0] 절대 경로)" % self.cfg["command"][0])
         prompt = system.strip() + "\n\n" + user.strip()
         if json_mode:
             prompt += "\n\n(출력은 지시된 JSON 만. 코드 블록·설명 없이 JSON 객체 하나만 출력하세요.)"

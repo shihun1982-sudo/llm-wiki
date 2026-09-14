@@ -20,11 +20,12 @@ from llmwiki.rerankers import rerank_api, ping_rerank_api  # noqa: E402
 from llmwiki import headless as hl  # noqa: E402
 from llmwiki import tuning as tn  # noqa: E402
 
-CALLS = {"chat": 0, "embed": 0, "rerank": 0, "json_mode": []}
+CALLS = {"chat": 0, "embed": 0, "rerank": 0, "json_mode": [], "headers": []}
 
 
 class FakeAPI(BaseHTTPRequestHandler):
     style = "cohere"
+    require = None   # ("header-name", "expected value") 이면 그 헤더가 없을 때 401 (PAT 게이트웨이 흉내)
 
     def log_message(self, *a):
         pass
@@ -37,14 +38,30 @@ class FakeAPI(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _auth_ok(self):
+        CALLS["headers"].append({k.lower(): v for k, v in self.headers.items()})
+        if FakeAPI.require and self.headers.get(FakeAPI.require[0]) != FakeAPI.require[1]:
+            self._send({"error": {"message": "unauthorized"}}, 401)
+            return False
+        return True
+
     def do_GET(self):
-        if self.path.endswith("/models"):
+        if not self._auth_ok():
+            return
+        if self.path.endswith("/models") or self.path.startswith("/v1/models"):
             return self._send({"data": [{"id": "test-model"}, {"id": "embed-model"}]})
         self._send({"error": "nope"}, 404)
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+        if not self._auth_ok():
+            return
+        if self.path.endswith("/v1/messages"):   # Anthropic-compatible 게이트웨이
+            CALLS["chat"] += 1
+            user = body["messages"][-1]["content"]
+            return self._send({"model": body.get("model"), "stop_reason": "end_turn", "content": [{"type": "text", "text": "anthropic-echo: " + user[:30]}],
+                               "usage": {"input_tokens": 7, "output_tokens": 3}})
         if self.path.endswith("/chat/completions"):
             CALLS["chat"] += 1
             CALLS["json_mode"].append("response_format" in body)
@@ -152,7 +169,7 @@ class ProvidersTest(unittest.TestCase):
             p.store.close()
 
     def test_rerank_api_styles_and_pipeline(self):
-        s = self._settings(llm_provider="mock", embed_provider="hash", embed_dim=256, rerank_url=self.base + "/rerank", rerank_model="bge")
+        s = self._settings(llm_provider="mock", embed_provider="hash", embed_dim=256, rerank_url=self.base + "/rerank", rerank_api_model="bge")
         order, meta = rerank_api(s, "rx dma underrun", ["RX DMA underrun 발생", "주간 보고", "dma"], top_n=3)
         self.assertEqual(order[0][0], 0)
         self.assertEqual(meta["model"], "bge")
@@ -235,6 +252,121 @@ class ProvidersTest(unittest.TestCase):
             self.assertEqual(r["config"]["llm"], "headless:mock")
         finally:
             p.store.close()
+
+    def test_pat_gateway_headers_and_live(self):
+        """사내 게이트웨이(URL + PAT): 헤더 이름/형식이 설정대로 나가고, 401 이면 ping/live 가 실패로 드러나야 한다."""
+        from llmwiki.providers import AnthropicHTTPLLM, auth_headers, openai_api_key
+        # authorization → Bearer
+        FakeAPI.require = ("authorization", "Bearer pat-123")
+        try:
+            llm = OpenAICompatLLM(self.base, "test-model", api_key="pat-123")
+            self.assertTrue(llm.ping()["ok"])
+            lv = llm.live_test()
+            self.assertTrue(lv["ok"], lv)
+            self.assertIn("reply=", lv["detail"])
+            bad = OpenAICompatLLM(self.base, "test-model", api_key="wrong")
+            pb = bad.ping()
+            self.assertFalse(pb["ok"])
+            self.assertIn("401", pb["detail"])
+            self.assertFalse(bad.live_test()["ok"])
+        finally:
+            FakeAPI.require = None
+        # api-key 헤더 스타일 + 고정 헤더
+        FakeAPI.require = ("api-key", "pat-xyz")
+        try:
+            llm = OpenAICompatLLM(self.base, "test-model", api_key="pat-xyz", key_header="api-key", extra_headers={"X-Tenant": "modem"})
+            r = llm.complete("s", "u")
+            self.assertTrue(r["text"].startswith("echo:"))
+            self.assertEqual(CALLS["headers"][-1].get("x-tenant"), "modem")
+            self.assertNotIn("authorization", CALLS["headers"][-1])
+            emb = OpenAICompatEmbedder(self.base, "embed-model", api_key="pat-xyz", key_header="api-key", batch=8)
+            self.assertEqual(emb.embed(["a"]).shape[0], 1)
+            self.assertEqual(CALLS["headers"][-1].get("api-key"), "pat-xyz")
+        finally:
+            FakeAPI.require = None
+        # 팩토리가 settings 의 헤더 설정과 임베딩 전용 URL 을 반영
+        s = Settings(llm_provider="openai", llm_model="test-model", openai_base_url=self.base, openai_api_key_header="x-api-key",
+                     openai_extra_headers={"X-A": "1"}, embed_provider="openai", openai_embed_base_url=self.base + "/emb", openai_embed_model="embed-model", llm_timeout=33)
+        l2 = make_llm(s)
+        self.assertEqual(l2.key_header, "x-api-key")
+        self.assertEqual(l2.timeout, 33)
+        self.assertEqual(make_embedder(s).base_url, self.base + "/emb")
+        # 키 alias: LLM_API_KEY
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ["LLM_API_KEY"] = "alias-key"
+        try:
+            self.assertEqual(openai_api_key(), "alias-key")
+            self.assertEqual(auth_headers("k", "authorization")["authorization"], "Bearer k")
+            self.assertEqual(auth_headers("k", "x-api-key")["x-api-key"], "k")
+        finally:
+            os.environ.pop("LLM_API_KEY", None)
+        # Anthropic-compatible 게이트웨이: base_url + Bearer PAT(ANTHROPIC_AUTH_TOKEN) / x-api-key
+        root = self.base[:-3]
+        FakeAPI.require = ("authorization", "Bearer apat")
+        saved = {k: os.environ.pop(k, None) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        try:
+            os.environ["ANTHROPIC_AUTH_TOKEN"] = "apat"
+            a = AnthropicHTTPLLM("test-model", fallbacks=False, base_url=root)
+            self.assertTrue(a.available)
+            self.assertTrue(a.ping()["ok"], a.ping())
+            r = a.complete("s", "hello")
+            self.assertTrue(r["text"].startswith("anthropic-echo"))
+            self.assertEqual(r["usage"]["input_tokens"], 7)
+            sa = Settings(llm_provider="anthropic", llm_model="test-model", anthropic_base_url=root, llm_fallbacks=False)
+            fa = make_llm(sa, "answer")
+            self.assertEqual(fa.name, "anthropic")
+            self.assertEqual(getattr(fa, "base_url", root).rstrip("/"), root)
+        finally:
+            FakeAPI.require = None
+            os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_rerank_model_override_routes_to_role(self):
+        """rerank_model=… 는 역할 rerank 의 LLM 모델 단축키, rerank API 모델은 rerank_api_model (구 config 의 rerank_model 은 자동 이관)."""
+        from llmwiki.config import apply_overrides
+        s = Settings()
+        apply_overrides(s, {"rerank_model": "llama3.1", "rerank_api_model": "BAAI/bge-reranker-v2-m3", "rerank_url": "http://gw/v1/rerank",
+                            "openai_extra_headers": '{"X-T": "1"}'})
+        self.assertEqual(s.llm_roles["rerank"]["model"], "llama3.1")
+        self.assertEqual(s.rerank_api_model, "BAAI/bge-reranker-v2-m3")
+        self.assertEqual(s.openai_extra_headers, {"X-T": "1"})
+        old = Settings.from_dict({"rerank_model": "bge-old"})
+        self.assertEqual(old.rerank_api_model, "bge-old")
+        self.assertNotIn("rerank", old.llm_roles)
+
+    def test_headless_resolves_shell_shim(self):
+        """Windows 의 npm/bun 설치 CLI 는 .cmd 셸 — PATH 에서 찾아 절대 경로로 실행해야 한다 ({python} 치환 포함)."""
+        import stat
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir)
+        if os.name == "nt":
+            exe = os.path.join(bindir, "fakeagent.cmd")
+            with open(exe, "w", encoding="utf-8") as f:
+                f.write('@echo off\r\necho {"type":"text","part":{"text":"shim-ok %1"}}\r\n')
+        else:
+            exe = os.path.join(bindir, "fakeagent")
+            with open(exe, "w", encoding="utf-8") as f:
+                f.write('#!/bin/sh\necho "{\\"type\\":\\"text\\",\\"part\\":{\\"text\\":\\"shim-ok $1\\"}}"\n')
+            os.chmod(exe, os.stat(exe).st_mode | stat.S_IEXEC)
+        agents = hl.load_agents()
+        agents["fake"] = {"command": ["fakeagent", "{model}"], "prompt_mode": "stdin", "output": "ndjson", "text_paths": ["part.text"], "model": "m1", "timeout_s": 30}
+        hl.save_agents(agents)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bindir + os.pathsep + old_path
+        try:
+            llm = hl.HeadlessAgentLLM("fake", "")
+            self.assertTrue(llm.available)
+            self.assertTrue(llm.ping()["ok"])
+            r = llm.complete("s", "u")
+            self.assertIn("shim-ok", r["text"])
+            self.assertTrue(llm.live_test()["ok"])
+            # {python} 치환: mock 에이전트 명령이 절대 경로가 아니어도 실행된다
+            self.assertEqual(hl.load_agents()["mock"]["command"][0], "{python}")
+            self.assertTrue(hl.HeadlessAgentLLM("mock", "").complete("TASK=answer", "q [C1]")["text"])
+        finally:
+            os.environ["PATH"] = old_path
 
     def test_float16_store(self):
         s = self._settings(llm_provider="mock", embed_provider="hash", embed_dim=256, embed_store_dtype="float16")

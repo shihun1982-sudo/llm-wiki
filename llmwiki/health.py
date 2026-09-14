@@ -124,7 +124,7 @@ def run_health(pipe, quick: bool = False, for_build: bool = False) -> Dict[str, 
                 from .rerankers import ping_rerank_api
                 p = ping_rerank_api(s)
                 return p.get("ok", False), p.get("detail", "")
-            checks.append(_check("rerank_api", _rr, "warn", "rerank_url/rerank_model/RERANK_API_KEY 확인"))
+            checks.append(_check("rerank_api", _rr, "warn", "rerank_url/rerank_api_model/RERANK_API_KEY 확인"))
         if t.mcp_sources:
             def _mcp():
                 from .mcp_client import test_sources

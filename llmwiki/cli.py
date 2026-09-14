@@ -25,12 +25,16 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
 
+import time
+
 from .config import Toggles, Settings, load_settings, save_settings, apply_overrides
 from .profiler import jsonable
+from . import progress as _pg
 
 
 def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
@@ -62,7 +66,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-reset", dest="reset", action="store_false", default=None, help="--full 시 DB 파일을 지우지 않고 테이블만 재생성")
     p.add_argument("--purge-logs", action="store_true", help="완전 초기화 시 질의 로그/제안/동의어도 삭제")
     p.add_argument("--force", action="store_true", help="health 검사 실패여도 빌드 강행")
+    p.add_argument("--yes", action="store_true", help="파괴적 작업(--full/--reset/--purge-logs)의 확인 문구 입력 생략 (스케줄러 등 비대화형)")
+    p.add_argument("--no-snapshot", action="store_true", help="초기화 전 자동 스냅샷 생략")
     _add_toggle_flags(p)
+
+    p = sub.add_parser("users", help="Web 로그인 사용자 관리 (security.json): add | list | remove | set-role | passwd")
+    p.add_argument("action", choices=["add", "list", "remove", "set-role", "passwd"])
+    p.add_argument("name", nargs="?", help="사용자 id")
+    p.add_argument("--role", default=None, help="viewer | operator | admin")
+    p.add_argument("--password", default=None, help="비밀번호 (생략하면 프롬프트; 환경변수 LLMWIKI_PASSWORD 도 인식)")
+    p.add_argument("--display", default="", help="표시 이름")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("security", help="로그인/역할/파괴적 작업 정책 보기·초기화 (security.json)")
+    p.add_argument("action", choices=["show", "init", "audit"], nargs="?", default="show")
+    p.add_argument("--n", type=int, default=50, help="audit: 최근 N 건")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("snapshot", help="색인 스냅샷: list | create [--tag t] | restore <name> | prune [--keep N]")
+    p.add_argument("action", choices=["list", "create", "restore", "prune"], nargs="?", default="list")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--tag", default="manual")
+    p.add_argument("--keep", type=int, default=3)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("health", help="환경·프로바이더·DB·디스크·코퍼스 점검 (빌드 전 자동 실행되는 것과 동일)")
     p.add_argument("--quick", action="store_true", help="네트워크 ping(LLM/임베더/rerank/MCP) 생략")
@@ -216,11 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["show", "set", "reset", "paths"])
     p.add_argument("kv", nargs="*", help="key=value")
     p.add_argument("--effective", action="store_true", help="show: 키별 현재값·기본값·출처(default/file/env)·env 이름")
+    p.add_argument("--yes", action="store_true", help="reset: 확인 문구 생략")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("models", help="역할별 LLM/임베딩 모델 설정 보기·테스트·변경")
     p.add_argument("action", choices=["show", "test", "set"], nargs="?", default="show")
     p.add_argument("kv", nargs="*", help="set: answer_model=claude-opus-5 rerank_provider=ollama rerank_model=llama3.1 embed_provider=hash ...")
+    p.add_argument("--live", action="store_true", help="test: ping 외에 실제 완성 호출 1회 (PAT 권한·헤더·모델명·headless 실행 확인, 토큰 소량 소비)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("requests", help="요청별 프로파일/디버그 trace 조회")
@@ -238,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("maintenance", help="DB 유지보수")
     p.add_argument("action", choices=["vacuum", "fts_optimize", "wal_checkpoint", "clear_cache", "warm_cache", "refresh_doc_refs", "purge_requests"])
+    p.add_argument("--yes", action="store_true", help="purge_requests: 확인 문구 생략")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("watch", help="코퍼스 변경 감시 → 변경 시 증분 빌드")
@@ -259,7 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("serve", help="Web UI 서버")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 등 외부 공개 시 security.json 의 로그인 설정이 필요 (없으면 거부)")
+    p.add_argument("--insecure", action="store_true", help="로그인 설정 없이 외부에 공개 (권장하지 않음)")
     return ap
 
 
@@ -274,6 +306,29 @@ def _overrides_from_ns(ns: argparse.Namespace) -> Dict[str, Any]:
     if getattr(ns, "k", None) and getattr(ns, "cmd", "") == "query":   # eval/trial 의 --k 는 평가 k
         ov["top_k_final"] = ns.k
     return ov
+
+
+def _confirm_destructive(ns: argparse.Namespace, what: str, detail: str = "") -> bool:
+    """파괴적 작업 확인: --yes 면 통과, 대화형이면 확인 문구(security.json destructive.confirm_phrase)를 입력받고,
+    비대화형(파이프/스케줄러/Web 콘솔)인데 --yes 가 없으면 거부한다."""
+    if getattr(ns, "yes", False):
+        return True
+    from .auth import load_security
+    phrase = (load_security().get("destructive") or {}).get("confirm_phrase") or "DELETE INDEX"
+    print("!! 파괴적 작업: %s" % what)
+    if detail:
+        print("   %s" % detail)
+    if _CAPTURED or not sys.stdin or not sys.stdin.isatty():
+        print("   비대화형 실행입니다. 정말 실행하려면 --yes 를 붙이세요 (Web 콘솔은 관리자 확인 후 자동으로 붙습니다).")
+        return False
+    try:
+        typed = input("   계속하려면 확인 문구 '%s' 를 입력: " % phrase).strip()
+    except (EOFError, KeyboardInterrupt):
+        typed = ""
+    if typed != phrase:
+        print("   취소됨 (문구 불일치)")
+        return False
+    return True
 
 
 def _out(obj: Any, as_json: bool, text: Optional[str] = None) -> None:
@@ -389,6 +444,14 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
     if ns.cmd == "build":
         from .buildlock import BuildLockedError
         do_reset = ns.reset if ns.reset is not None else bool(ns.full)   # --full 의 기본값 = 완전 초기화
+        if do_reset or ns.purge_logs:
+            stt = p.store.stats()
+            if not _confirm_destructive(ns, "색인 완전 초기화%s" % (" + 질의 로그/제안/이력 삭제(--purge-logs)" if ns.purge_logs else ""),
+                                        "현재 docs=%s chunks=%s entities=%s requests=%s → 모두 지우고 다시 만듭니다%s. (--full --no-reset 은 테이블을 비우지 않는 전체 리빌드)" % (
+                                            stt.get("docs"), stt.get("chunks"), stt.get("entities"), stt.get("requests"),
+                                            "" if ns.no_snapshot else "; 직전 상태는 data/snapshots/ 에 자동 저장(snapshot restore 로 복원)")):
+                _out({"error": "cancelled"}, as_json, "build cancelled")
+                return 4
         if do_reset and p.s.toggles.health_check and not ns.force:
             # 초기화(색인 삭제) 전에 health 를 먼저 확인 — 코퍼스 경로가 없으면 기존 색인을 지우지 않는다
             from .health import run_health, format_health
@@ -398,12 +461,18 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                      format_health(hr) + "\nbuild aborted before reset (기존 색인 유지). --force 로 강행, --no-health-check 로 생략")
                 return 3
         if do_reset:
-            r = p.reset_index(keep_logs=not ns.purge_logs)
+            from .auth import load_security
+            dsec = load_security().get("destructive") or {}
+            r = p.reset_index(keep_logs=not ns.purge_logs, snapshot=not ns.no_snapshot and bool(dsec.get("snapshot_before", True)),
+                              actor="cli:%s" % (os.environ.get("USERNAME") or os.environ.get("USER") or "?"), snapshot_keep=int(dsec.get("snapshot_keep", 3) or 3))
             if not as_json:
-                print("  · reset: cleared %d tables, kept_logs=%s, removed_wiki_pages=%d" % (len(r["cleared_tables"]), r["kept_logs"], r["removed_wiki_pages"]))
+                print("  · reset: cleared %d tables, kept_logs=%s, removed_wiki_pages=%d%s" % (
+                    len(r["cleared_tables"]), r["kept_logs"], r["removed_wiki_pages"], (" · snapshot %s" % r["snapshot"]) if r.get("snapshot") else ""))
             ns.full = True
         try:
-            res, tr = p.build(full=ns.full, progress=lambda m: print("  ·", m) if not as_json else None, force=ns.force)
+            # 진행 표시: 단계/진도율/LLM 대기 시간을 stderr 에 1초 간격으로 출력 (--json 이나 Web 콘솔에서는 조용히 bind 만)
+            with _pg.cli_monitor("cli-build-%d" % int(time.time()), "build", "build --full" if ns.full else "build", enabled=not as_json and not _CAPTURED):
+                res, tr = p.build(full=ns.full, progress=lambda m: print("  ·", m) if not as_json else None, force=ns.force)
         except BuildLockedError as e:
             _out({"error": str(e), "holder": e.holder}, as_json, "build refused: %s" % e)
             return 2
@@ -794,7 +863,8 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
 
     if ns.cmd == "query":
         q = " ".join(ns.question)
-        res, tr = p.query(q, log=not ns.no_log)
+        with _pg.cli_monitor("cli-query-%d" % int(time.time()), "query", q[:80], enabled=not as_json and not _CAPTURED):
+            res, tr = p.query(q, log=not ns.no_log)
         if as_json:
             _out({"result": res, "trace": tr}, True)
             return 0
@@ -955,6 +1025,9 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             _out(p.s.to_dict(), True)
             return 0
         if ns.action == "reset":
+            if not _confirm_destructive(ns, "config.json 을 기본값으로 덮어쓰기", "코퍼스 경로·프로바이더·토글 설정이 모두 초기화됩니다 (색인 DB 는 유지)"):
+                print("cancelled")
+                return 4
             save_settings(Settings())
             print("config reset")
             return 0
@@ -977,8 +1050,17 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             save_settings(p.s)
             p.reload()
         if ns.action == "test":
-            _out(p.test_providers(), True)
-            return 0
+            r = p.test_providers(live=bool(ns.live))
+            if as_json:
+                _out(r, True)
+            else:
+                for k, x in r.items():
+                    mark = "OK " if x.get("ok") else "FAIL"
+                    extra = ("  live: %s %.0fms %s" % ("OK" if x.get("live_ok") else "FAIL", x.get("live_ms", 0), x.get("live_detail", ""))) if "live_ok" in x else ""
+                    print("[%s] %-10s %s/%s  %.0fms  %s%s" % (mark, k, x.get("provider") or x.get("url") or "", x.get("model"), x.get("ms") or 0, x.get("detail", ""), extra))
+                if not ns.live:
+                    print("(ping 만 확인. PAT 권한·헤더·모델명·headless 실행까지 확인하려면 models test --live)")
+            return 0 if all(x.get("ok") for x in r.values()) else 1
         st = p.provider_status()
         if as_json:
             _out(st, True)
@@ -1046,8 +1128,114 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         return 0
 
     if ns.cmd == "maintenance":
+        if ns.action == "purge_requests" and not _confirm_destructive(ns, "requests 테이블(요청 프로파일 이력 %s건) 삭제" % p.store.stats().get("requests")):
+            _out({"error": "cancelled"}, True)
+            return 4
         _out(p.maintenance(ns.action), True)
         return 0
+
+    if ns.cmd == "users":
+        from .auth import Auth, ROLES
+        a = Auth(p.s)
+        if ns.action == "list":
+            rows = a.list_users()
+            _out(rows, as_json, "\n".join("%-16s %-9s %s%s" % (r["name"], r["role"], r.get("display") or "", "" if r["has_password"] else "  (비밀번호 없음 — SSO 전용)") for r in rows)
+                 or "(사용자 없음 — users add <id> --role admin)")
+            info = a.public_info()
+            if not as_json:
+                print("mode=%s (effective: %s) · local=%s · sso=%s · 파일: %s" % (a.cfg.get("mode"), a.mode, info["local"], info["sso"], __import__("llmwiki.auth", fromlist=["security_path"]).security_path()))
+            return 0
+        if not ns.name:
+            print("사용자 id 필요")
+            return 1
+        if ns.action in ("add", "passwd"):
+            pw = ns.password or os.environ.get("LLMWIKI_PASSWORD")
+            if pw is None and ns.action == "add" and ns.yes:
+                pw = None   # SSO 전용 계정(역할만 지정)
+            elif pw is None:
+                import getpass
+                try:
+                    pw = getpass.getpass("비밀번호 (%s): " % ns.name)
+                    if pw != getpass.getpass("다시 입력: "):
+                        print("불일치")
+                        return 1
+                except (EOFError, KeyboardInterrupt):
+                    print("취소")
+                    return 1
+            try:
+                if ns.action == "add":
+                    a.add_user(ns.name, pw, ns.role or "viewer", ns.display)
+                    print("added %s role=%s%s" % (ns.name, ns.role or "viewer", "" if pw else " (SSO 전용, 비밀번호 없음)"))
+                else:
+                    a.set_password(ns.name, pw)
+                    print("password updated: %s" % ns.name)
+            except ValueError as e:
+                print("error: %s" % e)
+                return 1
+            return 0
+        if ns.action == "remove":
+            print("removed" if a.remove_user(ns.name) else "no such user")
+            return 0
+        if ns.action == "set-role":
+            if ns.role not in ROLES:
+                print("--role viewer|operator|admin 필요")
+                return 1
+            a.set_role(ns.name, ns.role)
+            print("role updated: %s → %s" % (ns.name, ns.role))
+            return 0
+
+    if ns.cmd == "security":
+        from .auth import Auth, load_security, save_security, DEFAULT_SECURITY
+        from . import auth as _auth
+        if ns.action == "init":
+            if os.path.exists(_auth.security_path()):
+                print("already exists: %s" % _auth.security_path())
+                return 1
+            save_security(json.loads(json.dumps(DEFAULT_SECURITY)))
+            print("created %s — 다음: users add <id> --role admin, 필요하면 sso 항목 설정 (docs/SECURITY.md)" % _auth.security_path())
+            return 0
+        if ns.action == "audit":
+            rows = Auth.audit_tail(ns.n)
+            _out(rows, as_json, "\n".join("%s %-12s %-9s %-5s %-12s %s%s" % (r.get("time"), r.get("user"), r.get("role"), "ok" if r.get("ok") else "DENY",
+                                                                            r.get("level"), r.get("op"), (" · " + r["error"]) if r.get("error") else "") for r in rows) or "(no audit rows)")
+            return 0
+        a = Auth(p.s)
+        cfg = json.loads(json.dumps(a.cfg))
+        for v in (cfg.get("users") or {}).values():
+            v.pop("pw", None)
+        _out({"path": _auth.security_path(), "effective_mode": a.mode, "security": cfg}, as_json,
+             "file: %s\nmode: %s (effective %s)\nusers: %d · sso: %s (%s)\ndestructive: phrase=%r reauth=%s snapshot_before=%s keep=%s\n%s" % (
+                 _auth.security_path(), cfg.get("mode"), a.mode, len(cfg.get("users") or {}), "on" if (cfg.get("sso") or {}).get("enabled") else "off",
+                 (cfg.get("sso") or {}).get("type"), (cfg.get("destructive") or {}).get("confirm_phrase"), (cfg.get("destructive") or {}).get("require_reauth"),
+                 (cfg.get("destructive") or {}).get("snapshot_before"), (cfg.get("destructive") or {}).get("snapshot_keep"),
+                 "" if os.path.exists(_auth.security_path()) else "(파일 없음 — 기본값. 'security init' 으로 생성)"))
+        return 0
+
+    if ns.cmd == "snapshot":
+        from . import snapshots as _snap
+        if ns.action == "list":
+            rows = _snap.list_(p)
+            _out(rows, as_json, "\n".join("%-32s %-20s %6.1fMB  %s %s" % (r["name"], r.get("tag"), (r.get("bytes") or 0) / 1e6,
+                                                                       json.dumps(r.get("counts") or {}, ensure_ascii=False), r.get("reason") or "") for r in rows) or "(no snapshots)")
+            return 0
+        if ns.action == "create":
+            r = _snap.create(p, ns.tag, actor="cli", reason="manual")
+            _out(r, as_json, "snapshot %s (%.1fMB)" % (r["name"], r["bytes"] / 1e6))
+            return 0
+        if ns.action == "prune":
+            _out({"removed": _snap.prune(p, ns.keep)}, True)
+            return 0
+        if ns.action == "restore":
+            if not ns.name:
+                print("snapshot 이름 필요 (snapshot list)")
+                return 1
+            if not _confirm_destructive(ns, "스냅샷 %s 로 복원" % ns.name, "현재 DB/wiki/rules/config 가 스냅샷 시점으로 교체됩니다 (복원 직전 상태도 자동 스냅샷)"):
+                print("cancelled")
+                return 4
+            _snap.create(p, "auto:before-restore", actor="cli", reason="before restore %s" % ns.name)
+            r = _snap.restore(p, ns.name)
+            _out(r, as_json, "restored %s: %s" % (ns.name, json.dumps(r["stats"], ensure_ascii=False)[:200]))
+            return 0
 
     if ns.cmd == "watch":
         interval = ns.interval or p.s.auto_build_interval
@@ -1127,16 +1315,21 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
 
     if ns.cmd == "serve":
         from .web.server import serve
-        serve(p, ns.host, ns.port)
+        serve(p, ns.host, ns.port, insecure=bool(getattr(ns, "insecure", False)))
         return 0
     print("unknown command: %s" % ns.cmd)
     return 1
 
 
+_CAPTURED = False   # Web 콘솔(run_captured)에서 실행 중이면 True — 진행 모니터의 stderr 출력을 끈다
+
+
 def run_captured(argv: List[str], settings: Settings, pipe) -> Dict[str, Any]:
     """Web 콘솔용: stdout 을 캡처해 문자열로 반환."""
+    global _CAPTURED
     buf = io.StringIO()
     code = 0
+    _CAPTURED = True
     try:
         with redirect_stdout(buf):
             code = run(argv, settings, pipe)
@@ -1145,6 +1338,8 @@ def run_captured(argv: List[str], settings: Settings, pipe) -> Dict[str, Any]:
     except Exception as e:
         buf.write("ERROR: %s: %s" % (type(e).__name__, e))
         code = 1
+    finally:
+        _CAPTURED = False
     return {"code": code, "output": buf.getvalue()}
 
 

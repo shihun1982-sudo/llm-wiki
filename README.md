@@ -48,6 +48,9 @@
 **[docs/IMPLEMENTATION_PLAN_0913.md](docs/IMPLEMENTATION_PLAN_0913.md) — 구현 계획서**
 분석 리포트를 바탕으로 무엇을 어떤 순서로 만들지 정한 문서(Phase 0~8, 신규/변경 파일 목록, 신규 토글·튜닝 이름, 리스크와 대응). 상단에 구현 완료 상태와 결정 사항 확정 내용을 적어 두었다. 구현 결과와 계획을 대조할 때 사용.
 
+**[docs/SECURITY.md](docs/SECURITY.md) — 다중 사용자 서버의 로그인·권한·파괴적 작업 보호 (계획 + 구현)**
+서버를 여러 사람이 쓸 때의 설계: 왜 "관리 암호 하나"가 아니라 계정·역할인지(검토한 대안), 작업 등급표(read/run/warn/admin/destructive 와 필요한 역할·확인), 로컬 ID/비밀번호와 SSO(OIDC · 리버스 프록시 헤더)를 병행하는 `security.json` 작성법, 파괴적 작업의 확인 문구·비밀번호 재입력·자동 스냅샷, 감사 로그, 서버 공개 체크리스트, 한계와 다음 단계.
+
 **[setup/INSTALL.md](setup/INSTALL.md) — 설치와 최소 설정**
 setup/ 폴더의 각 파일 용도, 요구사항 표, Windows/macOS/Linux 설치 명령, 최소 설정 3단계, 실행 명령, 자기 코퍼스에 맞추는 4단계, 문제 해결 요약, 폴더 통째 이식 방법.
 
@@ -96,7 +99,8 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 | 파일 | 내용 |
 |---|---|
 | `config.json` | 코퍼스 경로, 프로바이더/**역할별 모델**(answer·rerank·extract·summary·review·expand·verify·forensic), **56개 토글**, 운영 수치(배치·WAL·로그·timezone) |
-| `.env` | API 키 + 모든 설정의 env 오버라이드 (`LLMWIKI_<KEY>`, `LLMWIKI_TOGGLE_<NAME>`) |
+| `.env` | API 키/PAT (`OPENAI_API_KEY`·`LLM_API_KEY`, `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN` …) + 모든 설정의 env 오버라이드 (`LLMWIKI_<KEY>`, `LLMWIKI_TOGGLE_<NAME>`) |
+| `security.json` | **로그인(로컬 ID/비밀번호 + SSO 병행)·역할·파괴적 작업 정책** — [docs/SECURITY.md](docs/SECURITY.md) |
 | `tuning.json` | 알고리즘 상수 130+ (FTS·라우터·그래프·융합·근거 판정·claim·메모리…) — `tuning show`, Web › Settings › 튜닝 |
 | `presets.json` | **품질/속도/토큰/offline/deep_research** 묶음 — `--preset quality`, 사이드바 체크박스 |
 | `query_rules.json` | **규칙 기반 질의 확장 사전**: acronym / synonym / alias / related / exclude / compound (유형별로 다르게 적용) |
@@ -111,7 +115,8 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 
 - **문서 계약**: front matter(schema_version, doc_type, id, date, tags, module, hw, related) → doc_meta · 메타 토큰 · lint(`corpus lint`).
 - **결정적 관계 + provenance**: explicit(front matter) / rule(ID 패턴) / cooccur / llm / human 구분, confidence 관리, 그래프 탐색 가중(`provenance_w`), 노드 ↔ 원본 문서(doc_refs).
-- **프로바이더**: Anthropic, **OpenAI-compatible**(chat/embeddings), Ollama, **rerank 전용 엔드포인트**(Cohere/Jina/vLLM/Voyage), **Generic Headless Agent**(opencode/claude/codex CLI subprocess, `agents.json`), Voyage/ST/hash 임베더.
+- **프로바이더**: Anthropic(직접 또는 **Anthropic-compatible 게이트웨이 + PAT**, `anthropic_base_url`), **OpenAI-compatible**(chat/embeddings, **사내 게이트웨이 + PAT** — 헤더 형식 `openai_api_key_header`), Ollama, **rerank 전용 엔드포인트**(Cohere/Jina/vLLM/Voyage), **Generic Headless Agent**(opencode/claude/codex CLI subprocess, `agents.json`, Windows `.cmd` 셸 지원), Voyage/ST/hash 임베더. 연결 확인은 `models test --live`(실제 호출 1회). 설정 예: `setup/config.example.pat-gateway.json`, `config.example.headless.json`.
+- **진행 표시**: 빌드/질의처럼 오래 걸리는 작업은 CLI 에 `⏳ 단계 › 진도율 · LLM 응답 대기 Ns` 를, Web 에 진행 패널(단계 경로·%·LLM 대기·최근 로그)을 실시간으로 보여 준다. 멈춘 것처럼 보이던 "전체 리빌드 + llm_graph" 는 서버 락 뒤에 있던 폴링을 락 밖으로 옮겨 해결.
 - **빌드 견고성**: `health` 사전 검사, 파일 락, 임베딩 **내용 해시 캐시**(rename/재빌드 0 비용), **재개/체크포인트**, **적응형 배치·WAL 관리**, 진행률·coverage 리포트(`embed report`, Web), 정합성 검증 `build verify --fix`, 삭제/rename 추적.
 - **한글**: 조사 제거 + bigram + 스크립트 경계 분리 + **복합어 사전** + 선택적 **kiwi 형태소** + **trigram 폴백**.
 - **질의**: **한국어 상대 시간 파싱**(지난주·3일전·Q3, timezone 설정) → **규칙 확장**(유형별) → 라우터(+LLM) → **LLM 확장/분해**(원 질의 유지) → pin → fts/vector/graph/doc_vector → **융합 5방식**(rrf·weighted·zscore·dbsf·rrf_boost) + **post-boost**(문서유형·시간·최신성·pin·provenance·피드백·exclude) → 리랭크 → 컨텍스트.
@@ -121,6 +126,7 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 - **평가**: eval 경로 = 사용자 경로. **trial** 저장/비교(지표 Δ, 질문별 승/패, 설정 diff), `fusion compare`.
 - **로그**: `logs/` JSON Lines(정상 동작 포함), `run_id` 로 요청 프로파일과 연결(`logs grep --request <id>`).
 - **Web UI**: 워크플로 기준 7그룹(Ask / Corpus / Knowledge / Quality / Evolve / Settings / Observability), 프리셋 체크박스, 토글 사이드바 자동 생성, **테마**(light/dark/high-contrast/solarized, 확장 가능), 콘솔에서 CLI 전체 실행.
+- **다중 사용자 보안** ([SECURITY.md](docs/SECURITY.md)): 로컬 ID/비밀번호 + SSO(OIDC · 프록시 헤더) 병행 로그인, 역할 viewer/operator/admin, 작업 등급별 확인(경고 → 확인 문구 + 비밀번호 재입력), 파괴적 작업 전 **자동 스냅샷**과 복원, 감사 로그. CLI 도 같은 정책(확인 문구/`--yes`).
 - **MCP**: `wiki_query(mode=deep …)`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`, `wiki_status` — use case(구현/코드리뷰/이슈분석/리팩토링/unified search)별 skill·agent 는 이 도구 위에 별도로 만든다.
 
 ---
@@ -133,9 +139,10 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 | 질의/디버그 | `query "…" [--preset q] [--trace] [--json]` · `search fts|vector|graph` · `rules show|add|test` · `time "…"` · `pin add|list|test|remove` · `precompute run|status|clear` · `forensic last|list|summary|<id>` |
 | 품질 | `eval [--matrix]` · `trial run|list|compare|report` · `fusion show|compare` |
 | 진화 | `evolve status|apply|reject|review|feedback` · `memory status|decay|consolidate|episodes` · `wiki` |
-| 설정 | `config show [--effective]|set|paths` · `models show|test|set` · `tuning show|set|reset|doc` · `preset list|show|apply|diff` · `prompts list|show|reset` |
+| 설정 | `config show [--effective]|set|paths` · `models show|test [--live]|set` · `tuning show|set|reset|doc` · `preset list|show|apply|diff` · `prompts list|show|reset` |
+| 보안 | `users add|list|set-role|passwd|remove` · `security show|init|audit` · `snapshot list|create|restore|prune` — 파괴적 명령(`build --full`, `maintenance purge_requests`, `config reset`, `snapshot restore`)은 확인 문구 또는 `--yes` |
 | 관측 | `requests list|last|show` · `logs tail|grep|files` · `arch [--flow …]` · `graph [--provenance …]` · `entity` · `docs` · `stats` |
-| 인터페이스 | `serve [--port]` · `mcp` |
+| 인터페이스 | `serve [--port] [--host] [--insecure]` · `mcp` |
 
 ---
 
@@ -163,8 +170,9 @@ logs/ wiki/ eval/   로그(JSONL) · 위키 페이지 · 평가셋
 tests/              unittest (python -m unittest discover -s tests)
 ```
 
-## 7. 현재 상태 (2026-09-13)
+## 7. 현재 상태 (2026-09-14)
 
-- 검증 환경: Python 3.14.7, API 키 없음(mock/추출식 경로), 합성 모뎀 코퍼스 38문서·190청크. 단위/통합 테스트 51개 통과.
-- 실제 LLM·rerank API·headless 에이전트·Mango MCP 는 fake 서버/mock 으로 배선을 검증했고 실제 엔드포인트는 미검증 — 연결 후 `models test`, `mcp-source test` 로 확인.
+- 검증 환경: Python 3.14.7, 합성 모뎀 코퍼스 38문서·190청크. 단위/통합 테스트 63개 통과(프로바이더 PAT 헤더·Anthropic 게이트웨이·headless `.cmd`·인증/SSO/감사 포함).
+- 실제 엔드포인트: 로컬 Ollama(llama3.1)로 `models test --live`, `build --full --llm-graph` 진행 표시까지 확인. 사내 PAT 게이트웨이·opencode·Mango MCP 는 fake 서버/mock 으로 배선을 검증했고 실제 연결은 포팅 환경에서 `models test --live`, `mcp-source test` 로 확인.
+- 2026-09-14 변경: (1) 빌드/질의 실시간 진행 표시(CLI `⏳`, Web 진행 패널)와 "전체 리빌드가 starting… 에서 멈춤" 수정(폴링을 서버 락 밖으로) · `llm_timeout` 설정, (2) PAT 게이트웨이(OpenAI/Anthropic 호환) 헤더 설정·`models test --live`·opencode Windows 실행 수정·`rerank_model`/`rerank_api_model` 분리, (3) 로그인·역할·파괴적 작업 보호·스냅샷·감사 로그(SECURITY.md).
 - 규모(5,000+50/일) 설계 근거와 남은 개선 항목은 [ANALYSIS_REPORT_0913.md](docs/ANALYSIS_REPORT_0913.md) §1.4 참조.

@@ -21,6 +21,9 @@ import numpy as np
 
 from .textutil import words, normalize_token, char_ngrams, stable_hash
 from .profiler import count as _count
+from . import progress as _pg
+
+DEFAULT_LLM_TIMEOUT = 600   # make_llm 이 settings.llm_timeout 으로 인스턴스별 timeout 을 덮어쓴다
 
 
 # =============================== LLM ===============================
@@ -38,6 +41,7 @@ class BaseLLM:
     available = False
     model: Optional[str] = None
     role: str = "default"
+    timeout: int = DEFAULT_LLM_TIMEOUT
 
     def __init__(self) -> None:
         self.stats: Dict[str, float] = {"calls": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0.0}
@@ -52,10 +56,12 @@ class BaseLLM:
         self.stats["calls"] += 1
         self._files = list(files or [])
         t_start = time.perf_counter()
+        _pg.llm_start(self.name, str(self.model or ""), self.role)
         try:
             r = self._complete(system, user, max_tokens, effort, json_mode)
         except Exception as e:
             self.stats["errors"] += 1
+            _pg.llm_end((time.perf_counter() - t_start) * 1000, str(e)[:200])
             try:
                 from . import logging_setup as _ls
                 _ls.log("warning", "llm call failed: %s" % str(e)[:300], "llm", provider=self.name, model=self.model, role=self.role,
@@ -63,6 +69,7 @@ class BaseLLM:
             except Exception:
                 pass
             raise
+        _pg.llm_end(float(r.get("ms", 0) or 0))
         try:
             from . import logging_setup as _ls
             _u = r.get("usage") or {}
@@ -88,6 +95,25 @@ class BaseLLM:
     def ping(self) -> Dict[str, Any]:
         """연결/모델 확인 (토큰을 쓰지 않는 경량 호출). {'ok': bool, 'ms': float, 'detail': str}"""
         return {"ok": False, "ms": 0.0, "detail": getattr(self, "reason", "") or "no LLM provider configured"}
+
+    def live_test(self, timeout_s: int = 60) -> Dict[str, Any]:
+        """실제 완성 호출 1회 (토큰 소량 소비). ping 이 통과해도 PAT 권한/모델명/헤더가 틀리면 여기서 드러난다.
+        headless 에이전트는 프로세스를 실제로 실행하므로 인증·출력 포맷까지 확인된다."""
+        if not self.available:
+            return {"ok": False, "ms": 0.0, "detail": getattr(self, "reason", "") or "unavailable"}
+        old = getattr(self, "timeout", None)
+        try:
+            self.timeout = min(int(old or timeout_s), timeout_s)
+            t0 = time.perf_counter()
+            r = self.complete("You are a connectivity probe. Reply with exactly: OK", "ping", max_tokens=16, effort="low")
+            ms = (time.perf_counter() - t0) * 1000
+            text = (r.get("text") or "").strip()
+            return {"ok": bool(text), "ms": ms, "detail": "reply=%r model=%s tokens=%s" % (text[:40], r.get("model"), (r.get("usage") or {}).get("output_tokens"))}
+        except Exception as e:
+            return {"ok": False, "ms": 0.0, "detail": "live call failed: %s" % str(e)[:300]}
+        finally:
+            if old is not None:
+                self.timeout = old
 
     def describe(self) -> Dict[str, Any]:
         return {"name": self.name, "model": self.model, "available": self.available, "role": self.role,
@@ -148,41 +174,70 @@ class MockLLM(BaseLLM):
                 "ms": (time.perf_counter() - t0) * 1000, "model": "mock"}
 
 
-class AnthropicHTTPLLM(BaseLLM):
-    """Anthropic Messages API 를 urllib 로 직접 호출 (SDK 미설치 환경용)."""
-    name = "anthropic"
-    API = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_DEFAULT_BASE = "https://api.anthropic.com"
 
-    def __init__(self, model: str, fallbacks: bool = True, api_key: Optional[str] = None):
+
+def _anthropic_auth() -> Dict[str, str]:
+    """ANTHROPIC_API_KEY → x-api-key, 없으면 ANTHROPIC_AUTH_TOKEN(PAT) → Authorization: Bearer. 둘 다 없으면 {}."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key:
+        return {"x-api-key": key}
+    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+    if tok:
+        return {"authorization": "Bearer " + tok}
+    return {}
+
+
+class AnthropicHTTPLLM(BaseLLM):
+    """Anthropic Messages API 를 urllib 로 직접 호출 (SDK 미설치 환경용).
+    base_url(anthropic_base_url) 을 주면 Anthropic 호환 사내 게이트웨이(PAT)로 보낸다."""
+    name = "anthropic"
+
+    def __init__(self, model: str, fallbacks: bool = True, api_key: Optional[str] = None, base_url: str = "",
+                 extra_headers: Optional[Dict[str, str]] = None):
         BaseLLM.__init__(self)
         self.model = model
         self.fallbacks = fallbacks
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.available = bool(self.api_key)
-        self.reason = "" if self.available else "ANTHROPIC_API_KEY 가 비어 있음 (.env 에 키 입력 후 서버 재시작 또는 '저장 & 프로바이더 재로드')"
+        self.base_url = (base_url or ANTHROPIC_DEFAULT_BASE).rstrip("/")
+        self.auth = {"x-api-key": api_key} if api_key else _anthropic_auth()
+        self.extra_headers = dict(extra_headers or {})
+        self.api_key = self.auth.get("x-api-key") or self.auth.get("authorization", "").replace("Bearer ", "")
+        self.available = bool(self.auth)
+        self.reason = "" if self.available else "ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 이 비어 있음 (.env 에 키 입력 후 서버 재시작 또는 '저장 & 프로바이더 재로드')"
+
+    @property
+    def API(self) -> str:
+        return self.base_url + "/v1/messages"
+
+    def _base_headers(self) -> Dict[str, str]:
+        h = {"anthropic-version": "2023-06-01"}
+        h.update(self.auth)
+        h.update(self.extra_headers)
+        return h
 
     def ping(self) -> Dict[str, Any]:
         if not self.available:
             return {"ok": False, "ms": 0.0, "detail": self.reason}
         t0 = time.perf_counter()
-        req = urllib.request.Request("https://api.anthropic.com/v1/models?limit=100",
-                                     headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"})
+        req = urllib.request.Request(self.base_url + "/v1/models?limit=100", headers=self._base_headers())
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode("utf-8"))
             ids = [m.get("id") for m in data.get("data", [])]
             ok = (self.model in ids) or not ids
             return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "models": ids[:40],
-                    "detail": "connected" + ("" if ok else "; model %s not in list" % self.model)}
+                    "detail": "connected %s" % self.base_url + ("" if ok else "; model %s not in list" % self.model)}
         except urllib.error.HTTPError as e:
-            return {"ok": False, "ms": (time.perf_counter() - t0) * 1000,
-                    "detail": "HTTP %s %s" % (e.code, e.read().decode("utf-8", "ignore")[:200])}
+            # 게이트웨이가 /v1/models 를 막아둔 경우(404/405)는 연결 자체는 된 것 — models test --live 로 실제 호출 확인
+            body = e.read().decode("utf-8", "ignore")[:200]
+            return {"ok": e.code in (404, 405), "ms": (time.perf_counter() - t0) * 1000,
+                    "detail": "HTTP %s %s%s" % (e.code, body, " (models 목록 미제공 게이트웨이 — 'models test --live' 로 실제 호출 확인)" if e.code in (404, 405) else "")}
         except Exception as e:
             return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "network: %s" % e}
 
     def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
         if not self.available:
-            raise LLMError("ANTHROPIC_API_KEY 가 설정되지 않았습니다")
+            raise LLMError("ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 이 설정되지 않았습니다")
         body: Dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -190,7 +245,7 @@ class AnthropicHTTPLLM(BaseLLM):
             "messages": [{"role": "user", "content": user}],
             "output_config": {"effort": effort},
         }
-        headers = {"content-type": "application/json", "x-api-key": self.api_key, "anthropic-version": "2023-06-01"}
+        headers = dict(self._base_headers(), **{"content-type": "application/json"})
         if self.fallbacks and self.model.startswith(("claude-opus-5", "claude-fable")):
             # 안전 분류기 refusal 시 서버측 폴백 (스킬 가이드 기본값)
             headers["anthropic-beta"] = "server-side-fallback-2026-07-01"
@@ -209,7 +264,7 @@ class AnthropicHTTPLLM(BaseLLM):
         for attempt in range(retries):
             req = urllib.request.Request(self.API, data=raw, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(req, timeout=600) as resp:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     return json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 msg = e.read().decode("utf-8", "ignore")[:500]
@@ -225,15 +280,22 @@ class AnthropicHTTPLLM(BaseLLM):
 
 
 class AnthropicSDKLLM(BaseLLM):
-    """anthropic SDK 가 설치된 환경(Python 3.9+)에서 사용."""
+    """anthropic SDK 가 설치된 환경(Python 3.9+)에서 사용. base_url/extra_headers 는 config 의 anthropic_base_url 을 명시적으로 넘긴다
+    (SDK 의 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 환경변수도 그대로 동작)."""
     name = "anthropic"
 
-    def __init__(self, model: str, fallbacks: bool = True):
+    def __init__(self, model: str, fallbacks: bool = True, base_url: str = "", extra_headers: Optional[Dict[str, str]] = None):
         import anthropic  # noqa
         BaseLLM.__init__(self)
         self.model = model
         self.fallbacks = fallbacks
-        self.client = anthropic.Anthropic()
+        kw: Dict[str, Any] = {}
+        if base_url:
+            kw["base_url"] = base_url.rstrip("/")
+        if extra_headers:
+            kw["default_headers"] = dict(extra_headers)
+        self.base_url = kw.get("base_url") or os.environ.get("ANTHROPIC_BASE_URL") or ANTHROPIC_DEFAULT_BASE
+        self.client = anthropic.Anthropic(**kw)
         self.available = True
 
     def ping(self) -> Dict[str, Any]:
@@ -330,7 +392,7 @@ class OllamaLLM(BaseLLM):
         req = urllib.request.Request(self.url + "/api/generate", data=json.dumps(body).encode("utf-8"),
                                      headers={"content-type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=600) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raise LLMError("ollama HTTP %s: %s (ollama pull %s ?)" % (e.code, e.read().decode("utf-8", "ignore")[:200], self.model))
@@ -341,25 +403,43 @@ class OllamaLLM(BaseLLM):
                 "ms": (time.perf_counter() - t0) * 1000, "model": self.model}
 
 
+def openai_api_key(embed: bool = False) -> str:
+    """.env 의 키: 임베딩은 OPENAI_EMBED_API_KEY 우선, LLM/공통은 OPENAI_API_KEY 또는 LLM_API_KEY(사내 PAT 이름이 OpenAI 와 무관할 때)."""
+    if embed and os.environ.get("OPENAI_EMBED_API_KEY"):
+        return os.environ["OPENAI_EMBED_API_KEY"]
+    return os.environ.get("OPENAI_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
+
+
+def auth_headers(api_key: str, header: str = "authorization", extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """PAT/키 헤더 조립. header=authorization 이면 'Bearer <key>', 그 외(api-key, x-api-key, 임의)는 키 값 그대로."""
+    h = {"content-type": "application/json"}
+    h.update({str(k): str(v) for k, v in (extra or {}).items()})
+    if api_key:
+        name = (header or "authorization").strip().lower()
+        h[name] = ("Bearer " + api_key) if name == "authorization" and not api_key.lower().startswith(("bearer ", "basic ")) else api_key
+    return h
+
+
 class OpenAICompatLLM(BaseLLM):
     """OpenAI-compatible chat/completions (vLLM · LM Studio · Ollama(OpenAI 호환) · OpenRouter · 사내 게이트웨이).
-    base_url 은 …/v1 까지. 키는 OPENAI_API_KEY (.env) — 로컬 서버는 비워도 됨."""
+    base_url 은 …/v1 까지. 키는 OPENAI_API_KEY 또는 LLM_API_KEY (.env) — 로컬 서버는 비워도 됨.
+    key_header: PAT 를 싣는 헤더 (authorization → Bearer, api-key/x-api-key 등은 값 그대로), extra_headers: 고정 헤더."""
     name = "openai"
 
-    def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, timeout: int = 600):
+    def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, timeout: int = 600,
+                 key_header: str = "authorization", extra_headers: Optional[Dict[str, str]] = None):
         BaseLLM.__init__(self)
         self.base_url = (base_url or "http://localhost:11434/v1").rstrip("/")
         self.model = model
-        self.api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        self.api_key = api_key if api_key is not None else openai_api_key()
+        self.key_header = key_header or "authorization"
+        self.extra_headers = dict(extra_headers or {})
         self.timeout = timeout
         self.available = bool(self.model)
         self._json_mode_ok: Optional[bool] = None
 
     def _headers(self) -> Dict[str, str]:
-        h = {"content-type": "application/json"}
-        if self.api_key:
-            h["authorization"] = "Bearer " + self.api_key
-        return h
+        return auth_headers(self.api_key, self.key_header, self.extra_headers)
 
     def ping(self) -> Dict[str, Any]:
         t0 = time.perf_counter()
@@ -372,7 +452,12 @@ class OpenAICompatLLM(BaseLLM):
             return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "models": ids[:40],
                     "detail": "connected %s" % self.base_url + ("" if ok else "; model %s not in list" % self.model)}
         except urllib.error.HTTPError as e:
-            return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "HTTP %s %s" % (e.code, e.read().decode("utf-8", "ignore")[:200])}
+            body = e.read().decode("utf-8", "ignore")[:200]
+            if e.code in (404, 405):   # 게이트웨이가 /models 를 제공하지 않음 — 인증/연결은 통과한 것
+                return {"ok": True, "ms": (time.perf_counter() - t0) * 1000,
+                        "detail": "connected %s (models 목록 미제공: HTTP %s — 'models test --live' 로 실제 호출 확인)" % (self.base_url, e.code)}
+            hint = " ← 키/PAT 또는 openai_api_key_header 확인" if e.code in (401, 403) else ""
+            return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "HTTP %s %s%s" % (e.code, body, hint)}
         except Exception as e:
             return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "unreachable %s: %s" % (self.base_url, e)}
 
@@ -459,6 +544,10 @@ def make_llm(settings, role: Optional[str] = None) -> BaseLLM:
         provider, model = settings.llm_provider, settings.llm_model
     llm = _make_llm(provider, model, settings)
     llm.role = role or "default"
+    try:
+        llm.timeout = int(getattr(settings, "llm_timeout", DEFAULT_LLM_TIMEOUT) or DEFAULT_LLM_TIMEOUT)
+    except (TypeError, ValueError):
+        llm.timeout = DEFAULT_LLM_TIMEOUT
     return llm
 
 
@@ -473,7 +562,8 @@ def _make_llm(p: str, model: str, settings) -> BaseLLM:
         agent = p.split(":", 1)[1] if ":" in p else "opencode"
         return HeadlessAgentLLM(agent, model, settings)
     if p == "openai":
-        return OpenAICompatLLM(settings.openai_base_url, model)
+        return OpenAICompatLLM(settings.openai_base_url, model, key_header=getattr(settings, "openai_api_key_header", "authorization"),
+                               extra_headers=getattr(settings, "openai_extra_headers", None))
     why: List[str] = []
     if p in ("anthropic", "auto"):
         llm = _anthropic(model, settings)
@@ -492,13 +582,15 @@ def _make_llm(p: str, model: str, settings) -> BaseLLM:
 
 
 def _anthropic(model: str, settings) -> BaseLLM:
+    """SDK 가 있고 키가 있으면 SDK, 아니면 urllib 구현. 두 경로 모두 anthropic_base_url(게이트웨이) 과 ANTHROPIC_AUTH_TOKEN(PAT) 을 지원."""
+    base = (getattr(settings, "anthropic_base_url", "") or "").strip()
     try:
         import anthropic  # noqa
         if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-            return AnthropicSDKLLM(model, settings.llm_fallbacks)
+            return AnthropicSDKLLM(model, settings.llm_fallbacks, base_url=base)
     except Exception:
         pass
-    return AnthropicHTTPLLM(model, settings.llm_fallbacks)
+    return AnthropicHTTPLLM(model, settings.llm_fallbacks, base_url=base)
 
 
 def parse_json(text: str) -> Any:
@@ -625,30 +717,33 @@ class VoyageEmbedder(BaseEmbedder):
 
 
 class OpenAICompatEmbedder(BaseEmbedder):
-    """OpenAI-compatible /v1/embeddings (vLLM · LM Studio · Ollama · OpenRouter · text-embedding-3)."""
+    """OpenAI-compatible /v1/embeddings (vLLM · LM Studio · Ollama · OpenRouter · text-embedding-3 · 사내 게이트웨이)."""
     name = "openai"
 
-    def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, batch: int = 64):
+    def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, batch: int = 64,
+                 key_header: str = "authorization", extra_headers: Optional[Dict[str, str]] = None, timeout: int = 300):
         self.base_url = (base_url or "http://localhost:11434/v1").rstrip("/")
         self.model = model or "text-embedding-3-small"
-        self.api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        self.api_key = api_key if api_key is not None else openai_api_key(embed=True)
+        self.key_header = key_header or "authorization"
+        self.extra_headers = dict(extra_headers or {})
+        self.timeout = timeout
         self.batch = max(1, int(batch))
         self.available = True
         self.dim = 0
 
     def _embed(self, texts: List[str]) -> np.ndarray:
         vecs: List[List[float]] = []
-        h = {"content-type": "application/json"}
-        if self.api_key:
-            h["authorization"] = "Bearer " + self.api_key
+        h = auth_headers(self.api_key, self.key_header, self.extra_headers)
         for i in range(0, len(texts), self.batch):
             body = {"input": texts[i:i + self.batch], "model": self.model}
             req = urllib.request.Request(self.base_url + "/embeddings", data=json.dumps(body).encode("utf-8"), headers=h, method="POST")
             try:
-                with urllib.request.urlopen(req, timeout=300) as r:
+                with urllib.request.urlopen(req, timeout=self.timeout) as r:
                     data = json.loads(r.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
-                raise LLMError("embeddings HTTP %s: %s" % (e.code, e.read().decode("utf-8", "ignore")[:300]))
+                raise LLMError("embeddings HTTP %s: %s%s" % (e.code, e.read().decode("utf-8", "ignore")[:300],
+                                                            " ← 키/PAT 또는 openai_api_key_header 확인" if e.code in (401, 403) else ""))
             vecs.extend(d["embedding"] for d in sorted(data["data"], key=lambda d: d["index"]))
         m = np.asarray(vecs, dtype=np.float32)
         self.dim = m.shape[1]
@@ -723,7 +818,11 @@ def make_embedder(settings) -> BaseEmbedder:
     if p == "st":
         return STEmbedder(settings.embed_model)
     if p == "openai":
-        return OpenAICompatEmbedder(settings.openai_base_url, settings.openai_embed_model or settings.embed_model, batch=settings.embed_batch)
+        return OpenAICompatEmbedder(getattr(settings, "openai_embed_base_url", "") or settings.openai_base_url,
+                                    settings.openai_embed_model or settings.embed_model, batch=settings.embed_batch,
+                                    key_header=getattr(settings, "openai_api_key_header", "authorization"),
+                                    extra_headers=getattr(settings, "openai_extra_headers", None),
+                                    timeout=int(getattr(settings, "llm_timeout", 600) or 600))
     if p == "ollama":
         return OllamaEmbedder(settings.ollama_url, settings.embed_model)
     if p == "auto":

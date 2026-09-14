@@ -12,16 +12,20 @@ from .providers import BaseLLM
 from .profiler import Profiler
 from .store import Store
 from . import tuning as _tuning
+from . import progress as _pg
 
 
 def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str, str], prof: Profiler,
                            rule_ex: Optional[RuleExtractor], llm: Optional[BaseLLM], use_llm: bool,
                            effort: str = "low", budget: int = 0, min_chars: int = 0,
-                           doc_meta: Optional[Dict[str, Dict[str, Any]]] = None, explicit: bool = True) -> Dict[str, Any]:
+                           doc_meta: Optional[Dict[str, Dict[str, Any]]] = None, explicit: bool = True,
+                           report=None) -> Dict[str, Any]:
     """chunks: sqlite Row 목록. 해당 청크의 기존 그래프 산출물은 지우고 재추출.
     budget: 이번 빌드의 LLM 추출 호출 상한(0=무제한), min_chars: 이보다 짧은 청크는 LLM 추출 생략.
     doc_meta: doc_id → 정규화 메타 (doc_type/ext_id/related). explicit=True 면 front matter related.* 를 explicit 관계로 (문서당 첫 청크에서 1회).
+    report: 진행 메시지 콜백(빌드 로그). LLM 추출은 청크당 LLM 1회라 가장 오래 걸리므로 시작 시 규모를, 이후 3초마다 i/n 을 보고한다.
     반환 stats 에 touched(이번에 갱신된 엔티티 id 목록) 포함 → 증분 위키/doc_refs 갱신에 사용."""
+    report = report or (lambda m: None)
     stats: Dict[str, Any] = {"rule_entities": 0, "rule_relations": 0, "explicit_relations": 0, "id_relations": 0,
                              "llm_entities": 0, "llm_relations": 0, "llm_calls": 0,
                              "llm_input_tokens": 0, "llm_output_tokens": 0, "llm_failures": 0, "llm_skipped_short": 0,
@@ -39,7 +43,9 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
             type_counts: Dict[str, int] = defaultdict(int)
             rel_counts: Dict[str, int] = defaultdict(int)
             prov_counts: Dict[str, int] = defaultdict(int)
-            for c in chunks:
+            for i, c in enumerate(chunks):
+                if i % 25 == 0:
+                    _pg.tick(i, len(chunks), c["chunk_id"])
                 t0 = _now()
                 title = doc_titles.get(c["doc_id"], c["doc_id"])
                 dm = doc_meta.get(c["doc_id"])
@@ -78,7 +84,16 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
     if use_llm and llm and llm.available:
         with prof.stage("llm_extract", chunks=len(chunks), model=getattr(llm, "model", llm.name), role=getattr(llm, "role", ""),
                         budget=budget or "unlimited", min_chars=min_chars) as st:
-            for c in chunks:
+            eligible = sum(1 for c in chunks if not (min_chars and len(c["text"]) < min_chars))
+            planned = min(eligible, budget) if budget else eligible
+            report("llm_extract: %d chunks → LLM 호출 예정 %d회 (%s/%s, budget=%s, timeout %ss/call) — 청크당 LLM 1회라 가장 오래 걸리는 단계"
+                   % (len(chunks), planned, llm.name, getattr(llm, "model", ""), budget or "unlimited", getattr(llm, "timeout", "?")))
+            t_report = _now()
+            for i, c in enumerate(chunks):
+                _pg.tick(i, len(chunks), "%s (LLM %d/%d)" % (c["chunk_id"], stats["llm_calls"], planned))
+                if _now() - t_report > 3:
+                    t_report = _now()
+                    report("llm_extract %d/%d chunks · LLM 호출 %d · 실패 %d" % (i, len(chunks), stats["llm_calls"], stats["llm_failures"]))
                 if min_chars and len(c["text"]) < min_chars:
                     stats["llm_skipped_short"] += 1
                     continue
@@ -120,6 +135,9 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                     store.add_relation(sid, did, r.get("rel") or "related_to", r.get("description") or "",
                                        float(r.get("weight") or 0.5), "llm", 0.7, c["chunk_id"], provenance="llm")
                     stats["llm_relations"] += 1
+            _pg.tick(len(chunks), len(chunks), "")
+            report("llm_extract done: LLM 호출 %d · 엔티티 %d · 관계 %d · 실패 %d · 생략(짧음 %d, budget %d)" % (
+                stats["llm_calls"], stats["llm_entities"], stats["llm_relations"], stats["llm_failures"], stats["llm_skipped_short"], stats["llm_skipped_budget"]))
             st.note(**{k: v for k, v in stats.items() if k.startswith("llm")})
     elif use_llm:
         prof.skipped("llm_extract", "LLM provider unavailable (%s)" % (llm.name if llm else "none"))
@@ -176,7 +194,8 @@ def finalize_graph(store: Store, prof: Profiler, do_communities: bool, llm: Opti
                 if ca is not None and ca == cb:
                     rel_by_comm[ca].append(r)
             n_sum = 0
-            for cid, members in comms.items():
+            for ci, (cid, members) in enumerate(comms.items()):
+                _pg.tick(ci, len(comms), "community %s (%d nodes)" % (cid, len(members)))
                 mem = sorted((ents[m] for m in members if m in ents), key=lambda e: -(e.get("degree") or 0))
                 top = [m["name"] for m in mem[:8]]
                 summary = "핵심 엔티티: " + ", ".join(top)

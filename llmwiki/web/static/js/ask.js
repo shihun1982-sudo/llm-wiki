@@ -24,9 +24,17 @@
   async function runQuery() {
     const q = $('#q').value.trim(); if (!q) return;
     $('#btn-query').disabled = true;
+    // 응답을 기다리는 동안 단계/LLM 대기 시간을 보여 준다 (progress_token → GET /api/progress/<token>, 락 없이 응답)
+    const token = 'q-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const liveEl = $('#q-live'); LW.renderLive(liveEl, { status: 'running', label: '질의 전송 중…' });
+    const stopWatch = LW.watchProgress(token, liveEl, 500);
+    let j;
     try {
-      const j = await api('/api/query', { q, overrides: overrides(), log: $('#q-log').checked, preset: presetNames().join(','), mode: $('#q-mode').value });
-      if (!j.result) return;
+      j = await api('/api/query', { q, overrides: overrides(), log: $('#q-log').checked, preset: presetNames().join(','), mode: $('#q-mode').value, progress_token: token });
+    } finally { stopWatch(); }
+    try {
+      if (!j.result) { LW.renderLive(liveEl, { status: 'error', detail: j.error || '응답 없음', elapsed_s: 0 }); return; }
+      LW.renderLive(liveEl, null);
       const r = j.result; STATE.lastQueryId = r.query_id || null; STATE.lastRequestId = r.request_id || null; STATE.lastResult = r;
       $('#query-out').classList.remove('hidden'); $('#q-forensic').classList.add('hidden');
       $('#answer-mode').textContent = r.answer_mode + (r.model ? ' · ' + r.model : '');

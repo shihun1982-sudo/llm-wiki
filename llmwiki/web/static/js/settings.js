@@ -20,10 +20,14 @@
       `<label>llm_effort ${sel('m-llm-effort', cat.effort, s.llm_effort)} · answer_effort ${sel('m-answer-effort', cat.effort, s.answer_effort)}</label>` +
       `<label>ollama_url <input id="m-ollama-url" value="${esc(s.ollama_url)}"></label><label>ollama_model <input id="m-ollama-model" value="${esc(s.ollama_model)}"></label>` +
       `<label><input type="checkbox" id="m-fallbacks" ${s.llm_fallbacks ? 'checked' : ''}> llm_fallbacks (Anthropic server-side refusal fallback)</label>`;
-    $('#endpoint-form').innerHTML = `<label>openai_base_url <input id="m-openai-url" value="${esc(s.openai_base_url)}" placeholder="http://localhost:11434/v1"> <small>키: .env OPENAI_API_KEY (${p.openai && p.openai.key ? '설정됨' : '없음'})</small></label>` +
-      `<label>openai_embed_model <input id="m-openai-embed" value="${esc(s.openai_embed_model)}" placeholder="text-embedding-3-small / bge-m3"></label>` +
+    $('#endpoint-form').innerHTML = `<label>openai_base_url <input id="m-openai-url" value="${esc(s.openai_base_url)}" placeholder="https://gateway.corp/v1"> <small>키: .env OPENAI_API_KEY 또는 LLM_API_KEY (${p.openai && p.openai.key ? '설정됨' : '없음'}) · 사내 PAT 게이트웨이도 여기</small></label>` +
+      `<label>openai_api_key_header ${sel('m-openai-key-header', ['authorization', 'api-key', 'x-api-key'], s.openai_api_key_header || 'authorization')} <small>authorization = "Bearer &lt;PAT&gt;", 그 외는 키 값 그대로</small></label>` +
+      `<label>openai_extra_headers <input id="m-openai-extra" value="${esc(JSON.stringify(s.openai_extra_headers || {}))}" placeholder='{"X-Tenant":"modem"}' style="width:260px"> <small>JSON</small></label>` +
+      `<label>openai_embed_base_url <input id="m-openai-embed-url" value="${esc(s.openai_embed_base_url || '')}" placeholder="(비우면 openai_base_url)"> openai_embed_model <input id="m-openai-embed" value="${esc(s.openai_embed_model)}" placeholder="text-embedding-3-small / bge-m3"></label>` +
+      `<label>anthropic_base_url <input id="m-anthropic-url" value="${esc(s.anthropic_base_url || '')}" placeholder="(비우면 api.anthropic.com) https://gateway.corp"> <small>키: ANTHROPIC_API_KEY(x-api-key) 또는 ANTHROPIC_AUTH_TOKEN(Bearer PAT)</small></label>` +
+      `<label>llm_timeout <input id="m-llm-timeout" type="number" value="${s.llm_timeout || 600}" style="width:80px"> <small>초/호출 — 멈춘 서버를 빨리 감지하려면 줄임</small></label>` +
       `<label>rerank_url <input id="m-rerank-url" value="${esc(s.rerank_url)}" placeholder="http://host:8000/v1/rerank"> <small>비우면 api 리랭크 비활성</small></label>` +
-      `<label>rerank_model <input id="m-rerank-model" value="${esc(s.rerank_model)}" placeholder="BAAI/bge-reranker-v2-m3"> style ${sel('m-rerank-style', ['cohere', 'voyage'], s.rerank_api_style)} <small>rerank_method(튜닝)=auto 면 URL 있을 때 api 우선</small></label>`;
+      `<label>rerank_api_model <input id="m-rerank-model" value="${esc(s.rerank_api_model || '')}" placeholder="BAAI/bge-reranker-v2-m3"> style ${sel('m-rerank-style', ['cohere', 'voyage'], s.rerank_api_style)} <small>rerank_method(튜닝)=auto 면 URL 있을 때 api 우선</small></label>`;
     $('#models-note').innerHTML = `Python ${p.python} / SQLite ${p.sqlite}. headless 에이전트: ${Object.keys(p.agents || {}).map(esc).join(', ')} (agents.json).`;
     const llmModels = [].concat(cat.llm.anthropic, cat.llm.openai || [], cat.llm.ollama).filter((m) => !String(m).startsWith('('));
     $('#roles-table').innerHTML = '<table class="roles"><tr><th>역할</th><th>용도</th><th>provider</th><th>model</th><th>effort</th><th>실제 인스턴스</th><th>상태</th><th></th></tr>' + j.roles.map((role) => {
@@ -35,7 +39,7 @@
     $$('#roles-table [data-test]').forEach((b) => b.onclick = async () => {
       b.disabled = true;
       // 저장하지 않은 폼 값(전역 + 이 역할)을 요청 단위 오버라이드로 보내 실제 연결을 확인한다
-      const role = b.dataset.test, ov = { llm_provider: $('#m-llm-provider').value, llm_model: $('#m-llm-model').value.trim(), ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), openai_base_url: $('#m-openai-url').value.trim() };
+      const role = b.dataset.test, ov = { llm_provider: $('#m-llm-provider').value, llm_model: $('#m-llm-model').value.trim(), ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), openai_base_url: $('#m-openai-url').value.trim(), openai_api_key_header: $('#m-openai-key-header').value, anthropic_base_url: $('#m-anthropic-url').value.trim() };
       const pv = $('#r-' + role + '-provider').value.trim(), m = $('#r-' + role + '-model').value.trim();
       ov[role + '_provider'] = pv; ov[role + '_model'] = m;
       const r = await api('/api/models/test', { which: [role], overrides: ov }); b.disabled = false; renderTest(r);
@@ -44,21 +48,48 @@
     const ag = await api('/api/agents'); $('#agents-json').value = JSON.stringify(ag.agents, null, 2);
   }
   function renderTest(r) {
-    $('#models-test').innerHTML = '<table><tr><th>대상</th><th>provider/model</th><th>ok</th><th>ms</th><th>detail</th></tr>' + Object.keys(r).map((k) => { const x = r[k]; return `<tr><td><b>${k}</b></td><td>${esc(x.provider || x.url || '')}/${esc(x.model)}${x.dim ? ' d=' + x.dim : ''}</td><td>${x.ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'}</td><td class="num">${fmt(x.ms, 0)}</td><td class="small">${esc(x.detail || '')}${x.models ? '<br><span class="muted">models: ' + esc(x.models.slice(0, 12).join(', ')) + '</span>' : ''}</td></tr>`; }).join('') + '</table>';
+    $('#models-test').innerHTML = '<table><tr><th>대상</th><th>provider/model</th><th>ok</th><th>ms</th><th>detail</th></tr>' + Object.keys(r).map((k) => { const x = r[k]; return `<tr><td><b>${k}</b></td><td>${esc(x.provider || x.url || '')}/${esc(x.model)}${x.dim ? ' d=' + x.dim : ''}</td><td>${x.ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'}</td><td class="num">${fmt(x.ms, 0)}</td><td class="small">${esc(x.detail || '')}${x.models ? '<br><span class="muted">models: ' + esc(x.models.slice(0, 12).join(', ')) + '</span>' : ''}${'live_ok' in x ? '<br><b>실제 호출:</b> ' + (x.live_ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>') + ' ' + fmt(x.live_ms, 0) + 'ms ' + esc(x.live_detail || '') : ''}</td></tr>`; }).join('') + '</table>';
   }
   function modelsSettings() {
     const st = { embed_provider: $('#m-embed-provider').value, embed_model: $('#m-embed-model').value.trim(), embed_dim: parseInt($('#m-embed-dim').value, 10), embed_store_dtype: $('#m-embed-dtype').value, embed_batch: parseInt($('#m-embed-batch').value, 10), embed_batch_max: parseInt($('#m-embed-batch-max').value, 10),
       llm_provider: $('#m-llm-provider').value, llm_model: $('#m-llm-model').value.trim(), llm_effort: $('#m-llm-effort').value, answer_effort: $('#m-answer-effort').value,
       ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), llm_fallbacks: $('#m-fallbacks').checked,
-      openai_base_url: $('#m-openai-url').value.trim(), openai_embed_model: $('#m-openai-embed').value.trim(), rerank_url: $('#m-rerank-url').value.trim(), rerank_model: $('#m-rerank-model').value.trim(), rerank_api_style: $('#m-rerank-style').value, llm_roles: {} };
+      openai_base_url: $('#m-openai-url').value.trim(), openai_api_key_header: $('#m-openai-key-header').value, openai_embed_base_url: $('#m-openai-embed-url').value.trim(), openai_embed_model: $('#m-openai-embed').value.trim(),
+      anthropic_base_url: $('#m-anthropic-url').value.trim(), llm_timeout: parseInt($('#m-llm-timeout').value, 10) || 600,
+      rerank_url: $('#m-rerank-url').value.trim(), rerank_api_model: $('#m-rerank-model').value.trim(), rerank_api_style: $('#m-rerank-style').value, llm_roles: {} };
+    try { st.openai_extra_headers = JSON.parse($('#m-openai-extra').value.trim() || '{}'); } catch (e) { toast('openai_extra_headers JSON 오류 — 무시'); }
     STATE.roles.forEach((role) => { const c = {}; const pv = $('#r-' + role + '-provider').value.trim(), m = $('#r-' + role + '-model').value.trim(), e = $('#r-' + role + '-effort').value; if (pv) c.provider = pv; if (m) c.model = m; if (e) c.effort = e; if (Object.keys(c).length) st.llm_roles[role] = c; });
     return st;
   }
   $('#btn-models-save').onclick = async () => { const j = await api('/api/models/set', { settings: modelsSettings() }); $('#models-msg').textContent = '저장됨 · answer=' + j.providers.roles.answer.name + '/' + j.providers.roles.answer.model + ' · embed=' + j.providers.embedder.name; loadModels(); loadStatus(); };
   $('#btn-models-test').onclick = async () => { $('#models-test').textContent = '테스트 중…'; renderTest(await api('/api/models/test', { overrides: modelsSettings() })); };
+  if ($('#btn-models-test-live')) $('#btn-models-test-live').onclick = async () => { $('#models-test').textContent = '실제 호출 테스트 중… (역할별 provider/model 당 1회, 수십 초 걸릴 수 있음)'; renderTest(await api('/api/models/test', { overrides: modelsSettings(), live: true })); };
   $('#btn-models-reload').onclick = loadModels;
   $('#btn-agents-save').onclick = async () => { let a; try { a = JSON.parse($('#agents-json').value); } catch (e) { toast('JSON 오류'); return; } await api('/api/agents', { agents: a }); toast('agents.json 저장됨'); };
   loaders.models = loadModels;
+
+  // ---------------- SECURITY · USERS · SNAPSHOTS · AUDIT ----------------
+  async function loadSecurity() {
+    const me = await api('/api/auth/me'); const u = me.user || {};
+    const admin = me.mode === 'off' || u.role === 'admin';
+    $('#sec-summary').innerHTML = `<div class="stat"><b>${esc(me.mode)}</b>auth mode</div><div class="stat"><b>${me.local ? 'on' : 'off'}</b>로컬 로그인</div><div class="stat"><b>${me.sso ? esc(me.sso_type) : 'off'}</b>SSO</div><div class="stat"><b>${esc(u.name || 'local')}</b>${esc(u.role || 'admin')} (${esc(u.via || 'off')})</div><div class="stat"><b>${esc(me.confirm_phrase)}</b>파괴적 작업 확인 문구${me.require_reauth ? ' + 비밀번호' : ''}</div>`;
+    if (!admin) { $('#sec-users').innerHTML = '<div class="muted small">사용자 목록은 admin 만 볼 수 있습니다.</div>'; $('#sec-snapshots').innerHTML = ''; $('#sec-audit').innerHTML = ''; return; }
+    const [us, sec, sn, au] = await Promise.all([api('/api/auth/users'), api('/api/security'), api('/api/snapshot'), api('/api/audit?n=60')]);
+    $('#sec-path').textContent = sec.path || '';
+    $('#sec-users').innerHTML = '<table><tr><th>id</th><th>역할</th><th>표시</th><th>비밀번호</th><th></th></tr>' + (us.users || []).map((x) => `<tr><td><b>${esc(x.name)}</b></td><td><select data-role-of="${esc(x.name)}"><option ${x.role === 'viewer' ? 'selected' : ''}>viewer</option><option ${x.role === 'operator' ? 'selected' : ''}>operator</option><option ${x.role === 'admin' ? 'selected' : ''}>admin</option></select></td><td>${esc(x.display || '')}</td><td>${x.has_password ? '있음' : '<span class="muted">없음 (SSO)</span>'}</td><td><button class="mini secondary" data-pw-of="${esc(x.name)}">비밀번호</button> <button class="mini danger" data-del-of="${esc(x.name)}">삭제</button></td></tr>`).join('') + '</table>' + (!(us.users || []).length ? '<div class="muted small">사용자 없음 — 아래에서 admin 을 먼저 추가하세요 (또는 CLI: users add &lt;id&gt; --role admin)</div>' : '');
+    $$('#sec-users [data-role-of]').forEach((s) => s.onchange = async () => { const r = await api('/api/auth/users', { action: 'set_role', name: s.dataset.roleOf, role: s.value }); if (r.ok) toast('역할 변경: ' + s.dataset.roleOf + ' → ' + s.value); loadSecurity(); });
+    $$('#sec-users [data-pw-of]').forEach((b) => b.onclick = async () => { const pw = prompt(b.dataset.pwOf + ' 의 새 비밀번호'); if (!pw) return; const r = await api('/api/auth/users', { action: 'set_password', name: b.dataset.pwOf, password: pw }); if (r.ok) toast('비밀번호 변경됨'); });
+    $$('#sec-users [data-del-of]').forEach((b) => b.onclick = async () => { if (!confirm(b.dataset.delOf + ' 사용자를 삭제할까요?')) return; const r = await api('/api/auth/users', { action: 'remove', name: b.dataset.delOf }); if (r.ok) toast('삭제됨'); loadSecurity(); });
+    $('#sec-snapshots').innerHTML = '<table><tr><th>이름</th><th>tag</th><th>크기</th><th>내용</th><th></th></tr>' + (sn.snapshots || []).map((x) => `<tr><td class="mono small">${esc(x.name)}</td><td>${esc(x.tag || '')}</td><td class="num">${fmt((x.bytes || 0) / 1e6, 1)}MB</td><td class="small muted">${esc(JSON.stringify(x.counts || {}))} ${esc(x.reason || '')}</td><td>${x.has_db ? `<button class="mini danger" data-restore="${esc(x.name)}">복원</button>` : ''}</td></tr>`).join('') + '</table>' + (!(sn.snapshots || []).length ? '<div class="muted small">스냅샷 없음. 전체 초기화 시 자동 생성됩니다.</div>' : '');
+    $$('#sec-snapshots [data-restore]').forEach((b) => b.onclick = async () => { const r = await api('/api/snapshot', { action: 'restore', name: b.dataset.restore }); if (r.restored) { toast('복원됨: ' + r.restored); loadStatus(); loadSecurity(); } });
+    $('#sec-audit').innerHTML = '<table><tr><th>시각</th><th>사용자</th><th>역할</th><th>결과</th><th>등급</th><th>작업</th></tr>' + (au.rows || []).slice().reverse().map((r) => `<tr class="${r.ok ? '' : 'has-err'}"><td class="small">${esc(r.time)}</td><td>${esc(r.user || '')}</td><td class="small">${esc(r.role || '')}</td><td>${r.ok ? '<span class="ok">ok</span>' : '<span class="bad">DENY</span>'}</td><td class="small">${esc(r.level || '')}</td><td class="small">${esc(r.op || '')}${r.error ? ' <span class="errtxt">' + esc(r.error) + '</span>' : ''}</td></tr>`).join('') + '</table>';
+  }
+  $('#btn-sec-refresh').onclick = loadSecurity;
+  $('#btn-sec-reload').onclick = async () => { const r = await api('/api/security', { action: 'reload' }); if (r.ok) toast('security.json 다시 읽음 (mode ' + r.mode + ')'); loadSecurity(); };
+  $('#btn-snap-create').onclick = async () => { const tag = prompt('스냅샷 tag', 'manual'); if (tag === null) return; const r = await api('/api/snapshot', { action: 'create', tag }); if (r.name) toast('스냅샷 ' + r.name); loadSecurity(); };
+  $('#btn-user-add').onclick = async () => { const name = $('#su-name').value.trim(); if (!name) return; const pw = $('#su-pass').value; const r = await api('/api/auth/users', { action: 'add', name, role: $('#su-role').value, password: pw || null }); if (r.ok) { toast('추가됨: ' + name); $('#su-name').value = ''; $('#su-pass').value = ''; } loadSecurity(); };
+  $('#btn-pw-change').onclick = async () => { const r = await api('/api/auth/password', { old: $('#pw-old').value, new: $('#pw-new').value }); if (r.ok) { toast('비밀번호 변경됨'); $('#pw-old').value = ''; $('#pw-new').value = ''; } };
+  loaders.security = loadSecurity;
 
   // ---------------- PRESETS ----------------
   async function loadPresets() {

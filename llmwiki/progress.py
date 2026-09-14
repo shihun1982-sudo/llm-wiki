@@ -5,9 +5,14 @@
 - bind(token, kind, label): 현재 스레드의 작업을 token 에 연결 (스레드 로컬). unbind() 로 해제.
 - Profiler.stage() 가 stage_enter/stage_exit 를, BaseLLM.complete() 가 llm_start/llm_end 를, 임베딩 러너와 LLM 추출 루프가 tick() 을 호출한다.
 - get(token) → {"stage": 현재 단계 경로, "detail", "done", "total", "llm": {...}, "elapsed_s", "stage_elapsed_s", "log": [...]}
+- cli_monitor(token): CLI 용 — 별도 스레드가 단계/진도율 변화를 stderr 에 한 줄씩 출력하는 컨텍스트 매니저.
+
+누가 bind 하는가: Web 서버는 job id / 요청의 progress_token 으로, CLI 는 build/query 명령이 직접 bind 한다.
 """
 from __future__ import annotations
 
+import contextlib
+import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -16,7 +21,7 @@ _LOCK = threading.Lock()
 _LIVE: Dict[str, Dict[str, Any]] = {}
 _TL = threading.local()
 _KEEP_DONE_S = 300.0     # 끝난 항목은 5분간 유지(마지막 폴링이 완료 상태를 읽을 수 있도록)
-_MAX_LOG = 40
+_MAX_LOG = 400   # Web 진행 패널의 "전체 보기" 가 누적 로그를 보여 주므로 넉넉히 (한 줄 ≈ 60B → 24KB)
 
 # 단계 이름 → 사람이 읽는 설명 (없으면 이름 그대로)
 STAGE_LABELS: Dict[str, str] = {
@@ -174,6 +179,71 @@ def all_running() -> List[Dict[str, Any]]:
     with _LOCK:
         toks = [t for t, e in _LIVE.items() if e["status"] == "running"]
     return [x for x in (get(t) for t in toks) if x]
+
+
+def summary_line(snap: Dict[str, Any]) -> str:
+    """스냅샷 한 줄 요약 (CLI/로그용). 예: '▶ 임베딩 계산 › 12/190 (6%) · 3.2s · LLM 대기 ollama/llama3.1 4s'"""
+    if not snap:
+        return ""
+    parts: List[str] = []
+    path = snap.get("path_labels") or []
+    if path:
+        parts.append(" › ".join(path[-2:]))
+    if snap.get("pct") is not None:
+        parts.append("%s/%s (%.0f%%)" % (snap.get("done"), snap.get("total"), snap["pct"]))
+    elif snap.get("detail"):
+        parts.append(str(snap["detail"]))
+    if snap.get("stage_elapsed_s") is not None:
+        parts.append("%.0fs" % snap["stage_elapsed_s"])
+    llm = snap.get("llm") or {}
+    if llm.get("active"):
+        parts.append("LLM 응답 대기 %s/%s %.0fs" % (llm.get("provider"), llm.get("model"), llm.get("elapsed_s") or 0))
+    return " · ".join(parts)
+
+
+@contextlib.contextmanager
+def cli_monitor(token: str, kind: str = "", label: str = "", enabled: bool = True, interval: float = 1.0, stream=None):
+    """CLI 에서 오래 걸리는 명령을 감싼다: bind 하고, 백그라운드 스레드가 단계/진도율이 바뀔 때마다 stderr 에 한 줄 출력.
+    enabled=False 면 bind 만 하고 출력하지 않는다(--json 등). 예외가 나면 status=error 로 unbind."""
+    bind(token, kind, label)
+    out = stream or sys.stderr
+    stop = threading.Event()
+    last: List[str] = [""]
+
+    def loop() -> None:
+        t_last = 0.0
+        while not stop.wait(0.25):
+            snap = get(token)
+            if not snap or snap.get("status") != "running":
+                continue
+            line = summary_line(snap)
+            now = time.time()
+            # 단계가 바뀌면 즉시, 같은 단계는 interval 마다 (LLM 대기 시간·경과 초가 계속 변하므로 절제)
+            stage_key = "|".join(snap.get("path") or [])
+            if stage_key != last[0] or (line and now - t_last >= interval):
+                last[0] = stage_key
+                t_last = now
+                if line:
+                    try:
+                        out.write("  ⏳ %s\n" % line)
+                        out.flush()
+                    except Exception:
+                        pass
+
+    th = threading.Thread(target=loop, daemon=True) if enabled else None
+    if th:
+        th.start()
+    try:
+        yield token
+    except BaseException as e:
+        unbind("error", str(e)[:200])
+        raise
+    else:
+        unbind("done")
+    finally:
+        stop.set()
+        if th:
+            th.join(timeout=1.0)
 
 
 def _brief(meta: Optional[Dict[str, Any]]) -> str:

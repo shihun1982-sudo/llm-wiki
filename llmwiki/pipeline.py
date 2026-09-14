@@ -42,6 +42,7 @@ from . import query_rules as _qrules
 from . import tuning as _tuning
 from . import prompts as _prompts
 from . import logging_setup as _log
+from . import progress as _pg
 from .providers import parse_json, LLMError
 from .buildlock import BuildLock, BuildLockedError
 
@@ -154,9 +155,30 @@ class Pipeline:
             return True
         return False
 
-    def reset_index(self, keep_logs: bool = True, keep_wiki_notes: bool = True) -> Dict[str, Any]:
-        """색인 완전 초기화. DB 파일을 지우는 대신 색인 테이블을 모두 비우고 VACUUM 한다."""
+    def reset_index(self, keep_logs: bool = True, keep_wiki_notes: bool = True, snapshot: bool = True, actor: str = "",
+                    snapshot_keep: int = 3) -> Dict[str, Any]:
+        """색인 완전 초기화. DB 파일을 지우는 대신 색인 테이블을 모두 비우고 VACUUM 한다.
+        - 빌드 파일 락 안에서 실행 (다른 프로세스의 빌드와 겹치지 않게)
+        - snapshot=True 면 지우기 전에 data/snapshots/ 에 자동 스냅샷 (`snapshot list|restore`) — 실수로 지워도 되돌릴 수 있다"""
+        with self._lock:
+            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="reset")
+            lock.acquire()
+            try:
+                return self._reset_index(keep_logs, keep_wiki_notes, snapshot, actor, snapshot_keep)
+            finally:
+                lock.release()
+
+    def _reset_index(self, keep_logs: bool, keep_wiki_notes: bool, snapshot: bool, actor: str, snapshot_keep: int) -> Dict[str, Any]:
         st = self.store
+        snap = None
+        if snapshot and st.stats().get("docs"):
+            from . import snapshots as _snap
+            try:
+                snap = _snap.create(self, "auto:reset" + ("-purge" if not keep_logs else ""), actor=actor, reason="before reset_index")
+                _snap.prune(self, keep=snapshot_keep)
+            except Exception as e:
+                _log.log("warning", "snapshot before reset failed: %s" % e, "build")
+        _log.log("warning", "reset_index by %s (keep_logs=%s)" % (actor or "?", keep_logs), "build")
         index_tables = ["docs", "chunks", "chunks_fts", "embeddings", "entities", "entities_fts", "relations",
                         "mentions", "communities", "kv", "doc_meta", "doc_vectors", "answer_cache"]
         if st._has_trigram():
@@ -183,6 +205,7 @@ class Pipeline:
                     removed_pages += 1
         self.reload()
         return {"cleared_tables": cleared, "kept_logs": keep_logs, "removed_wiki_pages": removed_pages,
+                "snapshot": (snap or {}).get("name"),
                 "db_bytes": os.path.getsize(self.s.db_path) if os.path.exists(self.s.db_path) else 0}
 
     def provider_status(self) -> Dict[str, Any]:
@@ -202,28 +225,40 @@ class Pipeline:
                 "roles": roles,
                 "embedder": dict(emb.describe(), provider_setting=self.s.embed_provider, model_setting=self.s.embed_model,
                                  store_dtype=self.s.embed_store_dtype),
-                "rerank": {"method": _tuning.T.get("rerank_method"), "url": self.s.rerank_url, "model": self.s.rerank_model,
+                "rerank": {"method": _tuning.T.get("rerank_method"), "url": self.s.rerank_url, "model": self.s.rerank_api_model,
                            "style": self.s.rerank_api_style},
-                "openai": {"base_url": self.s.openai_base_url, "key": bool(os.environ.get("OPENAI_API_KEY"))},
+                "openai": {"base_url": self.s.openai_base_url, "key": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")),
+                           "key_header": getattr(self.s, "openai_api_key_header", "authorization"), "embed_base_url": getattr(self.s, "openai_embed_base_url", "")},
+                "anthropic": {"base_url": getattr(self.s, "anthropic_base_url", "") or "https://api.anthropic.com",
+                              "key": bool(os.environ.get("ANTHROPIC_API_KEY")), "auth_token": bool(os.environ.get("ANTHROPIC_AUTH_TOKEN"))},
                 "agents": agents,
                 "catalog": MODEL_CATALOG,
                 "python": sys.version.split()[0], "sqlite": sqlite3.sqlite_version}
 
-    def test_providers(self, which: Optional[List[str]] = None) -> Dict[str, Any]:
-        """연결 테스트: 역할별 LLM ping + 임베더 1건 임베딩 (토큰 소비 없음/최소)."""
+    def test_providers(self, which: Optional[List[str]] = None, live: bool = False) -> Dict[str, Any]:
+        """연결 테스트: 역할별 LLM ping + 임베더 1건 임베딩 (토큰 소비 없음/최소).
+        live=True 면 역할별로 실제 완성 호출을 1회 한다(같은 provider/model 은 1회만) — PAT 권한·헤더·모델명·headless 실행까지 확인."""
         out: Dict[str, Any] = {}
         which = which or list(Settings.LLM_ROLES) + ["embedder"] + (["rerank_api"] if self.s.rerank_url else [])
+        live_done: Dict[str, Dict[str, Any]] = {}
         for w in which:
             if w == "embedder":
                 r = self.embedder.ping()
                 out["embedder"] = dict(r, provider=self.embedder.name, model=getattr(self.embedder, "model", None))
             elif w == "rerank_api":
                 from .rerankers import ping_rerank_api
-                out["rerank_api"] = dict(ping_rerank_api(self.s), url=self.s.rerank_url, model=self.s.rerank_model)
+                out["rerank_api"] = dict(ping_rerank_api(self.s), url=self.s.rerank_url, model=self.s.rerank_api_model)
             else:
                 llm = self.llm_for(w)
                 r = llm.ping()
-                out[w] = dict(r, provider=llm.name, model=llm.model, available=llm.available)
+                row = dict(r, provider=llm.name, model=llm.model, available=llm.available)
+                if live:
+                    key = "%s/%s" % (llm.name, llm.model)
+                    if key not in live_done:
+                        live_done[key] = llm.live_test()
+                    lv = live_done[key]
+                    row.update(live_ok=lv["ok"], live_ms=round(lv["ms"], 1), live_detail=lv["detail"], ok=bool(r.get("ok")) and lv["ok"])
+                out[w] = row
         return out
 
     # =====================================================================
@@ -254,6 +289,7 @@ class Pipeline:
 
         def report(msg: str) -> None:
             _log.log("info", msg, "build")
+            _pg.note(msg)
             if progress:
                 progress(msg)
 
@@ -445,7 +481,7 @@ class Pipeline:
                     gstats = build_graph_for_chunks(self.store, chunks, titles, prof, self.rules if t.rule_graph else None,
                                                     self.llm_for("extract") if t.llm_graph else None, t.llm_graph,
                                                     self.s.role_llm("extract")["effort"], s.llm_graph_budget, s.llm_graph_min_chars,
-                                                    doc_meta=dmeta, explicit=bool(t.explicit_relations))
+                                                    doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report)
                     touched = None if not incremental else sorted(set(gstats.pop("touched", [])) | set(removed_touched))
                     gstats.pop("touched", None)
                     do_comm = t.communities and (not incremental or t.incremental_communities)

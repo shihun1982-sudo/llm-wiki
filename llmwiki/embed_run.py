@@ -21,6 +21,7 @@ import numpy as np
 
 from .textutil import sha1
 from . import logging_setup as _log
+from . import progress as _pg
 
 
 class EmbedRunner:
@@ -169,6 +170,7 @@ class EmbedRunner:
                     aborted = True
                     break
             st["batch"] = B
+            _pg.tick(st["done"] + st["failed"], len(todo), "batch %d · failed %d · cache %d" % (B, st["failed"], st["cache_hits"]))
             if st["batches"] and st["batches"] % commit_every == 0:
                 self.store.commit()
                 self._wal_check(st)

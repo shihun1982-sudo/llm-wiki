@@ -51,7 +51,7 @@
   "openai_base_url": "http://localhost:11434/v1",
   "openai_embed_model": "",
   "rerank_url": "",
-  "rerank_model": "",
+  "rerank_api_model": "",
   "rerank_api_style": "cohere",
   "embed_batch_max": 256,
   "embed_batch_target_ms": 8000,

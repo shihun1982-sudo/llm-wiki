@@ -126,7 +126,8 @@
   $('#btn-watch-stop').onclick = async () => { await api('/api/watch', { action: 'stop', save: true }); toast('워처 중지'); loadSystem(); loadStatus(); };
   $('#btn-watch-scan').onclick = async () => { const r = await api('/api/watch', { action: 'scan' }); toast(`scan ${r.scan_ms}ms changed=${r.n_changed} removed=${r.n_removed}`); loadSystem(); };
   $('#btn-watch-tick').onclick = async () => { const r = await api('/api/watch', { action: 'tick' }); toast(`changed=${r.n_changed} built=${r.built}` + (r.build ? ' ' + fmt(r.build.ms, 0) + 'ms' : '')); loadSystem(); loadStatus(); };
-  $$('#sys-maint button').forEach((b) => b.onclick = async () => { if (b.dataset.m === 'purge_requests' && !confirm('requests 테이블을 비웁니다.')) return; b.disabled = true; const r = await api('/api/maintenance', { action: b.dataset.m }); b.disabled = false; $('#sys-maint-out').textContent = JSON.stringify(r); loadSystem(); loadStatus(); });
+  // purge_requests 는 서버 게이트가 파괴적 작업으로 분류 → 확인 문구(+비밀번호) 모달이 뜬다
+  $$('#sys-maint button').forEach((b) => b.onclick = async () => { b.disabled = true; const r = await api('/api/maintenance', { action: b.dataset.m }); b.disabled = false; $('#sys-maint-out').textContent = r.cancelled ? '취소됨' : JSON.stringify(r); loadSystem(); loadStatus(); });
   $('#btn-perf-save').onclick = async () => { const st = {}; $$('[data-perf]').forEach((i) => { st[i.dataset.perf] = parseInt(i.value, 10); }); await api('/api/config', { settings: st }); toast('설정 저장됨'); loadStatus(); };
   loaders.system = loadSystem;
 
@@ -146,8 +147,8 @@
   async function runConsole() {
     const cmd = $('#c-cmd').value.trim(); if (!cmd) return;
     $('#console-out').textContent = '$ python -m llmwiki ' + cmd + '\n…';
-    const j = await api('/api/cli', { argv: cmd });
-    $('#console-out').textContent = '$ python -m llmwiki ' + cmd + '\n' + (j.output || '') + '\n[exit ' + j.code + ']';
+    const j = await api('/api/cli', { argv: cmd });   // 파괴적 명령(build --full 등)은 서버 게이트의 확인 모달을 거친다
+    $('#console-out').textContent = '$ python -m llmwiki ' + cmd + '\n' + (j.cancelled ? '(취소됨)' : (j.output || (j.error ? 'ERROR: ' + j.error : ''))) + (j.code != null ? '\n[exit ' + j.code + ']' : '');
     loadStatus();
   }
   $('#btn-console').onclick = runConsole;

@@ -128,8 +128,9 @@ evolve: capture | feedback | llm_review | forensics → proposals(strength, deca
 | 검색 | `query_engine.py` `retrieval.py` `fusion.py` `query_rules.py` `timeparse.py` `pins.py` `rerankers.py` | 질의 오케스트레이션 · 라우터/FTS/벡터/그래프 · 융합/부스트 · 규칙 확장 · 시간 파싱 · pin · rerank API |
 | 답변 | `answer.py` `evidence.py` `forensic.py` | 컨텍스트/답변/claim 검증 · 충분성 판정/fallback 예산 · 포렌식 진단/기록 |
 | 진화 | `evolve.py` `memory.py` `trials.py` `evalset.py` | 제안/적용/롤백 · 에피소드/decay/consolidate · trial 비교 · 지표 |
-| 프로바이더 | `providers.py` `headless.py` | Anthropic(SDK/HTTP) · OpenAI-compatible · Ollama · Voyage · ST · hash · headless 에이전트(subprocess) · mock |
-| 인터페이스 | `cli.py` `web/server.py` `web/static/*` `mcp.py` `architecture.py` | argparse CLI(40+ 명령) · HTTP API + 워크플로 UI · MCP 도구 7종 · 구조 레지스트리 |
+| 프로바이더 | `providers.py` `headless.py` | Anthropic(SDK/HTTP, 게이트웨이 `anthropic_base_url`) · OpenAI-compatible(PAT 헤더 `openai_api_key_header`) · Ollama · Voyage · ST · hash · headless 에이전트(subprocess, Windows `.cmd`) · mock · `live_test()` |
+| 진행/보안 | `progress.py` `auth.py` `snapshots.py` | 실시간 진행 레지스트리(단계·진도율·LLM 대기, CLI 모니터/Web 폴링) · 로그인(로컬+SSO)·역할·작업 등급 게이트·감사 로그 · 파괴적 작업 전 스냅샷 |
+| 인터페이스 | `cli.py` `web/server.py` `web/static/*` `mcp.py` `architecture.py` | argparse CLI(45+ 명령) · HTTP API + 워크플로 UI(로그인 페이지, 단계 확인 모달) · MCP 도구 7종 · 구조 레지스트리 |
 
 ## 3. 데이터 모델 (SQLite)
 
@@ -201,6 +202,7 @@ HITL: evolve apply <id> ─▶ snapshot(DB·rules·wiki·config) ─▶ 적용(s
 - **CLI**: `build|health|query|search|eval|trial|graph|entity|corpus|embed|rules|pin|precompute|forensic|fusion|memory|time|preset|prompts|logs|requests|config|models|tuning|arch|evolve|wiki|docs|stats|system|maintenance|watch|mcp-source|mcp|serve` — 상세는 CLI_FLOWS.md.
 - **Web UI** (7 그룹): Ask(질의·근거판정·claim·pin·포렌식 / 채널 디버그) · Corpus(빌드/상태/health/verify · 임베딩 coverage/precompute · 문서 계약 lint · MCP 소스) · Knowledge(그래프 provenance · 위키 · 그래프 규칙) · Quality(Trial 비교 · 평가 · 포렌식) · Evolve(제안 HITL · 메모리) · Settings(모델/엔드포인트/agents · 프리셋 · 튜닝 · 질의 규칙 · pin · 프롬프트 · config) · Observability(요청 프로파일 · 로그 · 구조/흐름 · 시스템 · 질의 로그 · 콘솔). 사이드바: 프리셋 체크박스(품질/속도/토큰…) + 토글 그룹(자동 생성) + 프로바이더 오버라이드 + CLI 동등 명령. 테마: light/dark/high-contrast/solarized(+`themes/` 확장).
 - **MCP**: `wiki_query(question, k, mode=fast|normal|deep, doc_types, preset)` · `wiki_search` · `wiki_related(text, doc_types)` · `wiki_doc(id)` · `wiki_entity` · `wiki_propose(kind, payload)` · `wiki_status`. 색인을 직접 바꾸는 도구는 없음(제안만, HITL).
+- **Web 보안·진행 표시** (SECURITY.md): 모든 요청은 `auth.py` 가 식별(세션 쿠키 / 프록시 헤더 SSO / OIDC) → 작업 등급(read/run/warn/admin/destructive) 별 역할·확인·문구·재인증 검사 → 실행 → 감사 로그. 오래 걸리는 job/질의는 `progress.py` 레지스트리에 단계·진도율·LLM 대기 시간을 기록하고 `/api/jobs/<id>`·`/api/progress/<token>`(서버 락 밖) 로 폴링한다.
 
 ## 8. 규모·성능 설계 근거 (5,000 문서 + 50/일)
 

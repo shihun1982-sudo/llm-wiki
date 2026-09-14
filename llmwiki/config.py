@@ -31,6 +31,7 @@ _PATH_DEFAULTS: Dict[str, str] = {
     "query_rules": "query_rules.json", "mcp_sources": "mcp_sources.json", "agents": "agents.json",
     "pins": "pins.json", "rules": "data/rules.json", "schemas_dir": "schemas", "prompts_dir": "prompts",
     "eval": "eval/questions.json", "logs_dir": "logs", "themes": "llmwiki/web/static/themes/themes.json",
+    "security": "security.json",
 }
 _PATH_ENV_ALIASES = {"config": "LLMWIKI_CONFIG", "env": "LLMWIKI_ENV_FILE", "tuning": "LLMWIKI_TUNING"}
 
@@ -206,11 +207,15 @@ class Settings:
     log_max_mb: int = 10           # 파일당 최대 MB (로테이션)
     log_backups: int = 10          # 보관 파일 수
     log_console: bool = False      # 콘솔에도 WARNING 이상 출력
-    # ---- OpenAI-compatible / rerank 엔드포인트 (키는 .env: OPENAI_API_KEY, RERANK_API_KEY) ----
-    openai_base_url: str = "http://localhost:11434/v1"   # vLLM · LM Studio · Ollama(OpenAI 호환) · OpenRouter · 사내 게이트웨이
+    # ---- OpenAI-compatible / rerank 엔드포인트 (키는 .env: OPENAI_API_KEY(또는 LLM_API_KEY), RERANK_API_KEY) ----
+    openai_base_url: str = "http://localhost:11434/v1"   # vLLM · LM Studio · Ollama(OpenAI 호환) · OpenRouter · 사내 게이트웨이(PAT)
+    openai_api_key_header: str = "authorization"   # PAT 를 싣는 헤더. authorization(→ "Bearer <key>") | api-key | x-api-key | 임의 헤더명(값은 키 그대로)
+    openai_extra_headers: Dict[str, str] = field(default_factory=dict)   # 게이트웨이가 요구하는 고정 헤더 (예 {"X-Tenant": "modem"})
+    openai_embed_base_url: str = ""   # 임베딩 전용 base URL (비우면 openai_base_url 과 같음)
     openai_embed_model: str = ""   # embed_provider=openai 일 때 모델명 (비우면 embed_model)
+    anthropic_base_url: str = ""   # Anthropic 호환 게이트웨이(PAT). 비우면 https://api.anthropic.com. 키는 ANTHROPIC_API_KEY(x-api-key) 또는 ANTHROPIC_AUTH_TOKEN(Bearer)
     rerank_url: str = ""           # rerank_method=api 일 때 엔드포인트 (예 http://localhost:8000/v1/rerank)
-    rerank_model: str = ""         # rerank 모델명 (예 BAAI/bge-reranker-v2-m3, rerank-2)
+    rerank_api_model: str = ""     # rerank API 모델명 (예 BAAI/bge-reranker-v2-m3, rerank-2). ※ rerank_model 은 '역할 rerank 의 LLM 모델' 단축키
     rerank_api_style: str = "cohere"   # cohere(=jina/vLLM) | voyage
     # ---- 임베딩 실행 제어 (품질과 무관, 실행 안정성) ----
     embed_batch_max: int = 256     # 적응형 배치 상한
@@ -219,6 +224,7 @@ class Settings:
     wal_checkpoint_mb: int = 64    # 빌드 중 WAL 이 이보다 크면 체크포인트
     embed_store_dtype: str = "float32"   # float32 | float16 (저장·행렬 메모리 절반, 유사도 오차 미미)
     build_lock_timeout: int = 0    # 다른 빌드가 락을 잡고 있을 때 기다릴 초 (0 = 즉시 실패)
+    llm_timeout: int = 600         # LLM 호출 1회의 HTTP 타임아웃(초). 응답이 없으면 이 시간 뒤 실패로 처리(재시도 포함)
     toggles: Toggles = field(default_factory=Toggles)
 
     LLM_ROLES = ("answer", "rerank", "extract", "summary", "review", "expand", "verify", "forensic")
@@ -254,6 +260,10 @@ class Settings:
     def from_dict(d: Dict[str, Any]) -> "Settings":
         d = dict(d or {})
         tg = d.pop("toggles", {}) or {}
+        # 구 키 호환: rerank_model(파일) → rerank_api_model. (rerank_model 은 이제 역할 단축키로만 쓰인다)
+        if "rerank_api_model" not in d and d.get("rerank_model"):
+            d["rerank_api_model"] = d["rerank_model"]
+        d.pop("rerank_model", None)
         s = Settings(**{k: v for k, v in d.items() if k in Settings.__dataclass_fields__ and k != "LLM_ROLES"})
         s.toggles = Toggles(**{k: v for k, v in tg.items() if k in Toggles.__dataclass_fields__})
         if not isinstance(s.llm_roles, dict):
@@ -384,6 +394,10 @@ def apply_overrides(s: Settings, overrides: Dict[str, Any]) -> Settings:
                 if isinstance(v, str):
                     v = [x for x in v.split(";") if x.strip()]
                 v = [resolve_path(x) for x in v]
+            elif isinstance(cur, dict):
+                if isinstance(v, str):
+                    v = json.loads(v) if v.strip() else {}
+                v = {str(a): str(b) for a, b in (v or {}).items()}
             elif k in ("data_dir", "wiki_dir"):
                 v = resolve_path(v)
             setattr(s, k, v)
@@ -489,10 +503,14 @@ SETTING_HELP: Dict[str, str] = {
     "log_max_mb": "로그 파일당 최대 크기(MB). 초과 시 로테이션.",
     "log_backups": "로테이션 보관 파일 수.",
     "log_console": "콘솔(stderr)에도 WARNING 이상 출력.",
-    "openai_base_url": "OpenAI-compatible 서버 base URL (…/v1). vLLM·LM Studio·Ollama·OpenRouter·사내 게이트웨이.",
+    "openai_base_url": "OpenAI-compatible 서버 base URL (…/v1). vLLM·LM Studio·Ollama·OpenRouter·사내 게이트웨이(PAT). 키는 .env OPENAI_API_KEY 또는 LLM_API_KEY.",
+    "openai_api_key_header": "PAT/키를 싣는 헤더: authorization(Bearer <key>) | api-key | x-api-key | 임의 헤더명(값은 키 그대로).",
+    "openai_extra_headers": "게이트웨이가 요구하는 고정 헤더 JSON (예 {\"X-Tenant\": \"modem\"}).",
+    "openai_embed_base_url": "임베딩 전용 base URL (비우면 openai_base_url). 키는 OPENAI_EMBED_API_KEY 가 있으면 그것, 없으면 LLM 키.",
     "openai_embed_model": "embed_provider=openai 일 때 임베딩 모델명.",
+    "anthropic_base_url": "Anthropic 호환 게이트웨이 URL (비우면 api.anthropic.com). 키: ANTHROPIC_API_KEY(x-api-key) 또는 ANTHROPIC_AUTH_TOKEN(Bearer PAT).",
     "rerank_url": "rerank_method=api 엔드포인트 URL (Cohere/Jina/vLLM /v1/rerank, Voyage /v1/rerank).",
-    "rerank_model": "rerank API 모델명.",
+    "rerank_api_model": "rerank API 모델명 (rerank_url 용). rerank_model 은 역할 rerank 의 LLM 모델 단축키이므로 다른 값.",
     "rerank_api_style": "rerank 응답 포맷: cohere(=jina/vLLM results[].relevance_score) | voyage(data[].relevance_score).",
     "embed_batch_max": "적응형 임베딩 배치 상한 (성공이 이어지면 embed_batch 에서 이 값까지 증가).",
     "embed_batch_target_ms": "배치 1회 목표 지연(ms). 초과하면 배치 축소.",
@@ -500,4 +518,5 @@ SETTING_HELP: Dict[str, str] = {
     "wal_checkpoint_mb": "빌드 중 WAL 파일이 이 크기(MB)를 넘으면 체크포인트.",
     "embed_store_dtype": "벡터 저장/행렬 dtype: float32 | float16 (메모리 절반).",
     "build_lock_timeout": "다른 프로세스가 빌드 중일 때 락을 기다릴 초 (0=즉시 실패).",
+    "llm_timeout": "LLM 호출 1회의 HTTP 타임아웃(초). 로컬 모델(Ollama)이 느리면 늘리고, 멈춘 서버를 빨리 감지하려면 줄인다 (예: 120).",
 }

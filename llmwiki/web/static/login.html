@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>LLM Wiki · 로그인</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/themes/dark.css">
+<link rel="stylesheet" href="/static/themes/high-contrast.css">
+<link rel="stylesheet" href="/static/themes/solarized.css">
+<style>
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .login{width:100%;max-width:380px;background:var(--card);border:1px solid var(--grid);border-radius:10px;padding:22px 24px}
+  .login h1{font-size:18px;margin:0 0 4px}.login .sub{color:var(--ink2);font-size:13px;margin-bottom:16px}
+  .login label{display:block;font-size:12px;color:var(--ink2);margin:10px 0 4px}
+  .login input[type=text],.login input[type=password]{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--axis);border-radius:4px;background:var(--card);color:var(--ink)}
+  .login button{width:100%;margin-top:14px;padding:9px}
+  .login .or{text-align:center;color:var(--muted);font-size:12px;margin:14px 0 4px}
+  .login .err{color:var(--critical);font-size:13px;margin-top:10px;min-height:18px}
+  .login .note{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.5}
+  .login a.sso{display:block;text-align:center;padding:9px;border:1px solid var(--s1);border-radius:4px;color:var(--s1);text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login" id="f" autocomplete="on">
+    <h1>LLM Wiki</h1>
+    <div class="sub">FTS + Vector + GraphRAG · self-evolving</div>
+    <div id="local">
+      <label for="u">아이디</label><input id="u" type="text" name="username" autocomplete="username" autofocus>
+      <label for="p">비밀번호</label><input id="p" type="password" name="password" autocomplete="current-password">
+      <button type="submit" id="b">로그인</button>
+    </div>
+    <div id="sso" class="hidden"><div class="or" id="or">또는</div><a class="sso" id="sso-link" href="/auth/sso/start">사내 SSO 로 로그인</a></div>
+    <div class="err" id="err"></div>
+    <div class="note" id="note"></div>
+  </form>
+</div>
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const next = new URLSearchParams(location.search).get('next') || '/';
+  try { const t = localStorage.getItem('llmwiki.theme'); if (t && t !== 'auto' && t !== 'light') document.documentElement.dataset.theme = t; else if (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.dataset.theme = 'dark'; } catch (e) {}
+  fetch('/api/auth/me').then((r) => r.json()).then((j) => {
+    if (j.user) { location.replace(next); return; }
+    if (j.mode === 'off') { location.replace('/'); return; }
+    if (j.sso) { $('#sso').classList.remove('hidden'); $('#sso-link').textContent = j.sso_label || '사내 SSO 로 로그인'; $('#sso-link').href = '/auth/sso/start?next=' + encodeURIComponent(next); }
+    if (!j.local) { $('#local').classList.add('hidden'); $('#or').classList.add('hidden'); if (!j.sso) $('#note').textContent = '로그인 방법이 설정되어 있지 않습니다. 관리자: python -m llmwiki users add <id> --role admin'; }
+    else $('#note').textContent = '계정이 없으면 관리자에게 요청하세요 (users add). ' + (j.sso ? 'SSO 계정은 그룹에 따라 역할이 부여됩니다.' : '');
+  }).catch(() => {});
+  $('#f').addEventListener('submit', async (e) => {
+    e.preventDefault(); $('#b').disabled = true; $('#err').textContent = '';
+    try {
+      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'llmwiki' }, body: JSON.stringify({ username: $('#u').value.trim(), password: $('#p').value }) });
+      const j = await r.json();
+      if (r.ok && j.ok) location.replace(next); else $('#err').textContent = j.error || ('로그인 실패 (' + r.status + ')');
+    } catch (err) { $('#err').textContent = '서버 연결 실패'; }
+    $('#b').disabled = false;
+  });
+})();
+</script>
+</body>
+</html>

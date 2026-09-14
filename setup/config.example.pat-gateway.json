@@ -1,0 +1,29 @@
+{
+  "_comment": "사내 LLM 게이트웨이(접속 URL + PAT) 예시. 이 파일의 키만 config.json 에 덮어쓰면 된다 (나머지는 config.example.json 기본값). PAT 는 .env 의 OPENAI_API_KEY(또는 LLM_API_KEY) / ANTHROPIC_AUTH_TOKEN. 적용 후: python -m llmwiki models test --live",
+  "_variant_A_openai_compatible": "게이트웨이가 /v1/chat/completions, /v1/embeddings 를 제공할 때",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o-mini",
+  "openai_base_url": "https://gateway.corp/v1",
+  "openai_api_key_header": "authorization",
+  "openai_extra_headers": {},
+  "openai_embed_base_url": "",
+  "openai_embed_model": "text-embedding-3-small",
+  "embed_provider": "openai",
+  "llm_roles": {
+    "rerank": {"model": "gpt-4o-mini", "effort": "low"},
+    "expand": {"model": "gpt-4o-mini", "effort": "low"},
+    "verify": {"model": "gpt-4o-mini", "effort": "low"}
+  },
+  "llm_timeout": 180,
+
+  "_variant_B_anthropic_compatible": "게이트웨이가 Anthropic Messages API(/v1/messages)를 제공할 때는 위 openai_* 대신 아래를 쓴다: \"llm_provider\": \"anthropic\", \"anthropic_base_url\": \"https://gateway.corp\", \"llm_model\": \"claude-sonnet-5\", \"llm_fallbacks\": false (게이트웨이가 beta 헤더를 거부하면). 키는 .env ANTHROPIC_AUTH_TOKEN(Bearer) 또는 ANTHROPIC_API_KEY(x-api-key).",
+  "_variant_B_example": {
+    "llm_provider": "anthropic",
+    "anthropic_base_url": "https://gateway.corp",
+    "llm_model": "claude-sonnet-5",
+    "llm_fallbacks": false
+  },
+
+  "_note_auto": "llm_provider=auto 는 openai/headless 를 절대 고르지 않는다 — 게이트웨이를 쓰려면 provider 를 명시한다.",
+  "_note_header": "PAT 헤더가 'Authorization: Bearer' 가 아니면 openai_api_key_header 를 api-key 또는 x-api-key 로. 그 외 고정 헤더는 openai_extra_headers 에 {\"헤더\": \"값\"}."
+}

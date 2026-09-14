@@ -10,13 +10,13 @@
 | 1 | Python 3.9+ (권장 3.11+), `pip install -r requirements.txt` (+ optional) | `python setup/check_env.py` |
 | 2 | 폴더 복사 (`data/ wiki/ logs/` 제외 가능) | 상대 경로 설정이라 그대로 동작 |
 | 3 | `config.json` (`setup/config.example.json` 복사) — `corpus_dirs`, 모델 | `python -m llmwiki config show --effective` |
-| 4 | `.env` (`setup/.env.example` 복사) — API 키 | `python -m llmwiki models test` |
+| 4 | `.env` (`setup/.env.example` 복사) — API 키/PAT. 게이트웨이·opencode 는 §4.1~4.3, 예시 `setup/config.example.pat-gateway.json` · `config.example.headless.json` | `python -m llmwiki models test --live` |
 | 5 | 문서 계약: `schemas/`, 기존 문서에 front matter 추가 또는 `schemas/infer.json` 규칙 | `python -m llmwiki corpus lint` |
 | 6 | 어휘/규칙: `query_rules.json`, `data/rules.json`(id_patterns, link_rules), `prompts/answer_guide.md` | `rules test "…"` |
 | 7 | `python -m llmwiki health` → `build --full --trace` → `build verify` | alerts 0, coverage 100% |
 | 8 | 평가셋 `eval/questions.json` 교체 → `eval` → `trial run --name baseline` | hit@k, groundedness 기준선 기록 |
 | 9 | 스케줄 등록 `setup/schedule_build.ps1 -Register` (또는 cron) | `build status`, `logs tail --file build` |
-| 10 | `serve` → Web UI, `claude mcp add llmwiki -- python -m llmwiki mcp` | Ask 탭 질의, MCP 도구 목록 |
+| 10 | `security init` → `users add <id> --role admin` (+ SSO 설정) → `serve --host 0.0.0.0`, `claude mcp add llmwiki -- python -m llmwiki mcp` — §4.4 | 로그인 화면, viewer 로 전체 리빌드가 403 인지, `security audit` |
 
 ## 1. 환경
 
@@ -46,7 +46,8 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 | 파일 | 역할 | 언제 바꾸나 | 반영 |
 |---|---|---|---|
 | `config.json` | 코퍼스 경로, 프로바이더/역할별 모델, 토글, 운영 수치(배치·WAL·로그·timezone) | 새 환경 필수 | 즉시(서버 reload) |
-| `.env` | API 키(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `VOYAGE_API_KEY`, `RERANK_API_KEY`, MCP 토큰) + **모든 설정의 env 오버라이드** `LLMWIKI_<KEY>` / `LLMWIKI_TOGGLE_<NAME>` / `LLMWIKI_<ROLE>_MODEL` | 키 발급 후 | 프로세스 시작 |
+| `.env` | API 키/PAT(`OPENAI_API_KEY`·`LLM_API_KEY`, `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`, `VOYAGE_API_KEY`, `RERANK_API_KEY`, MCP 토큰) + **모든 설정의 env 오버라이드** `LLMWIKI_<KEY>` / `LLMWIKI_TOGGLE_<NAME>` / `LLMWIKI_<ROLE>_MODEL` | 키 발급 후 | 프로세스 시작 |
+| `security.json` | 로그인 방식(로컬 ID/비밀번호 · SSO), 역할, 파괴적 작업 정책 — [SECURITY.md](SECURITY.md) | 서버 공개 전 | 즉시(서버 reload) |
 | `tuning.json` | 알고리즘 상수(FTS·라우터·그래프·융합·근거 판정·claim·메모리…) 오버라이드만 | 품질 튜닝 | 즉시 |
 | `presets.json` | quality / speed / token / offline / deep_research 묶음 | 조직 정책 | `--preset`, `preset apply` |
 | `query_rules.json` | acronym / synonym / alias / related / exclude / compound 사전 | 도메인 용어 | 즉시 |
@@ -78,15 +79,104 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 
 | 방식 | 설정 | 확인 |
 |---|---|---|
-| Anthropic | `.env ANTHROPIC_API_KEY`, `llm_provider=auto|anthropic` | `models test` |
-| OpenAI-compatible | `openai_base_url` (…/v1), `.env OPENAI_API_KEY`(로컬은 비워도 됨), `llm_provider=openai`, 모델 id | `models test` (`/v1/models`) |
+| **사내 게이트웨이 (URL + PAT), OpenAI-compatible** | `llm_provider=openai`, `openai_base_url=https://gateway.corp/v1`, `.env OPENAI_API_KEY=<PAT>`(또는 `LLM_API_KEY`), 헤더 형식 `openai_api_key_header` — §4.1 | `models test --live` |
+| **사내 게이트웨이 (URL + PAT), Anthropic-compatible** | `llm_provider=anthropic`, `anthropic_base_url=https://gateway.corp`, `.env ANTHROPIC_AUTH_TOKEN=<PAT>`(Bearer) 또는 `ANTHROPIC_API_KEY`(x-api-key), `llm_fallbacks=false` — §4.2 | `models test --live` |
+| Anthropic 직접 | `.env ANTHROPIC_API_KEY`, `llm_provider=auto|anthropic` | `models test` |
+| OpenAI-compatible 로컬 (vLLM · LM Studio · Ollama /v1) | `openai_base_url` (…/v1), 키는 비워도 됨, `llm_provider=openai`, 모델 id | `models test` (`/v1/models`) |
 | Ollama | `ollama_url`, `ollama_model`, `ollama pull <model>` | `models test` — 모델이 없으면 unavailable 로 표시되고 auto 는 선택하지 않음 |
-| Headless 에이전트 | `agents.json` 의 command 템플릿, `llm_roles.<role>.provider = "headless:opencode"`, 실행 파일 PATH | `models test` (실행 파일 존재), `headless:mock` 으로 배선 확인 |
-| rerank API | `rerank_url`, `rerank_model`, `rerank_api_style`, `.env RERANK_API_KEY`; 튜닝 `rerank_method=auto|api` | `models test` (`rerank_api` 항목) |
-| 임베딩 API | Voyage(`VOYAGE_API_KEY`), OpenAI-compat(`openai_embed_model`), Ollama(`embed_model=bge-m3`) | `models test` (`embedder`) |
+| **Headless 에이전트 (opencode 등)** | `agents.json` 의 command 템플릿, `llm_roles.<role>.provider = "headless:opencode"`, 실행 파일 PATH — §4.3 | `models test --live` (실제로 프로세스를 띄워 응답 확인), `headless:mock` 으로 배선 확인 |
+| rerank API | `rerank_url`, `rerank_api_model`, `rerank_api_style`, `.env RERANK_API_KEY`; 튜닝 `rerank_method=auto|api` | `models test` (`rerank_api` 항목) |
+| 임베딩 API | Voyage(`VOYAGE_API_KEY`), OpenAI-compat(`openai_embed_model`, 필요 시 `openai_embed_base_url`·`OPENAI_EMBED_API_KEY`), Ollama(`embed_model=bge-m3`) | `models test` (`embedder`) |
 | 외부 MCP | `mcp_sources.json` (command/env/tool 매핑), 토글 `mcp_sources` | `mcp-source test`, `mcp-source ingest --dry-run` |
 
 전부 없어도 동작한다: 추출식 답변 + 규칙 그래프 + hash 임베딩 + 로컬 리랭크 (`preset apply offline`).
+
+공통 주의:
+- `llm_provider=auto` 는 Anthropic 키 → Ollama 순으로만 고르며 **openai / headless 는 절대 고르지 않는다**. 게이트웨이나 opencode 를 쓰려면 `llm_provider` 또는 `llm_roles.<role>.provider` 에 명시한다.
+- `models test` 는 토큰을 쓰지 않는 ping(모델 목록 조회)만 한다. 게이트웨이가 `/models` 를 막아 두었거나 PAT 권한·헤더 이름·모델 id 가 틀린 경우는 **`models test --live`** (역할별 provider/model 당 실제 완성 호출 1회, "OK" 한 단어 응답)로만 드러난다. Web 은 Settings › 모델 › "실제 호출 테스트 (--live)".
+- LLM 호출 1회의 HTTP 타임아웃은 `llm_timeout`(기본 600초). 게이트웨이가 멈춰도 빨리 실패하게 하려면 120~180 으로 줄인다. 진행 중인 호출은 CLI 의 `⏳ … LLM 응답 대기 <provider>/<model> Ns` 줄과 Web 의 진행 패널에서 보인다.
+- 설정 후 순서: `python setup/check_env.py`(키·URL·실행 파일 존재) → `models test --live` → `health` → `build`.
+
+### 4.1 OpenAI-compatible 게이트웨이 + PAT
+
+게이트웨이가 `/v1/chat/completions`(+ `/v1/embeddings`) 를 제공하고 PAT(Personal Access Token)로 인증하는 경우. 예시 파일: `setup/config.example.pat-gateway.json`.
+
+```jsonc
+// config.json (해당 키만)
+"llm_provider": "openai",
+"llm_model": "gpt-4o-mini",                      // 게이트웨이가 노출하는 모델 id 그대로
+"openai_base_url": "https://gateway.corp/v1",    // …/v1 까지. 경로 뒤에 /chat/completions 가 붙는다
+"openai_api_key_header": "authorization",        // PAT 를 어떤 헤더에 싣나 (아래 표)
+"openai_extra_headers": {},                      // 게이트웨이가 요구하는 고정 헤더 {"X-Tenant": "modem"}
+"embed_provider": "openai", "openai_embed_model": "text-embedding-3-small",   // 임베딩도 게이트웨이로 보낼 때
+"llm_timeout": 180
+```
+```ini
+# .env
+OPENAI_API_KEY=<PAT>          # 또는 LLM_API_KEY=<PAT> (이름만 다름). 임베딩 키가 다르면 OPENAI_EMBED_API_KEY
+```
+
+| 게이트웨이가 요구하는 인증 | `openai_api_key_header` | 실제로 나가는 헤더 |
+|---|---|---|
+| `Authorization: Bearer <PAT>` (대부분) | `authorization` (기본) | `authorization: Bearer <PAT>` |
+| `api-key: <PAT>` (Azure OpenAI 스타일) | `api-key` | `api-key: <PAT>` |
+| `X-API-Key: <PAT>` | `x-api-key` | `x-api-key: <PAT>` |
+| 그 외 이름 | 그 헤더 이름 | `<이름>: <PAT>` (값 그대로) |
+
+확인용 curl (설정과 같은 요청):
+```bash
+curl -s https://gateway.corp/v1/chat/completions -H "authorization: Bearer $PAT" -H "content-type: application/json" \
+  -d '{"model":"gpt-4o-mini","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}'
+```
+이 curl 이 되면 `python -m llmwiki models test --live` 도 된다. 401/403 이면 PAT 또는 헤더 이름, 404 면 `openai_base_url`(…/v1 누락) 또는 모델 id, 400 에 `max_tokens`/`temperature` 가 언급되면 게이트웨이가 신형 파라미터만 받는 경우이니 게이트웨이 담당자에게 호환 모드를 요청한다(`response_format` 미지원은 자동으로 재시도한다).
+
+### 4.2 Anthropic-compatible 게이트웨이 + PAT
+
+게이트웨이가 Anthropic Messages API(`/v1/messages`)를 제공하는 경우.
+```jsonc
+"llm_provider": "anthropic",
+"llm_model": "claude-sonnet-5",
+"anthropic_base_url": "https://gateway.corp",   // /v1 없이 호스트까지. /v1/messages, /v1/models 가 뒤에 붙는다
+"llm_fallbacks": false                          // 게이트웨이가 anthropic-beta 헤더를 거부하면 false
+```
+```ini
+ANTHROPIC_AUTH_TOKEN=<PAT>    # Bearer 방식 (authorization: Bearer <PAT>)
+# 또는 ANTHROPIC_API_KEY=<PAT>  # x-api-key 방식
+```
+`anthropic` SDK 가 설치돼 있으면 SDK 로, 없으면 내장 urllib 구현으로 같은 URL/헤더를 쓴다(둘 다 `anthropic_base_url` 을 따른다). 게이트웨이가 `/v1/models` 를 제공하지 않으면 ping 은 "models 목록 미제공" 으로 통과 처리되고 `--live` 로 실제 호출을 확인한다.
+
+### 4.3 opencode 를 headless 로 쓰기
+
+opencode(또는 claude / codex CLI)를 비대화형 subprocess 로 실행해 LLM 역할로 쓴다. 예시 파일: `setup/config.example.headless.json`.
+
+1. opencode 설치 + 인증(`opencode auth login` 등)을 **서버를 실행할 계정으로** 마친다. 실행에 필요한 환경변수는 `.env` 에 두면 subprocess 에 그대로 전달되고, `agents.json` 의 `opencode.env` 로도 줄 수 있다.
+2. `config.json`:
+   ```jsonc
+   "llm_roles": {
+     "answer": {"provider": "headless:opencode", "model": "anthropic/claude-sonnet-4-5"},   // model 은 opencode 의 provider/model 표기
+     "expand": {"provider": "headless:opencode", "model": "anthropic/claude-haiku-4-5"},
+     "verify": {"provider": "headless:opencode", "model": "anthropic/claude-haiku-4-5"}
+   }
+   ```
+   전역 `llm_provider` 를 `headless:opencode` 로 두면 빌드 역할(extract/summary)까지 모두 프로세스 실행이 되어 매우 느리므로, **질의 역할에만** 두는 것을 권장한다(`llm_graph` 는 청크당 프로세스 1개).
+3. `agents.json` 의 `opencode` 항목이 명령 템플릿이다: `["opencode", "run", "--format", "json", "-m", "{model}", "{prompt}"]`, 출력 `ndjson`, `timeout_s` 300. 설치된 opencode 버전이 다른 플래그/출력을 쓰면 여기만 고친다(출력이 일반 텍스트면 `"output": "text"`).
+4. **Windows**: npm/bun 으로 설치한 opencode 는 `opencode.cmd` 셸 스크립트다. `command[0]` 은 PATH 에서 `.cmd/.bat` 까지 찾아 절대 경로로 실행하므로 그대로 두면 되고, 안 찾히면 `"C:\\Users\\<me>\\AppData\\Roaming\\npm\\opencode.cmd"` 처럼 절대 경로를 적는다. (예전 버전은 ping 은 통과하는데 실제 호출이 `WinError 2` 로 실패했다 — 수정됨.)
+5. 확인: `python -m llmwiki models test --live` → `answer headless:opencode/… live: OK reply='OK'`. 배선만 먼저 보려면 `headless:mock`.
+
+`agents.json` 은 `{python}`(현재 인터프리터)·`{project_root}` 치환을 쓰므로 다른 PC 로 복사해도 그대로 동작한다. opencode 의 로컬 HTTP 서버(`opencode serve`) 는 OpenAI-compatible 이 아니라 현재 지원하지 않는다 — 필요하면 앞에 OpenAI 호환 shim 을 두거나 §11 의 방법으로 30줄짜리 프로바이더를 추가한다.
+
+### 4.4 서버를 여러 사람에게 공개하기 전: 로그인·역할·파괴적 작업 보호
+
+상세 설계와 `security.json` 전체 항목은 [SECURITY.md](SECURITY.md). 최소 절차:
+```bat
+python -m llmwiki security init                         :: security.json 생성 (mode auto: 127.0.0.1 은 로그인 없음, 그 외 바인드는 로그인 필수)
+python -m llmwiki users add alice --role admin          :: 관리자 1명 이상 (비밀번호 프롬프트)
+python -m llmwiki users add bob --role operator         :: 증분 빌드·제안 적용 등 복구 가능한 변경까지
+python -m llmwiki serve --host 0.0.0.0 --port 8765      :: 사용자/SSO 가 없으면 기동 거부
+```
+- 사내 SSO 병행: `security.json` 의 `sso` 에 OIDC(issuer/client_id/redirect_uri, 비밀은 `.env LLMWIKI_OIDC_CLIENT_SECRET`) 또는 리버스 프록시 헤더 방식을 적고 `role_map` 으로 IdP 그룹 → 역할. 로그인 화면에 ID/비밀번호 폼과 SSO 버튼이 함께 뜬다.
+- 정책: 증분 빌드 등 복구 가능한 변경은 확인 대화상자, **전체 초기화·로그 삭제·스냅샷 복원·config reset 은 admin + 확인 문구(`DELETE INDEX`) + 비밀번호 재입력**, 실행 직전 자동 스냅샷(`snapshot list|restore`), 전부 `logs/audit.jsonl` 에 기록.
+- HTTPS 와 IP 제한은 리버스 프록시에서(SECURITY.md §7).
 
 ## 5. 코퍼스 계약 적용
 
@@ -149,7 +239,11 @@ python -m llmwiki graph --provenance explicit --limit 20   :: CL→Issue 관계�
 |---|---|
 | `build aborted: health check failed: corpus_dirs` | 코퍼스 경로 없음. `config set corpus_dirs=경로`. 초기화 전에 검사하므로 기존 색인은 유지됨 |
 | `build refused: another build is running` | 다른 프로세스가 빌드 중(락). 죽은 프로세스의 락은 자동 회수. `build status` 로 pid 확인 |
-| 답변 맨 위에 `ℹ LLM 미사용 — 근거 문서의 원문 문장을 골라 구조화한 답변` | LLM 없음/모델 미설치. 근거 표·관계는 나오지만 서술형 설명은 없음. `models test`. Ollama 는 `ollama pull <model>` |
+| 답변 맨 위에 `ℹ LLM 미사용 — 근거 문서의 원문 문장을 골라 구조화한 답변` | LLM 없음/모델 미설치. 근거 표·관계는 나오지만 서술형 설명은 없음. `models test --live`. Ollama 는 `ollama pull <model>` |
+| `models test` 는 OK 인데 실제 질의는 LLM 미사용/오류 | ping(모델 목록)만 통과한 것. `models test --live` 로 실제 호출 — 401/403 = PAT·헤더(`openai_api_key_header`), 404 = base_url/모델 id, headless 는 실행 파일·인증 |
+| `llm_provider=auto` 인데 게이트웨이/opencode 가 안 잡힘 | auto 는 openai/headless 를 고르지 않는다. `llm_provider=openai` 또는 `llm_roles.<role>.provider=headless:opencode` 로 명시 |
+| headless: `executable not found` / `WinError 2` | PATH 에 없음. `agents.json` `command[0]` 에 절대 경로(Windows 는 `...\npm\opencode.cmd`) |
+| 빌드/질의가 오래 걸리는데 멈춘 건지 모르겠다 | CLI 는 `⏳ 단계 › 진도 · LLM 응답 대기 Ns` 줄, Web 은 진행 패널(단계·%·LLM 대기 시간·최근 로그)을 본다. LLM 대기가 `llm_timeout` 을 넘으면 실패로 기록되고 다음 청크로 넘어간다 |
 | 답변이 "근거 부족(insufficient)" | 코퍼스에 없거나 표기 불일치. `forensic last` → `rules add synonym …` / 문서 추가 / `fallback_loop` 토글 |
 | `[미확인: 근거에서 확인되지 않음]` 표기 | claim_check 가 인용 근거와 대조해 지지되지 않는 문장. `claim_policy`(mark/drop/refine), `answer_refine` |
 | coverage < 100% | 임베딩 실패(429/타임아웃). `embed report` 로 실패 청크 확인 → 다음 `build` 에서 자동 재개 |

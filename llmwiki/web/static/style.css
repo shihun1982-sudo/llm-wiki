@@ -113,11 +113,34 @@ tr.sel{background:var(--sel)}tr[data-id]{cursor:pointer}tr[data-id]:hover{backgr
 .list div{padding:4px 8px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--page)}.list div:hover,.list div.sel{background:var(--hover)}
 .prop{background:var(--card);border:1px solid var(--grid);border-radius:4px;padding:8px;margin-bottom:6px;font-size:12px;display:grid;grid-template-columns:1fr auto;gap:8px}
 .prop code{background:var(--page);padding:1px 4px;border-radius:3px}
+/* 권한 단계 확인 모달 */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:98}
+.modal{background:var(--card);color:var(--ink);border:1px solid var(--grid);border-radius:10px;padding:18px 20px;width:100%;max-width:520px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.modal.danger{border-color:var(--critical);border-top:4px solid var(--critical)}
+.modal h3{margin:0 0 8px;font-size:15px}.modal .modal-op{font-size:12px;color:var(--ink2);margin-bottom:8px}.modal .modal-msg{font-size:13px;line-height:1.5}
+.modal label{display:block;font-size:12px;color:var(--ink2);margin:10px 0 4px}.modal label input{display:block;width:100%;margin-top:4px;font:inherit;padding:7px 9px;border:1px solid var(--axis);border-radius:4px;background:var(--card);color:var(--ink)}
+.modal .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin:14px 0 8px}
+body[data-role="viewer"] .danger, body[data-role="viewer"] #sec-add-form{display:none}
+#user-badge a{color:var(--ink2);text-decoration:none;margin-left:6px}
 #toast{position:fixed;right:16px;bottom:16px;background:var(--toast-bg);color:var(--toast-ink);padding:8px 14px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:99}
 #toast.show{opacity:1}
 .stat{display:inline-block;margin:0 14px 8px 0;font-size:12px;color:var(--ink2)}.stat b{display:block;font-size:20px;color:var(--ink);font-variant-numeric:tabular-nums}
 .bar{height:8px;background:var(--page);border-radius:2px;position:relative;min-width:80px}.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--s1);border-radius:2px}
 .progress{height:14px;background:var(--page);border:1px solid var(--grid);border-radius:7px;position:relative;overflow:hidden;min-width:200px}.progress i{position:absolute;left:0;top:0;bottom:0;background:var(--s3)}.progress span{position:absolute;left:8px;top:-1px;font-size:11px;color:var(--ink)}
+/* 진행 상황 패널 (build/ask/eval 등 오래 걸리는 작업): 단계 경로 · 진도율 · LLM 대기 · 최근 로그 */
+.live{background:var(--card);border:1px solid var(--perf-border);border-left:3px solid var(--s1);border-radius:6px;padding:8px 10px;margin:6px 0;font-size:13px}
+.live .live-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.live .progress{height:16px;margin:2px 0}
+/* 진도율을 모를 때(indeterminate): 움직이는 바 대신 전체 폭이 천천히 숨 쉬듯 밝아졌다 어두워진다 (눈에 거슬리지 않게) */
+.live .progress.indet i{width:100%;opacity:.18;animation:live-breathe 3.2s ease-in-out infinite}
+.live .live-log{white-space:pre-wrap;margin-top:6px;font-family:Consolas,"D2Coding",monospace;font-size:11px;line-height:1.4;cursor:pointer;border-top:1px dashed var(--grid);padding-top:4px}
+.live .live-log:hover{background:var(--hover)}
+.live .live-log.expanded{max-height:50vh;overflow:auto}
+.live .live-log .log-toggle{display:block;color:var(--muted);font-family:inherit;margin-top:3px}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--grid);border-top-color:var(--s1);border-radius:50%;animation:live-spin 1.6s linear infinite;flex:none}
+@keyframes live-spin{to{transform:rotate(360deg)}}
+@keyframes live-breathe{0%,100%{opacity:.12}50%{opacity:.32}}
+@media (prefers-reduced-motion: reduce){.live .progress.indet i{animation:none;opacity:.22}.spin{animation-duration:3s}}
 .statrow{display:flex;flex-wrap:wrap;gap:0 8px;margin-bottom:6px}
 button.mini{font-size:11px;padding:2px 8px}
 .col.narrow-wide{flex:0 0 46%}

@@ -78,7 +78,7 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | 명령 | 한 줄 목적 | 주요 옵션 | 건드리는 파일/테이블 |
 |---|---|---|---|
 | `health [--quick] [--for-build]` | 환경·프로바이더·DB·디스크·코퍼스 점검 | 토글 플래그 | 읽기만 (db quick_check, 임베더 ping 1건) |
-| `build [run] [--full [--no-reset]] [--purge-logs] [--force]` | 코퍼스 색인 (FTS/Vector/Graph/Wiki) | 토글 플래그, `--trace` | docs, chunks, chunks_fts, embeddings, entities, relations, mentions, communities, doc_meta, kv, embed_runs, requests, `wiki/*.md`, `data/build.lock` |
+| `build [run] [--full [--no-reset]] [--purge-logs] [--force] [--yes] [--no-snapshot]` | 코퍼스 색인 (FTS/Vector/Graph/Wiki). `--full/--reset/--purge-logs` 는 **파괴적** — 확인 문구(`DELETE INDEX`) 입력 또는 `--yes`, 초기화 전 자동 스냅샷 | 토글 플래그, `--trace` | docs, chunks, chunks_fts, embeddings, entities, relations, mentions, communities, doc_meta, kv, embed_runs, requests, `wiki/*.md`, `data/build.lock`, `data/snapshots/` |
 | `build status` | 락/마지막 빌드/임베딩 진행률 | `--json` | kv(last_build, embed_progress), build.lock |
 | `build verify [--fix]` | 색인 정합성 검사 | `--fix` | 읽기 (fix 시 댕글링·고아·n_chunks·stale 위키 정리) |
 | `query "질문" [--k N] [--no-log]` | 하이브리드 검색 + 답변 | 토글, `--trace`, `--json`, `--preset`, `--debug` | query_log, requests, episodes, forensics, proposals, answer_cache(precompute 시) |
@@ -100,8 +100,11 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `prompts list|show|reset|path` | LLM 프롬프트 파일 | | prompts/*.md |
 | `logs tail|grep|files|dir` | logs/ 조회 | `-n --file --request --run --text --level --since` | logs/*.log |
 | `requests list|last|show <id>` | 요청별 프로파일 trace | `--kind --limit` | requests |
-| `config show [--effective]|paths|set k=v|reset` | 설정 | | config.json |
-| `models show|test|set` | 역할별 LLM/임베더 | | config.json(llm_roles) |
+| `config show [--effective]|paths|set k=v|reset [--yes]` | 설정 (`reset` 은 확인 문구) | | config.json |
+| `models show|test [--live]|set` | 역할별 LLM/임베더 (`--live` = 실제 완성 호출 1회) | | config.json(llm_roles) |
+| `users add|list|remove|set-role|passwd` | Web 로그인 사용자·역할 (SECURITY.md) | `--role --password --display` | security.json |
+| `security show|init|audit` | 로그인/역할/파괴적 작업 정책 · 감사 로그 | `--n` | security.json, logs/audit.jsonl |
+| `snapshot list|create|restore|prune` | 색인 스냅샷 (초기화 전 자동 생성, `restore` 는 확인 문구) | `--tag --keep --yes` | data/snapshots/, DB·wiki·rules·config(restore) |
 | `tuning show|set|reset|doc` | 단계별 튜닝 파라미터 | `--stage` | tuning.json, (doc) docs/TUNING.md |
 | `arch [--flow query|build|evolve|watch]` | 구조·흐름 도식 | `--json` | 없음 |
 | `evolve status|list|apply|reject|review|feedback` | 자가진화 제안 | `--no-eval` | proposals, evolution_log, synonyms, rules.json, wiki 노트, query_log(feedback) |
@@ -109,11 +112,11 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `docs` | 색인된 문서 목록 | `--json` | 읽기 |
 | `stats` | 인덱스 통계/프로바이더/토글 | `--json` | 읽기 |
 | `system [--target-docs --daily-new --horizon-days]` | 확장성 추정/지연 통계 | `--json` | 읽기 |
-| `maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|purge_requests` | DB 유지보수 | | DB 파일, requests |
+| `maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|purge_requests [--yes]` | DB 유지보수 (`purge_requests` 는 확인 문구) | | DB 파일, requests |
 | `mcp-source list|test|ingest|enrich|fetch` | 외부 MCP 소스 | `--since --dry-run` | mcp_sources.json, `data/mcp_cache/*`(ingest) |
 | `watch [--interval] [--once]` | 코퍼스 변경 감시 → 증분 빌드 | 토글 | build 와 동일 |
 | `mcp` | MCP stdio 서버 (블로킹) | | query 와 동일 |
-| `serve [--port 8765] [--host]` | Web UI (블로킹) | | 전부 |
+| `serve [--port 8765] [--host] [--insecure]` | Web UI (블로킹). `--host 0.0.0.0` 등 외부 공개는 security.json 의 사용자/SSO 가 있어야 기동 | | 전부 |
 
 ---
 
@@ -860,9 +863,18 @@ logs_dir       <tmp>\logs
 
 ```powershell
 python -m llmwiki models show
-python -m llmwiki models test
+python -m llmwiki models test              # 역할별 ping (토큰 소비 없음) + 임베더 1건
+python -m llmwiki models test --live       # + 역할별 provider/model 당 실제 완성 호출 1회 — PAT 권한·헤더·모델 id·headless 실행까지 확인
 python -m llmwiki models set answer_effort=low rerank_provider=ollama rerank_model=llama3.1 embed_provider=voyage
 python -m llmwiki models set answer_effort=        # 빈 값 = 역할 오버라이드 제거
+```
+`rerank_model=…` 는 **역할 rerank 의 LLM 모델** 단축키다. rerank 전용 API 의 모델명은 `config set rerank_api_model=…`(URL 은 `rerank_url`).
+사내 게이트웨이(URL+PAT)·opencode headless 의 설정 예와 확인 순서는 BRINGUP_GUIDE §4.1~4.3.
+```
+# models test --live (사람용 출력; --json 이면 JSON)
+[OK ] answer     openai/gpt-4o-mini  212ms  connected https://gateway.corp/v1  live: OK 1450ms reply='OK' model=gpt-4o-mini tokens=1
+[FAIL] extract   headless:opencode/anthropic/claude-sonnet-4-5  0ms  opencode found (C:\...\npm\opencode.cmd)  live: FAIL live call failed: headless agent exit 1: not authenticated
+(exit 1 = 하나라도 FAIL)
 ```
 ```
 embedder: hash model=hash-ngram-512 dim=512 available=True (embed_provider=hash embed_model='')

@@ -15,7 +15,7 @@ import time
 import traceback
 import uuid
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
 from ..config import apply_overrides, save_settings, Toggles, Settings, TOGGLE_HELP, SETTING_HELP, TOGGLE_GROUPS, effective_settings, all_paths, path_for
@@ -24,13 +24,17 @@ from ..architecture import registry as _arch_registry
 from ..profiler import jsonable, Profiler
 from ..evalset import load_questions
 from .. import evolve as ev
+from .. import progress as _pg
+from .. import snapshots as _snap
+from ..auth import Auth, AuthError, User, RANK
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 _LOCK = threading.RLock()
 _JOBS: Dict[str, Dict[str, Any]] = {}
 _WATCHER: Dict[str, Any] = {"thread": None, "stop": False, "log": []}
 PROVIDER_KEYS = ("llm_provider", "embed_provider", "llm_model", "embed_model", "llm_roles", "embed_dim", "ollama_url", "ollama_model",
-                 "openai_base_url", "openai_embed_model", "rerank_url", "rerank_model", "rerank_api_style", "embed_store_dtype")
+                 "openai_base_url", "openai_api_key_header", "openai_extra_headers", "openai_embed_base_url", "openai_embed_model", "anthropic_base_url",
+                 "rerank_url", "rerank_api_model", "rerank_api_style", "embed_store_dtype", "llm_timeout")
 
 
 def _touches_providers(overrides: Dict[str, Any]) -> bool:
@@ -89,8 +93,14 @@ def _watcher_loop(pipe) -> None:
     while not _WATCHER["stop"]:
         if pipe.s.toggles.auto_build:
             try:
-                with _LOCK:
-                    r = pipe.auto_build_tick(progress=lambda m: _WATCHER["log"].append("%s %s" % (time.strftime("%H:%M:%S"), m)))
+                # 다른 작업(빌드 job·질의)이 락을 잡고 있으면 이번 스캔은 건너뛴다 — 워처가 락을 선점해 Web job 을 굶기지 않도록
+                if not _LOCK.acquire(blocking=False):
+                    r = {"skipped": "busy"}
+                else:
+                    try:
+                        r = pipe.auto_build_tick(progress=lambda m: _WATCHER["log"].append("%s %s" % (time.strftime("%H:%M:%S"), m)))
+                    finally:
+                        _LOCK.release()
                 if r.get("built") or r.get("error"):
                     _WATCHER["log"].append("%s scan %sms changed=%s removed=%s built=%s %s" % (
                         time.strftime("%H:%M:%S"), r["scan_ms"], r["n_changed"], r["n_removed"], r.get("built"), r.get("error") or ""))
@@ -116,17 +126,49 @@ def _ensure_watcher(pipe) -> None:
 
 class Handler(BaseHTTPRequestHandler):
     pipe = None  # set by serve()
+    auth: Optional[Auth] = None   # set by serve(); 테스트처럼 serve() 를 거치지 않으면 첫 요청에서 생성 (security.json 기준)
+    host = "127.0.0.1"
 
     def log_message(self, fmt, *args):  # 조용히
         pass
 
+    # ---------------- auth helpers ----------------
+    def _auth(self) -> Auth:
+        if Handler.auth is None:
+            Handler.auth = Auth(self.pipe.s, Handler.host)
+        return Handler.auth
+
+    def _ip(self) -> str:
+        return self.client_address[0] if self.client_address else ""
+
+    def _user(self) -> Optional[User]:
+        return self._auth().identify(self.headers, self._ip())
+
+    def _https(self) -> bool:
+        return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+
+    def _redirect(self, url: str, cookies: Optional[List[str]] = None) -> None:
+        self.send_response(302)
+        self.send_header("Location", url)
+        for c in cookies or []:
+            self.send_header("Set-Cookie", c)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _deny(self, e: AuthError, user: Optional[User], op: str = "", level: str = "") -> None:
+        if e.status != 428:
+            self._auth().audit(user, op or self.path, level or "?", False, self._ip(), error=e.error)
+        self._json(e.body(), e.status)
+
     # ---------------- helpers ----------------
-    def _json(self, obj: Any, code: int = 200) -> None:
+    def _json(self, obj: Any, code: int = 200, cookies: Optional[List[str]] = None) -> None:
         data = json.dumps(jsonable(obj), ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        for c in cookies or []:
+            self.send_header("Set-Cookie", c)
         self.end_headers()
         self.wfile.write(data)
 
@@ -144,7 +186,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path.startswith(STATIC) or not os.path.isfile(path):
             self.send_error(404)
             return
-        ctype = {"html": "text/html", "js": "application/javascript", "css": "text/css", "svg": "image/svg+xml"}.get(path.rsplit(".", 1)[-1], "application/octet-stream")
+        ctype = {"html": "text/html", "js": "application/javascript", "css": "text/css", "svg": "image/svg+xml", "json": "application/json"}.get(path.rsplit(".", 1)[-1], "application/octet-stream")
         with open(path, "rb") as f:
             data = f.read()
         self.send_response(200)
@@ -177,17 +219,72 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         qs = {k: v[0] for k, v in parse_qs(u.query).items()}
         p = self.pipe
+        auth = self._auth()
         try:
-            if u.path in ("/", "/index.html"):
-                return self._static("index.html")
+            # ---- 공개 경로: 정적 파일, 로그인 페이지, SSO 왕복, 로그인 상태 조회 ----
             if u.path.startswith("/static/"):
                 return self._static(u.path[len("/static/"):])
+            if u.path == "/login":
+                return self._static("login.html")
+            if u.path == "/api/auth/me":
+                user = self._user()
+                return self._json(dict(auth.public_info(), user=user.to_dict() if user else None))
+            if u.path == "/auth/sso/start":
+                if not auth.oidc_enabled():
+                    return self._json({"error": "SSO(OIDC) 가 설정되지 않았습니다 (security.json sso)"}, 404)
+                url, cookie = auth.oidc_start(qs.get("next") or "/")
+                return self._redirect(url, [cookie])
+            if u.path == "/auth/sso/callback":
+                try:
+                    user, nxt = auth.oidc_callback(qs, self.headers.get("Cookie") or "")
+                except AuthError as e:
+                    auth.audit(None, "sso login", "auth", False, self._ip(), error=e.error)
+                    return self._json(e.body(), e.status)
+                auth.audit(user, "sso login", "auth", True, self._ip())
+                return self._redirect(nxt if nxt.startswith("/") else "/", [auth.make_cookie(user, self._https())])
+            user = self._user()
+            if u.path in ("/", "/index.html"):
+                if user is None:
+                    return self._redirect("/login")
+                return self._static("index.html")
+            # ---- 인가 (GET 은 read, 일부 admin 전용) ----
+            try:
+                level, op = auth.authorize(user, "GET", u.path, {}, None, "")
+            except AuthError as e:
+                return self._deny(e, user, u.path, "read")
+            if u.path == "/api/auth/users":
+                return self._json({"users": auth.list_users(), "mode": auth.mode, "sso": auth.public_info()["sso"]})
+            if u.path == "/api/audit":
+                return self._json({"rows": auth.audit_tail(int(qs.get("n", 200)))})
+            if u.path == "/api/security":
+                cfg = json.loads(json.dumps(auth.cfg))
+                for v in (cfg.get("users") or {}).values():
+                    v.pop("pw", None)
+                return self._json({"security": cfg, "path": __import__("llmwiki.auth", fromlist=["security_path"]).security_path(), "effective_mode": auth.mode})
+            if u.path == "/api/snapshot":
+                return self._json({"snapshots": _snap.list_(p)})
+            # ---- 락 없이 응답하는 폴링용 엔드포인트 ----
+            # 빌드 job 이 _LOCK 을 잡은 채 수십 분 돌 수 있으므로, 진행 상황 조회는 절대 락 뒤에 두지 않는다
+            # (예전에는 여기가 락 안에 있어서 전체 리빌드 중 화면이 'starting…' 에서 멈춘 것처럼 보였다).
+            if u.path.startswith("/api/jobs/"):
+                jid = u.path.rsplit("/", 1)[-1]
+                j = _JOBS.get(jid)
+                if not j:
+                    return self._json({"error": "no such job"}, 404)
+                out = {k: v for k, v in j.items() if k != "result" or j.get("status") != "running"}
+                out["live"] = _pg.get(jid) or {}
+                out["elapsed_s"] = round((j.get("finished") or time.time()) - j["started"], 1)
+                return self._json(out)
+            if u.path.startswith("/api/progress"):
+                tok = u.path.rsplit("/", 1)[-1] if u.path != "/api/progress" else qs.get("token", "")
+                if tok and tok != "progress":
+                    return self._json(_pg.get(tok) or {"status": "unknown", "token": tok})
+                return self._json({"running": _pg.all_running(), "jobs": [{k: v for k, v in j.items() if k in ("id", "kind", "status", "started", "finished")} for j in _JOBS.values()]})
             with _LOCK:
                 if u.path == "/api/status":
-                    return self._json(self._status())
-                if u.path.startswith("/api/jobs/"):
-                    j = _JOBS.get(u.path.rsplit("/", 1)[-1])
-                    return self._json(j or {"error": "no such job"}, 200 if j else 404)
+                    st = self._status()
+                    st["auth"] = dict(auth.public_info(), user=user.to_dict() if user else None)
+                    return self._json(st)
                 if u.path == "/api/graph":
                     lim = int(qs.get("limit", 150))
                     comm = qs.get("community")
@@ -379,40 +476,133 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         u = urlparse(self.path)
         body = self._body()
+        auth = self._auth()
+        host = self.headers.get("Host") or ""
+        # ---- 인증 자체 (로그인/로그아웃/비밀번호) ----
+        if u.path == "/api/auth/login":
+            name, pw = str(body.get("username") or "").strip(), str(body.get("password") or "")
+            user = auth.login_local(name, pw)
+            if not user:
+                auth.audit(User(name or "?", "viewer", "local"), "login", "auth", False, self._ip(), error="bad credentials")
+                time.sleep(0.5)   # 무차별 대입 완화
+                return self._json({"error": "아이디 또는 비밀번호가 올바르지 않습니다"}, 401)
+            auth.audit(user, "login", "auth", True, self._ip())
+            return self._json({"ok": True, "user": user.to_dict()}, cookies=[auth.make_cookie(user, self._https())])
+        if u.path == "/api/auth/logout":
+            user = self._user()
+            if user:
+                auth.audit(user, "logout", "auth", True, self._ip())
+            return self._json({"ok": True}, cookies=[auth.clear_cookie()])
+        user = self._user()
+        if u.path == "/api/auth/password":
+            if not user or user.via != "local":
+                return self._json({"error": "로컬 계정으로 로그인한 경우에만 비밀번호를 바꿀 수 있습니다"}, 403)
+            if not auth.check_password(user.name, str(body.get("old") or "")):
+                return self._json({"error": "현재 비밀번호가 올바르지 않습니다"}, 403)
+            try:
+                auth.set_password(user.name, str(body.get("new") or ""))
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            auth.audit(user, "password change", "auth", True, self._ip())
+            return self._json({"ok": True})
+        # ---- 인가: 작업 등급 → 역할·확인·문구·재인증 ----
+        try:
+            level, op = auth.authorize(user, "POST", u.path, body, self.headers, host)
+        except AuthError as e:
+            lv, op0 = ("?", u.path)
+            try:
+                from ..auth import classify_api
+                lv, op0 = classify_api("POST", u.path, body)
+            except Exception:
+                pass
+            return self._deny(e, user, op0, lv)
+        if u.path == "/api/auth/users":
+            return self._users_admin(body, user)
+        if u.path == "/api/security":
+            if body.get("action") == "reload":
+                auth.reload()
+                return self._json({"ok": True, "mode": auth.mode})
+            return self._json({"error": "unknown action"}, 400)
+        if u.path == "/api/snapshot":
+            act = body.get("action") or "create"
+            p = self.pipe
+            with _LOCK:
+                if act == "create":
+                    r = _snap.create(p, str(body.get("tag") or "manual"), actor=user.name if user else "", reason=str(body.get("reason") or ""))
+                elif act == "restore":
+                    r = _snap.restore(p, str(body.get("name") or ""))
+                elif act == "prune":
+                    r = {"removed": _snap.prune(p, int(body.get("keep") or 3))}
+                else:
+                    return self._json({"error": "unknown action"}, 400)
+            auth.audit(user, "snapshot " + act, level, True, self._ip(), detail={"name": body.get("name"), "tag": body.get("tag")})
+            return self._json(r)
+        if u.path == "/api/cli" and level == "destructive":
+            argv = body.get("argv") or []
+            if isinstance(argv, str):
+                import shlex
+                argv = shlex.split(argv, posix=True)
+            body["argv"] = list(argv) + (["--yes"] if "--yes" not in argv else [])   # 서버 게이트가 이미 확인했으므로 CLI 프롬프트 생략
+        body["_actor"] = user.name if user else ""
+        self._dispatch_post(u, body)
+        if level != "read":
+            auth.audit(user, op, level, True, self._ip(), detail={k: v for k, v in body.items() if k not in ("_password", "_actor", "content", "rules", "agents", "sources", "presets")})
+
+    def _users_admin(self, body: Dict[str, Any], user: Optional[User]) -> None:
+        auth = self._auth()
+        act = body.get("action") or "list"
+        try:
+            if act == "add":
+                auth.add_user(str(body.get("name") or ""), body.get("password"), str(body.get("role") or "viewer"), str(body.get("display") or ""))
+            elif act == "remove":
+                if user and body.get("name") == user.name:
+                    return self._json({"error": "자기 자신은 삭제할 수 없습니다"}, 400)
+                if not auth.remove_user(str(body.get("name") or "")):
+                    return self._json({"error": "no such user"}, 404)
+            elif act == "set_role":
+                if user and body.get("name") == user.name and body.get("role") != "admin":
+                    return self._json({"error": "자기 자신의 admin 권한은 내릴 수 없습니다 (다른 admin 이 변경)"}, 400)
+                auth.set_role(str(body.get("name") or ""), str(body.get("role") or "viewer"))
+            elif act == "set_password":
+                auth.set_password(str(body.get("name") or ""), str(body.get("password") or ""))
+            elif act != "list":
+                return self._json({"error": "unknown action"}, 400)
+        except ValueError as e:
+            return self._json({"error": str(e)}, 400)
+        auth.audit(user, "users " + act, "admin", True, self._ip(), detail={"name": body.get("name"), "role": body.get("role")})
+        return self._json({"ok": True, "users": auth.list_users()})
+
+    def _dispatch_post(self, u, body: Dict[str, Any]) -> None:
         p = self.pipe
         ov = body.get("overrides") or {}
+        actor = str(body.get("_actor") or "")
         try:
             if u.path == "/api/build":
-                return self._json(self._start_job("build", lambda progress: self._do_build(body, progress)))
+                return self._json(self._start_job("build", lambda progress: self._do_build(body, progress, actor),
+                                                  label="build --full" if (body.get("full") or body.get("reset")) else "build (incremental)"))
             if u.path == "/api/eval":
                 return self._json(self._start_job("eval", lambda progress: self._do_eval(body, progress)))
+            if u.path == "/api/query":
+                q = (body.get("q") or "").strip()
+                if not q:
+                    return self._json({"error": "empty query"}, 400)
+                # 클라이언트가 준 progress_token 으로 bind → 응답을 기다리는 동안 GET /api/progress/<token> 으로 단계를 볼 수 있다
+                tok = str(body.get("progress_token") or "")[:64]
+                _pg.bind(tok, "query", q[:120])
+                status = "error"
+                try:
+                    if not _LOCK.acquire(blocking=False):
+                        _pg.note("다른 작업(빌드/평가/질의)이 끝나기를 기다리는 중…")
+                        _LOCK.acquire()
+                    try:
+                        out = self._do_query(body, q, ov)
+                    finally:
+                        _LOCK.release()
+                    status = "done"
+                    return self._json(out)
+                finally:
+                    _pg.unbind(status)
             with _LOCK:
-                if u.path == "/api/query":
-                    q = (body.get("q") or "").strip()
-                    if not q:
-                        return self._json({"error": "empty query"}, 400)
-                    preset = body.get("preset") or ""
-                    mode = body.get("mode") or ""
-                    names = [x for x in str(preset).replace(";", ",").split(",") if x.strip()]
-                    if mode == "deep":
-                        names.append("deep_research")
-                    elif mode == "fast":
-                        names.append("speed")
-                    with _with_overrides(p, ov):
-                        prev = None
-                        if names:
-                            from .. import presets as _presets
-                            prev = _presets.apply(p.s, names, save=False)["prev"]
-                            p.reload_tuning(from_file=False)   # 프리셋 튜닝값은 메모리에만 있음
-                        try:
-                            res, tr = p.query(q, log=bool(body.get("log", True)), debug=body.get("debug"))
-                        finally:
-                            if prev is not None:
-                                from .. import presets as _presets
-                                _presets.restore(p.s, prev)
-                                p.reload_tuning(from_file=False)
-                    res["cli"] = _cli_equiv("query", q, ov, Toggles()) + (" --preset %s" % ",".join(names) if names else "")
-                    return self._json({"result": res, "trace": tr})
                 if u.path == "/api/search":
                     from ..retrieval import fts_search, vector_search, graph_search
                     q, ch, k = body.get("q", ""), body.get("channel", "fts"), int(body.get("k", 8))
@@ -435,7 +625,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"settings": p.s.to_dict(), "providers": p.provider_status()})
                 if u.path == "/api/models/test":
                     with _with_overrides(p, ov):
-                        return self._json(p.test_providers(body.get("which")))
+                        return self._json(p.test_providers(body.get("which"), live=bool(body.get("live"))))
                 if u.path == "/api/maintenance":
                     return self._json(p.maintenance(body.get("action", "")))
                 if u.path == "/api/tuning":
@@ -639,35 +829,85 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json({"error": str(e), "trace": traceback.format_exc()}, 500)
 
+    def _do_query(self, body: Dict[str, Any], q: str, ov: Dict[str, Any]) -> Dict[str, Any]:
+        p = self.pipe
+        preset = body.get("preset") or ""
+        mode = body.get("mode") or ""
+        names = [x for x in str(preset).replace(";", ",").split(",") if x.strip()]
+        if mode == "deep":
+            names.append("deep_research")
+        elif mode == "fast":
+            names.append("speed")
+        with _with_overrides(p, ov):
+            prev = None
+            if names:
+                from .. import presets as _presets
+                prev = _presets.apply(p.s, names, save=False)["prev"]
+                p.reload_tuning(from_file=False)   # 프리셋 튜닝값은 메모리에만 있음
+            try:
+                res, tr = p.query(q, log=bool(body.get("log", True)), debug=body.get("debug"))
+            finally:
+                if prev is not None:
+                    from .. import presets as _presets
+                    _presets.restore(p.s, prev)
+                    p.reload_tuning(from_file=False)
+        res["cli"] = _cli_equiv("query", q, ov, Toggles()) + (" --preset %s" % ",".join(names) if names else "")
+        return {"result": res, "trace": tr}
+
     # ---------------- jobs ----------------
-    def _start_job(self, kind: str, fn) -> Dict[str, Any]:
+    def _start_job(self, kind: str, fn, label: str = "") -> Dict[str, Any]:
         jid = uuid.uuid4().hex[:8]
         job = {"id": jid, "kind": kind, "status": "running", "started": time.time(), "log": [], "result": None, "error": None}
         _JOBS[jid] = job
+        # 끝난 job 은 최근 50개만 유지 (메모리)
+        for k in [k for k, v in _JOBS.items() if v.get("status") != "running"][:-50]:
+            _JOBS.pop(k, None)
 
         def progress(msg: str) -> None:
             job["log"].append("%s %s" % (time.strftime("%H:%M:%S"), msg))
 
         def runner() -> None:
+            # job id 가 곧 progress token: /api/jobs/<id> 가 progress.get(id) 를 합쳐 준다
+            _pg.bind(jid, kind, label or kind)
+            status = "error"
             try:
-                with _LOCK:
+                if not _LOCK.acquire(blocking=False):
+                    progress("다른 작업(빌드/평가/질의/워처)이 끝나기를 기다리는 중…")
+                    _pg.note("다른 작업이 끝나기를 기다리는 중…")
+                    _LOCK.acquire()
+                try:
                     job["result"] = fn(progress)
-                job["status"] = "done"
+                finally:
+                    _LOCK.release()
+                job["status"] = status = "done"
             except Exception as e:
                 job["status"] = "error"
                 job["error"] = "%s\n%s" % (e, traceback.format_exc())
-            job["finished"] = time.time()
+                progress("✖ 실패: %s" % str(e)[:300])
+            finally:
+                job["finished"] = time.time()
+                _pg.unbind(status, "" if status == "done" else (job.get("error") or "")[:200])
         threading.Thread(target=runner, daemon=True).start()
         return {"job": jid}
 
-    def _do_build(self, body: Dict[str, Any], progress) -> Dict[str, Any]:
+    def _do_build(self, body: Dict[str, Any], progress, actor: str = "") -> Dict[str, Any]:
         p = self.pipe
         ov = body.get("overrides") or {}
         with _with_overrides(p, ov):
             do_reset = body.get("reset") if body.get("reset") is not None else bool(body.get("full"))
             if do_reset:
-                r = p.reset_index(keep_logs=not body.get("purge_logs"))
-                progress("reset: cleared %d tables, kept_logs=%s, removed_wiki_pages=%d" % (len(r["cleared_tables"]), r["kept_logs"], r["removed_wiki_pages"]))
+                if p.s.toggles.health_check and not body.get("force"):
+                    # CLI 와 동일: 색인을 지우기 전에 health — 코퍼스 경로가 없으면 기존 색인을 지우지 않는다
+                    from ..health import run_health
+                    hr = run_health(p, quick=True, for_build=True)
+                    if not hr["ok"]:
+                        raise RuntimeError("health check failed before reset (기존 색인 유지): %s" % ", ".join(
+                            c["name"] for c in hr["checks"] if not c["ok"] and c["level"] == "fail"))
+                d = (self._auth().cfg.get("destructive") or {})
+                r = p.reset_index(keep_logs=not body.get("purge_logs"), snapshot=bool(d.get("snapshot_before", True)), actor=actor,
+                                  snapshot_keep=int(d.get("snapshot_keep", 3) or 3))
+                progress("reset: cleared %d tables, kept_logs=%s, removed_wiki_pages=%d%s" % (
+                    len(r["cleared_tables"]), r["kept_logs"], r["removed_wiki_pages"], (" · 스냅샷 %s (snapshot restore 로 복원 가능)" % r["snapshot"]) if r.get("snapshot") else ""))
             res, tr = p.build(full=bool(body.get("full") or body.get("reset")), progress=progress, debug=body.get("debug"))
         flag = (" --full" if do_reset else " --full --no-reset") if (body.get("full") or do_reset) else ""
         return {"result": res, "trace": tr, "cli": _cli_equiv("build", "", ov, Toggles()) + flag}
@@ -690,11 +930,26 @@ class Handler(BaseHTTPRequestHandler):
             return {"result": r, "trace": tr, "cli": _cli_equiv("eval", "", ov, Toggles()).replace(" --trace", "") + " --k %d" % k}
 
 
-def serve(pipe, host: str = "127.0.0.1", port: int = 8765) -> None:
+def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = False) -> None:
     Handler.pipe = pipe
+    Handler.host = host
+    Handler.auth = Auth(pipe.s, host)
+    auth = Handler.auth
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    if auth.mode == "on" and not auth.has_any_login():
+        print("!! security.json 에 사용자(users)도 SSO 도 없어 아무도 로그인할 수 없습니다. 먼저: python -m llmwiki users add <id> --role admin")
+        if not insecure:
+            raise SystemExit(2)
+    if auth.mode == "off" and not loopback:
+        if not insecure:
+            print("!! %s 에 바인드하면 네트워크의 누구나 접근합니다. security.json 의 users/sso 를 설정하고(mode auto → on) 실행하거나, 정말로 인증 없이 열려면 --insecure." % host)
+            raise SystemExit(2)
+        print("!! --insecure: 인증 없이 %s 에 공개합니다 (파괴적 작업은 확인 문구만 요구)" % host)
     _ensure_watcher(pipe)
     httpd = ThreadingHTTPServer((host, port), Handler)
-    print("LLM Wiki UI: http://%s:%d/  (Ctrl+C to stop)%s" % (host, port, "  [auto_build on: every %ss]" % pipe.s.auto_build_interval if pipe.s.toggles.auto_build else ""))
+    print("LLM Wiki UI: http://%s:%d/  (Ctrl+C to stop)%s  [auth: %s%s]" % (
+        host, port, "  [auto_build on: every %ss]" % pipe.s.auto_build_interval if pipe.s.toggles.auto_build else "",
+        auth.mode, (", users=%d, sso=%s" % (len(auth.cfg.get("users") or {}), "on" if auth.public_info()["sso"] else "off")) if auth.mode == "on" else ""))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
