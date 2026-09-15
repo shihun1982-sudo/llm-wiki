@@ -20,7 +20,8 @@
       "claim_check_llm": true,
       "answer_refine": true,
       "pins": true,
-      "forensic_auto": true
+      "forensic_auto": true,
+      "doc_expand": true
     },
     "tuning": {
       "fts_mode": "tiered",
@@ -29,7 +30,9 @@
       "query_expand_n": 3,
       "fallback_max_attempts": 3,
       "answer_length_target": "long",
-      "rerank_method": "auto"
+      "rerank_method": "auto",
+      "doc_expand_max_chunks": 5,
+      "doc_expand_min_score": 0.15
     },
     "settings": {
       "top_k_fts": 20,
@@ -57,7 +60,8 @@
       "query_cache": true,
       "precompute": true,
       "context_trim": true,
-      "dedupe_hits": true
+      "dedupe_hits": true,
+      "doc_expand": false
     },
     "tuning": {
       "fts_mode": "or",
@@ -91,7 +95,8 @@
       "evidence_compress": false,
       "context_trim": true,
       "dedupe_hits": true,
-      "query_cache": true
+      "query_cache": true,
+      "doc_expand": false
     },
     "tuning": {
       "rerank_method": "local",
@@ -141,7 +146,8 @@
       "claim_check_llm": true,
       "answer_refine": true,
       "rerank_llm": true,
-      "forensic_auto": true
+      "forensic_auto": true,
+      "doc_expand": true
     },
     "tuning": {
       "query_expand_n": 4,
@@ -149,7 +155,10 @@
       "fallback_token_budget": 60000,
       "fallback_latency_ms": 120000,
       "context_neighbors": 1,
-      "answer_length_target": "long"
+      "answer_length_target": "long",
+      "doc_expand_top_docs": 5,
+      "doc_expand_max_chunks": 6,
+      "doc_expand_min_score": 0.1
     },
     "settings": {
       "top_k_fts": 30,

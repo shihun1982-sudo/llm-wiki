@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""외부 MCP 소스 클라이언트 (예: Mango MCP — issue / CL / build binary raw data).
+"""외부 소스(다른 RAG · MCP 서버 · REST 검색 API) 클라이언트 — mcp_sources.json 한 파일로 붙인다 (docs/RAG_FEDERATION.md).
+
+전송(transport) 3종:
+  stdio : 같은 PC 에서 자식 프로세스로 띄우는 MCP 서버 (command/cwd/env)
+  http  : 원격 MCP Streamable HTTP 서버 (url + token/headers) — 예: 다른 팀의 llmwiki `POST /mcp`, 사내 RAG 의 MCP 엔드포인트
+  rest  : MCP 가 아닌 일반 HTTP JSON 검색 API (base_url + headers; tool 이름 = 엔드포인트 경로, 예 "/search")
+용도(소스마다 여러 개 조합):
+  ingest   : 빌드 때 raw data → data/mcp_cache/<source>/<doc_type>/<id>.md (front matter) → 일반 문서처럼 색인
+  retrieve : 질의 때 외부 검색 결과를 **검색 채널**(ext_<source>) 로 융합(rrf) — 토글 external_rag, 가중치 channel_w_external × weight, when=always|fallback
+  enrich   : (구) fallback mcp 단계에서 컨텍스트 꼬리에 텍스트로만 첨부
+  expose   : 외부 서버의 tool 을 우리 MCP 에 `<source>__<tool>` 로 그대로 노출(페더레이션) — 토글 mcp_federation
 
 mcp_sources.json 으로 서버 실행 방법과 tool 매핑을 선언한다. 실제 tool 이름/스키마는 매핑 파일만 고치면 된다.
   {"mango": {
@@ -23,9 +33,22 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 from .config import ROOT, path_for
+
+EXT_PREFIX = "ext:"      # 외부 검색 결과의 가상 청크/문서 id 접두: ext:<source>:<id>
+
+
+def ext_chunk_id(source: str, rid: str) -> str:
+    return "%s%s:%s" % (EXT_PREFIX, source, rid)
+
+
+def is_ext_id(cid: str) -> bool:
+    return str(cid or "").startswith(EXT_PREFIX)
 
 DEFAULT_SOURCES: Dict[str, Any] = {
     "_comment": "외부 MCP 소스. enabled=false 이거나 toggles.mcp_sources=false 면 사용하지 않음. 값 치환: {since} {query} {project_root} ${ENV}.",
@@ -62,6 +85,9 @@ DEFAULT_SOURCES: Dict[str, Any] = {
         ],
         "enrich": [{"tool": "search", "args": {"q": "{query}", "limit": 3}, "result_path": "items", "id_field": "id",
                     "title_field": "title", "text_field": "snippet", "doc_type": "issue"}],
+        "retrieve": [{"tool": "search", "args": {"q": "{query}", "limit": "{k}"}, "result_path": "items", "id_field": "id", "title_field": "title",
+                      "text_field": "snippet", "score_field": "score", "url_field": "url", "doc_type": "issue", "weight": 1.0, "when": "always"}],
+        "expose": ["search"],
     },
 }
 
@@ -92,10 +118,21 @@ def cache_dir(name: str) -> str:
     return os.path.join(ROOT, "data", "mcp_cache", name)
 
 
-def enabled_sources(settings=None) -> Dict[str, Dict[str, Any]]:
-    if settings is not None and not settings.toggles.mcp_sources:
+def enabled_sources(settings=None, ignore_toggle: bool = False) -> Dict[str, Dict[str, Any]]:
+    """enabled=true 인 소스. settings 가 있으면 toggles.mcp_sources 가 꺼진 경우 빈 dict (ignore_toggle=True 면 토글 무시 — external_rag/federation 은 자기 토글로 제어)."""
+    if settings is not None and not ignore_toggle and not settings.toggles.mcp_sources:
         return {}
     return {k: v for k, v in load_sources().items() if v.get("enabled")}
+
+
+def source_summary(name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """문서/UI/MCP wiki_sources 용 한 줄 요약."""
+    rt = cfg.get("retrieve") or []
+    return {"name": name, "enabled": bool(cfg.get("enabled")), "transport": cfg.get("transport") or "stdio", "desc": cfg.get("desc", ""),
+            "target": cfg.get("url") or cfg.get("base_url") or " ".join(str(x) for x in (cfg.get("command") or [])),
+            "ingest": len(cfg.get("ingest") or []), "enrich": len(cfg.get("enrich") or []),
+            "retrieve": [{"tool": r.get("tool"), "when": r.get("when", "always"), "weight": r.get("weight", 1.0)} for r in rt],
+            "expose": cfg.get("expose") or False}
 
 
 def _subst(v: Any, ctx: Dict[str, str]) -> Any:
@@ -137,12 +174,13 @@ class MCPClient:
         self.tools: List[Dict[str, Any]] = []
 
     def start(self) -> "MCPClient":
-        ctx = {"project_root": ROOT}
+        ctx = {"project_root": ROOT, "python": sys.executable}
         cmd = [_subst(a, ctx) for a in self.cfg.get("command") or []]
         if not cmd:
             raise RuntimeError("source %s: command 없음" % self.name)
         env = dict(os.environ)
         env.update({k: str(_subst(v, ctx)) for k, v in (self.cfg.get("env") or {}).items()})
+        env["LLMWIKI_FEDERATION_DEPTH"] = str(int(os.environ.get("LLMWIKI_FEDERATION_DEPTH") or 0) + 1)   # 자식이 llmwiki 면 재페더레이션 금지
         cwd = _subst(self.cfg.get("cwd") or "", ctx) or None
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                      encoding="utf-8", errors="replace", cwd=cwd if cwd and os.path.isdir(cwd) else None, env=env, bufsize=1)
@@ -220,6 +258,166 @@ class MCPClient:
         self.close()
 
 
+def _headers_of(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """cfg.headers (${ENV} 치환) + token/token_env → Authorization: Bearer."""
+    ctx = {"project_root": ROOT}
+    h = {str(k): str(_subst(v, ctx)) for k, v in (cfg.get("headers") or {}).items()}
+    tok = _subst(cfg.get("token") or "", ctx) or (os.environ.get(cfg.get("token_env") or "", "") if cfg.get("token_env") else "")
+    if tok and not any(k.lower() == "authorization" for k in h):
+        h["Authorization"] = "Bearer " + tok
+    return h
+
+
+class HttpMCPClient:
+    """원격 MCP Streamable HTTP(JSON 응답 모드) 클라이언트 — 우리 서버의 POST /mcp 와 대칭. cfg: url, token|token_env|headers, timeout_s."""
+
+    def __init__(self, name: str, cfg: Dict[str, Any]):
+        self.name, self.cfg = name, cfg
+        self.url = str(_subst(cfg.get("url") or "", {"project_root": ROOT}))
+        self.session: Optional[str] = None
+        self._id = 0
+        self._lock = threading.Lock()
+        self.tools: List[Dict[str, Any]] = []
+
+    def start(self) -> "HttpMCPClient":
+        if not self.url:
+            raise RuntimeError("source %s: url 없음" % self.name)
+        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "llmwiki", "version": "0.4"}})
+        self.notify("notifications/initialized", {})
+        self.tools = (self.request("tools/list", {}).get("result") or {}).get("tools") or []
+        return self
+
+    def _post(self, msg: Dict[str, Any]) -> Any:
+        from .mcp import http_post_mcp, FED_HEADER
+        h = _headers_of(self.cfg)
+        h[FED_HEADER] = str(int(os.environ.get("LLMWIKI_FEDERATION_DEPTH") or 0) + 1)   # 원격이 llmwiki 면 재페더레이션 금지
+        status, hdrs, body = http_post_mcp(self.url, msg, "", self.session, int(self.cfg.get("timeout_s") or 60), headers=h)
+        if hdrs.get("Mcp-Session-Id"):
+            self.session = hdrs["Mcp-Session-Id"]
+        if status == 202 or not body:
+            return None
+        if status >= 400:
+            raise RuntimeError("source %s: HTTP %s %s" % (self.name, status, body.decode("utf-8", "ignore")[:200]))
+        return json.loads(body.decode("utf-8"))
+
+    def notify(self, method: str, params: Dict[str, Any]) -> None:
+        with self._lock:
+            self._post({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            self._id += 1
+            msg = self._post({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params}) or {}
+        if "error" in msg:
+            raise RuntimeError("source %s: %s" % (self.name, msg["error"]))
+        return msg
+
+    call_tool = MCPClient.call_tool
+
+    def close(self) -> None:
+        self.session = None
+
+    def __enter__(self) -> "HttpMCPClient":
+        return self.start()
+
+    def __exit__(self, *a: Any) -> None:
+        self.close()
+
+
+class RestClient:
+    """MCP 가 아닌 일반 HTTP JSON API. tool 이름 = 엔드포인트 경로("/search"), args = JSON 본문(POST) 또는 쿼리스트링(GET).
+    cfg: base_url, headers|token|token_env, method(기본 POST), timeout_s, tools(선택: expose 용 tool 스키마 선언)."""
+
+    def __init__(self, name: str, cfg: Dict[str, Any]):
+        self.name, self.cfg = name, cfg
+        self.base = str(_subst(cfg.get("base_url") or cfg.get("url") or "", {"project_root": ROOT})).rstrip("/")
+        self.tools: List[Dict[str, Any]] = list(cfg.get("tools") or [])
+
+    def start(self) -> "RestClient":
+        if not self.base:
+            raise RuntimeError("source %s: base_url 없음" % self.name)
+        if self.cfg.get("ping"):
+            self.call_tool(str(self.cfg["ping"]), {}, method="GET")
+        return self
+
+    def call_tool(self, name: str, args: Dict[str, Any], method: Optional[str] = None) -> Any:
+        m = (method or self.cfg.get("method") or "POST").upper()
+        url = self.base + ("/" + name.lstrip("/") if name else "")
+        h = {"Accept": "application/json"}
+        h.update(_headers_of(self.cfg))
+        data = None
+        if m == "GET":
+            if args:
+                url += ("&" if "?" in url else "?") + urllib.parse.urlencode({k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in args.items()})
+        else:
+            h["Content-Type"] = "application/json"
+            data = json.dumps(args, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=h, method=m)
+        try:
+            with urllib.request.urlopen(req, timeout=float(self.cfg.get("timeout_s") or 30)) as r:
+                body = r.read()
+        except urllib.error.HTTPError as e:
+            raise RuntimeError("source %s: HTTP %s %s" % (self.name, e.code, e.read().decode("utf-8", "ignore")[:200]))
+        except Exception as e:
+            raise RuntimeError("source %s: %s" % (self.name, str(e)[:200]))
+        try:
+            return json.loads(body.decode("utf-8"))
+        except Exception:
+            return {"text": body.decode("utf-8", "ignore")}
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> "RestClient":
+        return self.start()
+
+    def __exit__(self, *a: Any) -> None:
+        self.close()
+
+
+def open_source(name: str, cfg: Dict[str, Any]):
+    """transport 에 맞는 클라이언트 (start 전). with open_source(...) as c: c.call_tool(...)"""
+    tr = str(cfg.get("transport") or "stdio").lower()
+    if tr == "http":
+        return HttpMCPClient(name, cfg)
+    if tr == "rest":
+        return RestClient(name, cfg)
+    return MCPClient(name, cfg)
+
+
+# 질의 경로용 클라이언트 풀: stdio 는 매 질의마다 프로세스를 띄우면 수백 ms 가 들므로 살려 둔다 (오류 나면 버리고 다시 연다)
+_POOL: Dict[str, Any] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def get_client(name: str, cfg: Dict[str, Any]):
+    with _POOL_LOCK:
+        c = _POOL.get(name)
+        if c is not None:
+            proc = getattr(c, "proc", None)
+            if proc is None or proc.poll() is None:
+                return c
+            _POOL.pop(name, None)
+        c = open_source(name, cfg).start()
+        _POOL[name] = c
+        return c
+
+
+def drop_client(name: str) -> None:
+    with _POOL_LOCK:
+        c = _POOL.pop(name, None)
+    if c is not None:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
+def close_all() -> None:
+    for n in list(_POOL):
+        drop_client(n)
+
+
 def test_sources(settings=None, names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     out = []
     srcs = load_sources()
@@ -230,10 +428,93 @@ def test_sources(settings=None, names: Optional[List[str]] = None) -> List[Dict[
             continue
         t0 = time.perf_counter()
         try:
-            with MCPClient(name, cfg) as c:
-                out.append({"name": name, "ok": True, "tools": [t.get("name") for t in c.tools], "ms": round((time.perf_counter() - t0) * 1000)})
+            with open_source(name, cfg) as c:
+                out.append({"name": name, "ok": True, "transport": cfg.get("transport") or "stdio", "tools": [t.get("name") for t in c.tools],
+                            "ms": round((time.perf_counter() - t0) * 1000)})
         except Exception as e:
-            out.append({"name": name, "ok": False, "error": str(e)[:300], "ms": round((time.perf_counter() - t0) * 1000)})
+            out.append({"name": name, "ok": False, "transport": cfg.get("transport") or "stdio", "error": str(e)[:300], "ms": round((time.perf_counter() - t0) * 1000)})
+    return out
+
+
+def remote_tools(name: str, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """소스가 제공하는 tool 스키마 (MCP: tools/list, REST: cfg.tools 선언)."""
+    with open_source(name, cfg) as c:
+        return list(c.tools)
+
+
+def call_source_tool(name: str, cfg: Dict[str, Any], tool: str, args: Dict[str, Any]) -> Any:
+    """소스의 tool 을 한 번 호출 (풀 사용; 실패 시 풀에서 제거 후 예외)."""
+    c = get_client(name, cfg)
+    try:
+        return c.call_tool(tool, args)
+    except Exception:
+        drop_client(name)
+        raise
+
+
+def _first(rec: Dict[str, Any], *paths: str) -> Any:
+    for p_ in paths:
+        if p_:
+            v = _dig(rec, p_)
+            if v not in (None, "", []):
+                return v
+    return None
+
+
+def retrieve(settings, query: str, k: int = 5, names: Optional[List[str]] = None, include_fallback: bool = False) -> List[Dict[str, Any]]:
+    """외부 소스의 retrieve 매핑을 호출해 검색 채널용 결과를 돌려준다.
+    반환 항목: {source, id, chunk_id(ext:<source>:<id>), title, text, score(없으면 1/(1+rank)), url, doc_type, weight, rank}
+    오류는 {source, error} 항목으로 (채널 하나가 죽어도 질의는 계속). when=fallback 매핑은 include_fallback 일 때만."""
+    out: List[Dict[str, Any]] = []
+    for name, cfg in enabled_sources(settings, ignore_toggle=True).items():
+        if names and name not in names:
+            continue
+        specs = [sp for sp in (cfg.get("retrieve") or []) if (sp.get("when", "always") == "always" or include_fallback)]
+        if not specs:
+            continue
+        ctx = {"query": query, "k": str(int(k)), "project_root": ROOT, "since": ""}
+        for spec in specs:
+            t0 = time.perf_counter()
+            try:
+                c = get_client(name, cfg)
+                args = _subst(spec.get("args") or {}, ctx)
+                # "{k}" 치환이 문자열이 되므로 정수 인자로 되돌린다
+                for ak, av in list(args.items()):
+                    if isinstance(av, str) and av.isdigit():
+                        args[ak] = int(av)
+                res = c.call_tool(spec["tool"], args, **({"method": spec["method"]} if spec.get("method") and isinstance(c, RestClient) else {}))
+            except Exception as e:
+                drop_client(name)
+                out.append({"source": name, "error": str(e)[:200], "tool": spec.get("tool")})
+                continue
+            items = _dig(res, spec.get("result_path", "")) if spec.get("result_path") else res
+            if isinstance(items, dict):
+                items = [items]
+            if not isinstance(items, list):
+                items = []
+            n = 0
+            for rank, rec in enumerate(items):
+                if not isinstance(rec, dict):
+                    continue
+                rid = str(_first(rec, spec.get("id_field", "id"), "id", "doc_id", "chunk_id") or "").strip() or "%s-%d" % (spec.get("tool", "r"), rank + 1)
+                text = _first(rec, spec.get("text_field", "text"), "text", "snippet", "content", "chunk", "page_content")
+                if isinstance(text, (dict, list)):
+                    text = json.dumps(text, ensure_ascii=False)
+                title = str(_first(rec, spec.get("title_field", "title"), "title", "heading", "name") or rid)
+                sc = _first(rec, spec.get("score_field", "score"), "score", "similarity", "relevance")
+                try:
+                    sc = float(sc) if sc is not None else None
+                except Exception:
+                    sc = None
+                if sc is None or sc <= 0:
+                    sc = 1.0 / (1.0 + rank)
+                out.append({"source": name, "id": rid, "chunk_id": ext_chunk_id(name, rid), "title": title[:200], "text": str(text or "")[:int(spec.get("max_chars") or 2000)],
+                            "score": sc, "rank": rank + 1, "url": _first(rec, spec.get("url_field", "url"), "url", "link", "href"),
+                            "doc_type": spec.get("doc_type") or cfg.get("doc_type") or "external", "weight": float(spec.get("weight", cfg.get("weight", 1.0)) or 1.0),
+                            "ms": round((time.perf_counter() - t0) * 1000)})
+                n += 1
+                if n >= int(k):
+                    break
     return out
 
 
@@ -282,7 +563,7 @@ def ingest(settings, names: Optional[List[str]] = None, since: Optional[str] = N
         ctx = {"since": since or state.get("last_ingest") or "1970-01-01T00:00:00", "project_root": ROOT, "query": ""}
         per: Dict[str, Any] = {"tools": {}, "written": 0, "skipped": 0}
         try:
-            with MCPClient(name, cfg) as c:
+            with open_source(name, cfg) as c:
                 for spec in cfg.get("ingest") or []:
                     tool = spec["tool"]
                     try:
@@ -339,7 +620,7 @@ def enrich(settings, query: str, names: Optional[List[str]] = None, limit: int =
         if names and name not in names:
             continue
         try:
-            with MCPClient(name, cfg) as c:
+            with open_source(name, cfg) as c:
                 for spec in cfg.get("enrich") or []:
                     res = c.call_tool(spec["tool"], _subst(spec.get("args") or {}, {"query": query, "project_root": ROOT, "since": ""}))
                     items = _dig(res, spec.get("result_path", "")) if spec.get("result_path") else res
@@ -394,7 +675,9 @@ def _mock_server() -> int:
                 data = {"items": cls}
             elif name == "search":
                 q = str(args.get("q", "")).lower()
-                data = {"items": [{"id": i["id"], "title": i["title"], "snippet": i["description"]} for i in issues if any(w in (i["title"] + i["description"]).lower() for w in q.split())]}
+                hits = [i for i in issues if any(w in (i["title"] + i["description"]).lower() for w in q.split())]
+                data = {"items": [{"id": i["id"], "title": i["title"], "snippet": i["description"], "score": round(1.0 - 0.1 * n, 3),
+                                   "url": "mock://issues/%s" % i["id"]} for n, i in enumerate(hits)][: int(args.get("limit") or 10)]}
             else:
                 resp = {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": "unknown tool"}], "isError": True}}
                 out.write(json.dumps(resp) + "\n")
@@ -410,7 +693,46 @@ def _mock_server() -> int:
     return 0
 
 
+def _mock_rest_server(port: int) -> int:
+    """테스트/문서용 REST 검색 API 목업: POST /search {"query","k"} → {"results":[{id,title,content,score,url}]}, GET /health."""
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    docs = [{"id": "KB-1", "title": "RX AGC 수렴 가이드", "content": "AGC 수렴 시간은 gain step 과 loop filter 계수로 결정된다. 3ms 이상이면 step 을 키운다."},
+            {"id": "KB-2", "title": "PA gain 테이블", "content": "PA gain 테이블 인덱스는 0 부터 시작한다. off-by-one 이면 TX 전력 제어가 오동작한다."}]
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a: Any) -> None:
+            pass
+
+        def _json(self, obj: Any, code: int = 200) -> None:
+            b = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def do_GET(self) -> None:
+            self._json({"ok": True} if self.path.startswith("/health") else {"error": "not found"}, 200 if self.path.startswith("/health") else 404)
+
+        def do_POST(self) -> None:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            if self.path.rstrip("/") == "/search":
+                q = str(body.get("query", "")).lower()
+                hits = [dict(d, score=round(0.9 - 0.1 * i, 2), url="rest://kb/%s" % d["id"]) for i, d in enumerate(docs) if any(w in (d["title"] + d["content"]).lower() for w in q.split())]
+                return self._json({"results": hits[: int(body.get("k") or 5)]})
+            self._json({"error": "not found"}, 404)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
+    print("mock REST RAG on http://127.0.0.1:%d  (POST /search, GET /health)" % httpd.server_address[1], flush=True)
+    httpd.serve_forever()
+    return 0
+
+
 if __name__ == "__main__":
     if "--mock-server" in sys.argv:
         sys.exit(_mock_server())
-    print("usage: python -m llmwiki.mcp_client --mock-server")
+    if "--mock-rest" in sys.argv:
+        i = sys.argv.index("--mock-rest")
+        sys.exit(_mock_rest_server(int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 8799))
+    print("usage: python -m llmwiki.mcp_client --mock-server | --mock-rest [port]")

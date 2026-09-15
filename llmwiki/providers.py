@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -24,17 +26,56 @@ from .profiler import count as _count
 from . import progress as _pg
 
 DEFAULT_LLM_TIMEOUT = 600   # make_llm 이 settings.llm_timeout 으로 인스턴스별 timeout 을 덮어쓴다
+DEFAULT_LLM_RETRIES = 3     # timeout/네트워크/실행 실패(transient) 재시도 횟수 (config.json llm_retries)
+DEFAULT_RETRY_BACKOFF_S = 2.0
 
 
 # =============================== LLM ===============================
 class LLMError(RuntimeError):
-    pass
+    """transient=True 면 재시도 대상(타임아웃·네트워크·프로세스 실행 실패·빈 출력). HTTP 4xx(인증·모델명 오류)처럼 다시 해도 같은 결과면 False."""
+
+    def __init__(self, msg: str = "", transient: bool = False, kind: str = ""):
+        RuntimeError.__init__(self, msg)
+        self.transient = bool(transient)
+        self.kind = kind or ("transient" if transient else "error")
+
+
+# ---- LLM 실패 사건(incident) 기록: 요청(스레드) 단위로 모아 결과의 llm_report 에 싣는다 ----
+_INCIDENTS = threading.local()
+
+
+def reset_incidents() -> None:
+    _INCIDENTS.items = []
+
+
+def record_incident(item: Dict[str, Any]) -> None:
+    items = getattr(_INCIDENTS, "items", None)
+    if items is None:
+        _INCIDENTS.items = items = []
+    items.append(item)
+
+
+def drain_incidents() -> List[Dict[str, Any]]:
+    items = list(getattr(_INCIDENTS, "items", None) or [])
+    _INCIDENTS.items = []
+    return items
+
+
+def _is_transient_exc(e: BaseException) -> bool:
+    if isinstance(e, LLMError):
+        return e.transient
+    if isinstance(e, (TimeoutError, socket.timeout, ConnectionError)):
+        return True
+    if isinstance(e, urllib.error.URLError) and not isinstance(e, urllib.error.HTTPError):
+        return True
+    return False
 
 
 class BaseLLM:
     """모든 LLM 프로바이더의 공통 래퍼.
 
     complete() 는 호출 수/토큰/지연을 self.stats 와 profiler.COUNTERS 에 누적한 뒤 _complete() 결과를 돌려준다.
+    transient 오류(타임아웃·네트워크·headless 실행 실패)는 retries 회 재시도(backoff)하고, 최종 실패는 incident 로 남긴다.
     역할(role: answer/rerank/extract/summary/review)별로 서로 다른 인스턴스를 만들 수 있다 (make_llm(settings, role)).
     """
     name = "none"
@@ -42,13 +83,15 @@ class BaseLLM:
     model: Optional[str] = None
     role: str = "default"
     timeout: int = DEFAULT_LLM_TIMEOUT
+    retries: int = DEFAULT_LLM_RETRIES
+    retry_backoff_s: float = DEFAULT_RETRY_BACKOFF_S
 
     def __init__(self) -> None:
-        self.stats: Dict[str, float] = {"calls": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0.0}
+        self.stats: Dict[str, float] = {"calls": 0, "errors": 0, "retries": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0.0}
 
     def complete(self, system: str, user: str, max_tokens: int = 2048, effort: str = "low",
                  json_mode: bool = False, files: Optional[List[str]] = None) -> Dict[str, Any]:
-        """returns {'text': str, 'usage': {...}, 'ms': float, 'model': str}
+        """returns {'text': str, 'usage': {...}, 'ms': float, 'model': str, 'attempts': int}
         files: (headless agent 전용) 프롬프트에 첨부할 파일 경로 — 다른 프로바이더는 무시."""
         if not hasattr(self, "stats"):
             BaseLLM.__init__(self)
@@ -57,18 +100,50 @@ class BaseLLM:
         self._files = list(files or [])
         t_start = time.perf_counter()
         _pg.llm_start(self.name, str(self.model or ""), self.role)
-        try:
-            r = self._complete(system, user, max_tokens, effort, json_mode)
-        except Exception as e:
-            self.stats["errors"] += 1
-            _pg.llm_end((time.perf_counter() - t_start) * 1000, str(e)[:200])
+        max_attempts = 1 + max(0, int(getattr(self, "retries", 0) or 0))
+        errors: List[str] = []
+        r: Dict[str, Any] = {}
+        for attempt in range(1, max_attempts + 1):
+            try:
+                r = self._complete(system, user, max_tokens, effort, json_mode)
+                break
+            except Exception as e:
+                msg = "%s: %s" % (type(e).__name__, str(e)[:300]) if not isinstance(e, LLMError) else str(e)[:300]
+                errors.append(msg)
+                transient = _is_transient_exc(e)
+                try:
+                    from . import logging_setup as _ls
+                    _ls.log("warning", "llm call failed (attempt %d/%d%s): %s" % (attempt, max_attempts, ", retrying" if transient and attempt < max_attempts else ""),
+                            "llm", provider=self.name, model=self.model, role=self.role, ms=round((time.perf_counter() - t_start) * 1000, 1),
+                            prompt_chars=len(system) + len(user), transient=transient)
+                except Exception:
+                    pass
+                if transient and attempt < max_attempts:
+                    self.stats["retries"] += 1
+                    wait = float(getattr(self, "retry_backoff_s", DEFAULT_RETRY_BACKOFF_S) or 0) * attempt
+                    _pg.note("LLM 재시도 %d/%d (%s/%s, %s): %s" % (attempt + 1, max_attempts, self.name, self.model, self.role, msg[:100]))
+                    if wait > 0:
+                        time.sleep(wait)
+                    continue
+                self.stats["errors"] += 1
+                elapsed = (time.perf_counter() - t_start) * 1000
+                _pg.llm_end(elapsed, msg[:200])
+                record_incident({"role": self.role, "provider": self.name, "model": str(self.model or ""), "attempts": attempt, "max_attempts": max_attempts,
+                                 "elapsed_ms": round(elapsed, 1), "errors": errors, "transient": transient, "timeout_s": getattr(self, "timeout", None),
+                                 "prompt_chars": len(system) + len(user), "ts": time.time()})
+                if isinstance(e, LLMError):
+                    if attempt > 1:
+                        raise LLMError("%s (%d회 시도 모두 실패)" % (str(e), attempt), transient=e.transient, kind=e.kind)
+                    raise
+                raise LLMError(msg, transient=transient)
+        r["attempts"] = len(errors) + 1
+        if errors:
+            r["retry_errors"] = errors
             try:
                 from . import logging_setup as _ls
-                _ls.log("warning", "llm call failed: %s" % str(e)[:300], "llm", provider=self.name, model=self.model, role=self.role,
-                        ms=round((time.perf_counter() - t_start) * 1000, 1), prompt_chars=len(system) + len(user))
+                _ls.log("info", "llm call recovered after %d retries" % len(errors), "llm", provider=self.name, model=self.model, role=self.role)
             except Exception:
                 pass
-            raise
         _pg.llm_end(float(r.get("ms", 0) or 0))
         try:
             from . import logging_setup as _ls
@@ -98,12 +173,14 @@ class BaseLLM:
 
     def live_test(self, timeout_s: int = 60) -> Dict[str, Any]:
         """실제 완성 호출 1회 (토큰 소량 소비). ping 이 통과해도 PAT 권한/모델명/헤더가 틀리면 여기서 드러난다.
-        headless 에이전트는 프로세스를 실제로 실행하므로 인증·출력 포맷까지 확인된다."""
+        headless 에이전트는 프로세스를 실제로 실행하므로 인증·출력 포맷까지 확인된다. (재시도 없이 1회만)"""
         if not self.available:
             return {"ok": False, "ms": 0.0, "detail": getattr(self, "reason", "") or "unavailable"}
         old = getattr(self, "timeout", None)
+        old_retries = getattr(self, "retries", 0)
         try:
             self.timeout = min(int(old or timeout_s), timeout_s)
+            self.retries = 0
             t0 = time.perf_counter()
             r = self.complete("You are a connectivity probe. Reply with exactly: OK", "ping", max_tokens=16, effort="low")
             ms = (time.perf_counter() - t0) * 1000
@@ -114,6 +191,7 @@ class BaseLLM:
         finally:
             if old is not None:
                 self.timeout = old
+            self.retries = old_retries
 
     def describe(self) -> Dict[str, Any]:
         return {"name": self.name, "model": self.model, "available": self.available, "role": self.role,
@@ -259,6 +337,7 @@ class AnthropicHTTPLLM(BaseLLM):
                 "model": data.get("model", self.model)}
 
     def _post(self, body: Dict[str, Any], headers: Dict[str, str], retries: int = 3) -> Dict[str, Any]:
+        """HTTP 429/5xx 는 여기서 짧게 재시도(backoff). 타임아웃·네트워크 오류는 transient LLMError 로 올려 BaseLLM.complete 가 llm_retries 만큼 재시도한다."""
         raw = json.dumps(body).encode("utf-8")
         last: Optional[Exception] = None
         for attempt in range(retries):
@@ -268,14 +347,17 @@ class AnthropicHTTPLLM(BaseLLM):
                     return json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 msg = e.read().decode("utf-8", "ignore")[:500]
-                last = LLMError("HTTP %s: %s" % (e.code, msg))
+                last = LLMError("HTTP %s: %s" % (e.code, msg), transient=(e.code in (408, 409, 429) or e.code >= 500))
                 if e.code in (408, 409, 429) or e.code >= 500:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise last
+            except (TimeoutError, socket.timeout) as e:
+                raise LLMError("timeout after %ss: %s" % (self.timeout, e), transient=True, kind="timeout")
             except urllib.error.URLError as e:
-                last = LLMError("network: %s" % e)
-                time.sleep(1.5 * (attempt + 1))
+                if isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
+                    raise LLMError("timeout after %ss: %s" % (self.timeout, e.reason), transient=True, kind="timeout")
+                raise LLMError("network: %s" % e, transient=True, kind="network")
         raise last or LLMError("unknown")
 
 
@@ -395,9 +477,11 @@ class OllamaLLM(BaseLLM):
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            raise LLMError("ollama HTTP %s: %s (ollama pull %s ?)" % (e.code, e.read().decode("utf-8", "ignore")[:200], self.model))
+            raise LLMError("ollama HTTP %s: %s (ollama pull %s ?)" % (e.code, e.read().decode("utf-8", "ignore")[:200], self.model), transient=e.code >= 500)
+        except (TimeoutError, socket.timeout) as e:
+            raise LLMError("ollama timeout after %ss: %s" % (self.timeout, e), transient=True, kind="timeout")
         except Exception as e:
-            raise LLMError("ollama network: %s" % e)
+            raise LLMError("ollama network: %s" % e, transient=True, kind="network")
         return {"text": data.get("response", ""), "usage": {"input_tokens": data.get("prompt_eval_count", 0),
                                                             "output_tokens": data.get("eval_count", 0)},
                 "ms": (time.perf_counter() - t0) * 1000, "model": self.model}
@@ -499,14 +583,17 @@ class OpenAICompatLLM(BaseLLM):
                     return json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 msg = e.read().decode("utf-8", "ignore")[:500]
-                last = LLMError("HTTP %s: %s" % (e.code, msg))
+                last = LLMError("HTTP %s: %s" % (e.code, msg), transient=(e.code in (408, 409, 429) or e.code >= 500))
                 if e.code in (408, 409, 429) or e.code >= 500:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise last
+            except (TimeoutError, socket.timeout) as e:
+                raise LLMError("timeout after %ss: %s" % (self.timeout, e), transient=True, kind="timeout")
             except urllib.error.URLError as e:
-                last = LLMError("network: %s" % e)
-                time.sleep(1.0 * (attempt + 1))
+                if isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
+                    raise LLMError("timeout after %ss: %s" % (self.timeout, e.reason), transient=True, kind="timeout")
+                raise LLMError("network: %s" % e, transient=True, kind="network")
         raise last or LLMError("unknown")
 
 
@@ -548,6 +635,19 @@ def make_llm(settings, role: Optional[str] = None) -> BaseLLM:
         llm.timeout = int(getattr(settings, "llm_timeout", DEFAULT_LLM_TIMEOUT) or DEFAULT_LLM_TIMEOUT)
     except (TypeError, ValueError):
         llm.timeout = DEFAULT_LLM_TIMEOUT
+    # 재시도 정책: config.json llm_retries / llm_retry_backoff_s. headless 는 agents.json 의 retries/timeout_s 가 있으면 그 값이 우선.
+    if not getattr(llm, "_retries_fixed", False):
+        try:
+            llm.retries = int(getattr(settings, "llm_retries", DEFAULT_LLM_RETRIES))
+        except (TypeError, ValueError):
+            llm.retries = DEFAULT_LLM_RETRIES
+    if not getattr(llm, "_backoff_fixed", False):
+        try:
+            llm.retry_backoff_s = float(getattr(settings, "llm_retry_backoff_s", DEFAULT_RETRY_BACKOFF_S))
+        except (TypeError, ValueError):
+            llm.retry_backoff_s = DEFAULT_RETRY_BACKOFF_S
+    if getattr(llm, "_timeout_fixed", None):
+        llm.timeout = int(llm._timeout_fixed)
     return llm
 
 

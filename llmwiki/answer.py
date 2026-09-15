@@ -53,9 +53,11 @@ def _tokset(text: str) -> set:
 
 def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[str, Any]], max_chars: int = 9000,
                   query: str = "", trim: bool = False, dedupe: bool = False, chunk_chars: int = 1200,
-                  stage: Any = None, store: Any = None, neighbors: Optional[int] = None) -> Dict[str, Any]:
+                  stage: Any = None, store: Any = None, neighbors: Optional[int] = None,
+                  extra: Optional[List[Tuple[str, str, float]]] = None) -> Dict[str, Any]:
     """컨텍스트 조립. tuning: context_neighbors(인접 청크), dedupe_similarity(토큰 Jaccard 중복), context_graph_relations.
-    neighbors 를 주면 tuning context_neighbors 대신 사용 (fallback 라운드 확대용)."""
+    neighbors 를 주면 tuning context_neighbors 대신 사용 (fallback 라운드 확대용).
+    extra: doc_expand 가 고른 [(chunk_id, parent_chunk_id, score)] — 부모 청크 바로 뒤에 kind=doc_expand 로 들어간다."""
     T = _tuning.T
     parts: List[str] = []
     cites: List[Dict[str, Any]] = []
@@ -72,16 +74,25 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
     n_nb = int(T.get("context_neighbors") if neighbors is None else neighbors)
     nb_added: List[str] = []
     have = {h.chunk_id for h in hits}
+    extra_by_parent: Dict[str, List[Tuple[str, float]]] = {}
+    for cid, parent, sc in (extra or []):
+        extra_by_parent.setdefault(parent, []).append((cid, sc))
+    ex_added: List[str] = []
     for idx, h in enumerate(hits):
-        items.append((h.chunk_id, "hit"))
+        items.append((h.chunk_id, "hit", None))
         if store is not None and n_nb > 0 and idx < T.get("context_neighbor_top"):
             for nb in store.neighbor_chunks(h.chunk_id, n_nb):
                 if nb["chunk_id"] not in have:
                     chunks[nb["chunk_id"]] = nb
                     have.add(nb["chunk_id"])
-                    items.append((nb["chunk_id"], "neighbor"))
+                    items.append((nb["chunk_id"], "neighbor", None))
                     nb_added.append(nb["chunk_id"])
-    for cid, kind in items:
+        for cid, sc in extra_by_parent.get(h.chunk_id, []):
+            if cid not in have and cid in chunks:
+                have.add(cid)
+                items.append((cid, "doc_expand", sc))
+                ex_added.append(cid)
+    for cid, kind, ex_score in items:
         c = chunks.get(cid)
         if not c:
             continue
@@ -113,14 +124,21 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
             trimmed += 1
         block = "[C%d] (%s | %s)\n%s" % (len(cites) + 1, c["doc_id"], c["heading"][:80], text)
         if used + len(block) > max_chars:
+            if kind in ("neighbor", "doc_expand"):
+                dropped.append(c["chunk_id"] + " (max_chars)")
+                continue        # 보조 청크가 상한을 넘기면 건너뛰고 다음 항목(다른 hit)은 계속 시도
             break
         parts.append(block)
-        cites.append({"n": len(cites) + 1, "chunk_id": c["chunk_id"], "doc_id": c["doc_id"], "heading": c["heading"], "kind": kind})
+        cit: Dict[str, Any] = {"n": len(cites) + 1, "chunk_id": c["chunk_id"], "doc_id": c["doc_id"], "heading": c["heading"], "kind": kind}
+        if kind == "doc_expand":
+            cit["score"] = ex_score
+            cit["parent"] = next((p_ for p_, lst in extra_by_parent.items() if any(x[0] == c["chunk_id"] for x in lst)), None)
+        cites.append(cit)
         used += len(block)
     if stage is not None:
-        stage.note(text_chars=raw_chars, dropped_duplicates=len(dropped), trimmed_chunks=trimmed, neighbors_added=len(nb_added),
+        stage.note(text_chars=raw_chars, dropped_duplicates=len(dropped), trimmed_chunks=trimmed, neighbors_added=len(nb_added), doc_expand_added=len(ex_added),
                    saved_chars=max(0, raw_chars - used), est_tokens=used // 3)
-        stage.debug(dropped=dropped, neighbors=nb_added)
+        stage.debug(dropped=dropped, neighbors=nb_added, doc_expand=ex_added)
     graph_txt = ""
     if graph and graph.get("relations") and T.get("context_graph_relations") > 0:
         lines = ["## 그래프 관계 (참고)"]
@@ -136,7 +154,7 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
             lines.append("- [%s] %s %s: %s" % (e.get("source"), e.get("id"), e.get("title"), (e.get("text") or "")[:300].replace("\n", " ")))
         graph_txt = (graph_txt + "\n\n" if graph_txt else "") + "\n".join(lines)
     return {"text": "\n\n".join(parts) + ("\n\n" + graph_txt if graph_txt else ""), "citations": cites, "chars": used,
-            "hits_used": [c["chunk_id"] for c in cites]}
+            "hits_used": [c["chunk_id"] for c in cites], "dropped": dropped, "neighbors": nb_added, "doc_expand": ex_added}
 
 
 # ---------------------------------------------------------------- claim check (답변 검증)

@@ -14,9 +14,12 @@
     $('#build-alerts').innerHTML = alertsHtml(lb.alerts);
     return s;
   }
-  async function runBuild(full, reset) {
+  function channelsSelected() { const c = []; ['fts', 'vector', 'graph'].forEach((k) => { const el = $('#bc-' + k); if (el && el.checked) c.push(k); }); return c; }
+  async function runBuild(full, reset, channel, channelFull) {
     $('#build-log').textContent = '작업 요청 중…'; $('#build-result').innerHTML = ''; $('#build-trace').innerHTML = '';
-    const j = await api('/api/build', { full, reset: !!reset, overrides: overrides() });
+    const body = channel ? { channel, full: !!channelFull, overrides: overrides() } : { full, reset: !!reset, overrides: overrides() };
+    if (!channel) { const chs = channelsSelected(); if (chs.length && chs.length < 3) body.channels = chs; }
+    const j = await api('/api/build', body);
     if (!j.job) { $('#build-log').textContent = j.cancelled ? '취소됨' : '요청 실패: ' + (j.error || JSON.stringify(j)); return; }
     $('#build-log').textContent = 'job ' + j.job + ' 시작 — 진행 상황은 위 표시와 이 로그에 나타납니다.';
     // 주의: 진행 중에는 /api/build/status 를 폴링하지 않는다 (서버 락 뒤의 엔드포인트라 빌드가 끝날 때까지 응답이 없다).
@@ -34,6 +37,7 @@
   // 확인은 서버 게이트(428 → 단계 확인 모달)가 담당: 증분 = 경고, 전체 리빌드/초기화 = 확인 문구(+비밀번호). 별도 confirm() 없음.
   $('#btn-build').onclick = () => runBuild(false);
   $('#btn-build-full').onclick = () => runBuild(true, $('#build-reset').checked);
+  $$('#build-channels [data-channel]').forEach((b) => b.onclick = () => runBuild(false, false, b.dataset.channel, b.dataset.channel === 'vector' && $('#bc-vector-full').checked));
   $('#btn-scan').onclick = async () => { const r = await api('/api/watch', { action: 'scan' }); $('#scan-result').textContent = `scan ${r.scan_ms} ms · changed ${r.n_changed} · removed ${r.n_removed}` + (r.n_changed ? ' → ' + r.changed.slice(0, 5).join(', ') : ''); };
   $('#btn-health').onclick = async () => {
     $('#health-out').innerHTML = '검사 중…';
@@ -99,7 +103,9 @@
   loaders.contract = loadLint;
 
   // ---------------- MCP SOURCES ----------------
-  async function loadSources() { const j = await api('/api/mcp_sources'); $('#src-json').value = JSON.stringify(j.sources, null, 2); $('#src-msg').textContent = `${j.path} · 토글 mcp_sources=${j.enabled}`; }
+  async function loadSources() { const j = await api('/api/mcp_sources'); $('#src-json').value = JSON.stringify(j.sources, null, 2); $('#src-msg').textContent = `${j.path} · 토글 mcp_sources=${j.enabled} external_rag=${j.external_rag} mcp_federation=${j.mcp_federation}`; }
+  $('#btn-src-retrieve').onclick = async () => { const q = $('#src-q').value.trim(); if (!q) { toast('질의를 입력하세요'); return; } $('#src-out').innerHTML = '외부 검색 중…'; const r = await api('/api/mcp_sources', { action: 'retrieve', q, k: 5 }); const rows = (r && r.results) || []; $('#src-out').innerHTML = rows.length ? '<table><tr><th>source</th><th>id</th><th>score</th><th>title</th><th>text</th></tr>' + rows.map((x) => x.error ? `<tr><td>${esc(x.source)}</td><td colspan="4" class="bad">${esc(x.error)}</td></tr>` : `<tr><td>${esc(x.source)}</td><td>${esc(x.id)}${x.url ? ' <span class="muted small">' + esc(x.url) + '</span>' : ''}</td><td class="num">${fmt(x.score, 3)}</td><td>${esc(x.title)}</td><td class="small">${esc((x.text || '').slice(0, 160))}</td></tr>`).join('') + '</table>' : '<div class="muted">결과 없음 — retrieve 매핑이 있는 enabled 소스가 없거나 0건</div>'; };
+  $('#btn-src-federated').onclick = async () => { $('#src-out').innerHTML = '조회 중…'; const r = await api('/api/mcp_sources', { action: 'federated' }); $('#src-out').innerHTML = `<div>mcp_federation=${r.mcp_federation} · 페더레이션 도구: ${(r.tools || []).length ? r.tools.map(esc).join(', ') : '<span class="muted">없음</span>'}</div>` + (Object.keys(r.errors || {}).length ? `<div class="bad small">${esc(JSON.stringify(r.errors))}</div>` : '') + `<div class="small muted">플러그인 ${esc(r.plugins.dir)}: ${(r.plugins.tools || []).map(esc).join(', ') || '없음'}${(r.plugins.errors || []).length ? ' · 오류 ' + esc(JSON.stringify(r.plugins.errors)) : ''}</div>`; };
   $('#btn-src-test').onclick = async () => { $('#src-out').innerHTML = '테스트 중…'; const r = await api('/api/mcp_sources', { action: 'test' }); $('#src-out').innerHTML = '<table><tr><th>source</th><th>ok</th><th>tools</th><th>ms</th></tr>' + (r || []).map((x) => `<tr><td>${esc(x.name)}</td><td>${x.ok ? '<span class="ok">✔</span>' : '<span class="bad">✘ ' + esc(x.error || '') + '</span>'}</td><td class="small">${esc((x.tools || []).join(', '))}</td><td class="num">${x.ms}</td></tr>`).join('') + '</table>' + ((r || []).length ? '' : '<div class="muted">enabled 소스 없음</div>'); };
   $('#btn-src-ingest').onclick = async () => { $('#src-out').innerHTML = 'ingest 중…'; const r = await api('/api/mcp_sources', { action: 'ingest', dry_run: $('#src-dry').checked }); $('#src-out').innerHTML = `<pre class="pre">${esc(JSON.stringify(r, null, 1))}</pre>`; };
   $('#btn-src-save').onclick = async () => { let s; try { s = JSON.parse($('#src-json').value); } catch (e) { toast('JSON 오류'); return; } await api('/api/mcp_sources', { action: 'save', sources: s }); toast('저장됨'); };

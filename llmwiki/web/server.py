@@ -26,7 +26,40 @@ from ..evalset import load_questions
 from .. import evolve as ev
 from .. import progress as _pg
 from .. import snapshots as _snap
-from ..auth import Auth, AuthError, User, RANK
+from ..auth import Auth, AuthError, User, RANK, ROLES, ROLE_LABEL, LEVELS, LEVEL_LABEL, DEFAULT_LEVEL_ROLE, classify_api, classify_cli
+
+
+def _ops_catalog() -> List[Dict[str, str]]:
+    """보안 탭 '개별 작업 오버라이드' 편집을 돕는 대표 op 목록 (감사 로그의 op 이름과 동일)."""
+    rows: List[Dict[str, str]] = []
+    samples = [("POST", "/api/query", {}), ("POST", "/api/search", {}), ("POST", "/api/feedback", {}), ("POST", "/api/forensic/expect", {}),
+               ("POST", "/api/eval", {}), ("POST", "/api/trials", {"action": "run"}), ("POST", "/api/fusion/compare", {}), ("POST", "/api/models/test", {}),
+               ("POST", "/api/evolve/review", {}), ("POST", "/api/mcp_sources", {"action": "test"}),
+               ("POST", "/api/pins", {"action": "add"}), ("POST", "/api/query_rules", {"action": "save"}), ("POST", "/api/prompts", {}), ("POST", "/api/tuning", {"action": "set"}),
+               ("POST", "/api/presets", {"action": "save"}), ("POST", "/api/wiki/page", {}), ("POST", "/api/evolve/apply", {}), ("POST", "/api/evolve/reject", {}),
+               ("POST", "/api/memory", {"action": "decay"}), ("POST", "/api/rules", {}), ("POST", "/api/trials", {"action": "delete"}),
+               ("POST", "/api/build", {"full": False}), ("POST", "/api/build/verify", {"fix": True}), ("POST", "/api/precompute", {"action": "run"}),
+               ("POST", "/api/maintenance", {"action": "vacuum"}), ("POST", "/api/snapshot", {"action": "create"}), ("POST", "/api/watch", {"action": "start"}),
+               ("POST", "/api/mcp_sources", {"action": "ingest"}),
+               ("POST", "/api/build", {"full": True}), ("POST", "/api/build", {"channel": "fts"}), ("POST", "/api/snapshot", {"action": "restore"}),
+               ("POST", "/api/config", {}), ("POST", "/api/models/set", {}), ("POST", "/api/agents", {}), ("POST", "/api/auth/users", {"action": "add"}),
+               ("POST", "/api/security", {"action": "set_permissions"}), ("POST", "/api/apikeys", {"action": "add"}), ("POST", "/api/mcp_sources", {"action": "save"}),
+               ("POST", "/api/build", {"purge_logs": True}), ("POST", "/api/maintenance", {"action": "purge_requests"})]
+    seen = set()
+    for m, p, b in samples:
+        lv, op = classify_api(m, p, b)
+        if op not in seen:
+            seen.add(op)
+            rows.append({"op": op, "level": lv, "kind": "web"})
+    for argv in (["query", "x"], ["eval"], ["trial", "run"], ["build"], ["build", "--full"], ["build", "fts"], ["build", "vector"], ["build", "graph"],
+                 ["pin", "add"], ["rules", "add"], ["tuning", "set"], ["evolve", "apply"], ["precompute", "run"], ["snapshot", "create"], ["snapshot", "restore"],
+                 ["config", "set"], ["models", "set"], ["users", "add"], ["apikey", "add"], ["security", "perms", "set"], ["maintenance", "purge_requests"],
+                 ["config", "reset"], ["serve"], ["mcp"]):
+        lv, op = classify_cli(argv)
+        if op not in seen:
+            seen.add(op)
+            rows.append({"op": op, "level": lv, "kind": "cli"})
+    return rows
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 _LOCK = threading.RLock()
@@ -214,12 +247,57 @@ class Handler(BaseHTTPRequestHandler):
                                 thread_alive=bool(_WATCHER["thread"] and _WATCHER["thread"].is_alive()), log=_WATCHER["log"][-30:]),
                 "jobs": {k: {kk: vv for kk, vv in v.items() if kk != "result"} for k, v in _JOBS.items()}}
 
+    # ---------------- MCP (Streamable HTTP) ----------------
+    mcp_only = False   # serve(mcp_only=True): /mcp 와 /api/auth/me 만 제공
+
+    def _mcp(self, method: str) -> None:
+        """POST/GET/DELETE /mcp — 인증(Bearer API 키·쿠키·익명) 과 read 등급 권한은 authorize() 로, 본문은 mcp.handle_http 로."""
+        from .. import mcp as _mcp
+        auth = self._auth()
+        body = b""
+        if method == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n) if n else b""
+        user = None
+        try:
+            user = self._user()
+            level, op = auth.authorize(user, "POST", "/mcp", {}, self.headers if method == "POST" else None, self.headers.get("Host") or "")
+        except AuthError as e:
+            auth.audit(user, "mcp", "read", False, self._ip(), error=e.error)
+            data = json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": e.error, "status": e.status}}).encode("utf-8")
+            self.send_response(401 if e.status in (401, 428) else e.status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            if e.status == 401:
+                self.send_header("WWW-Authenticate", 'Bearer realm="llmwiki-mcp"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        with _LOCK:
+            status, hdrs, out = _mcp.handle_http(self.pipe, method, body, self.headers)
+        self.send_response(status)
+        for k, v in hdrs.items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        if out:
+            self.wfile.write(out)
+
+    def do_DELETE(self) -> None:
+        if urlparse(self.path).path == "/mcp":
+            return self._mcp("DELETE")
+        self.send_error(404)
+
     # ---------------- GET ----------------
     def do_GET(self) -> None:
         u = urlparse(self.path)
         qs = {k: v[0] for k, v in parse_qs(u.query).items()}
         p = self.pipe
         auth = self._auth()
+        if u.path == "/mcp":
+            return self._mcp("GET")
+        if Handler.mcp_only and u.path not in ("/api/auth/me", "/api/progress", "/mcp"):
+            return self._json({"error": "mcp-only server: use POST /mcp"}, 404)
         try:
             # ---- 공개 경로: 정적 파일, 로그인 페이지, SSO 왕복, 로그인 상태 조회 ----
             if u.path.startswith("/static/"):
@@ -245,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             user = self._user()
             if u.path in ("/", "/index.html"):
                 if user is None:
-                    return self._redirect("/login")
+                    return self._redirect("/login")      # anonymous_role 이 비어 있으면 로그인 필수
                 return self._static("index.html")
             # ---- 인가 (GET 은 read, 일부 admin 전용) ----
             try:
@@ -253,14 +331,20 @@ class Handler(BaseHTTPRequestHandler):
             except AuthError as e:
                 return self._deny(e, user, u.path, "read")
             if u.path == "/api/auth/users":
-                return self._json({"users": auth.list_users(), "mode": auth.mode, "sso": auth.public_info()["sso"]})
+                return self._json({"users": auth.list_users(), "mode": auth.mode, "sso": auth.public_info()["sso"], "roles": list(ROLES), "role_labels": ROLE_LABEL})
             if u.path == "/api/audit":
                 return self._json({"rows": auth.audit_tail(int(qs.get("n", 200)))})
+            if u.path == "/api/apikeys":
+                return self._json({"keys": auth.list_api_keys(), "roles": list(ROLES)})
             if u.path == "/api/security":
                 cfg = json.loads(json.dumps(auth.cfg))
                 for v in (cfg.get("users") or {}).values():
                     v.pop("pw", None)
-                return self._json({"security": cfg, "path": __import__("llmwiki.auth", fromlist=["security_path"]).security_path(), "effective_mode": auth.mode})
+                for v in (cfg.get("api_keys") or {}).values():
+                    v.pop("hash", None)
+                return self._json({"security": cfg, "path": __import__("llmwiki.auth", fromlist=["security_path"]).security_path(), "effective_mode": auth.mode,
+                                   "permissions": auth.permissions(), "defaults": DEFAULT_LEVEL_ROLE, "levels": list(LEVELS), "level_labels": LEVEL_LABEL,
+                                   "roles": list(ROLES), "role_labels": ROLE_LABEL, "ops_catalog": _ops_catalog()})
             if u.path == "/api/snapshot":
                 return self._json({"snapshots": _snap.list_(p)})
             # ---- 락 없이 응답하는 폴링용 엔드포인트 ----
@@ -309,6 +393,26 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/request":
                     r = p.store.get_request(int(qs.get("id", 0)))
                     return self._json(r or {"error": "not found"}, 200 if r else 404)
+                if u.path == "/api/analysis":
+                    from .. import analysis as _an
+                    rid = int(qs.get("request_id", 0) or 0) or None
+                    focus = qs.get("focus") or None
+                    with _LOCK:
+                        r = _an.analyze(p, rid, focus=None if focus in (None, "", "all") else focus)
+                    if r.get("error"):
+                        return self._json({"error": r["error"]}, 404)
+                    if qs.get("format") == "md":
+                        data = r["markdown"].encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                        if qs.get("download"):
+                            self.send_header("Content-Disposition", "attachment; filename=\"analysis_req_%s.md\"" % r["summary"]["request_id"])
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    return self._json({"summary": r["summary"], "paths": r["paths"], "markdown": r["markdown"], "report": r["report"] if qs.get("full") else None})
                 if u.path == "/api/models":
                     return self._json({"providers": p.provider_status(), "settings": p.s.to_dict(), "roles": list(Settings.LLM_ROLES)})
                 if u.path == "/api/system":
@@ -448,7 +552,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"schemas": _schema.load_schemas(), "dir": _schema.schemas_dir(), "examples": {dt: _schema.example_document(dt) for dt in _schema.doc_types()}})
                 if u.path == "/api/mcp_sources":
                     from .. import mcp_client as _mcp
-                    return self._json({"sources": _mcp.load_sources(), "path": _mcp.sources_path(), "enabled": p.s.toggles.mcp_sources})
+                    return self._json({"sources": _mcp.load_sources(), "path": _mcp.sources_path(), "enabled": p.s.toggles.mcp_sources,
+                                       "external_rag": p.s.toggles.external_rag, "mcp_federation": p.s.toggles.mcp_federation,
+                                       "summary": [_mcp.source_summary(k, v) for k, v in _mcp.load_sources().items()]})
                 if u.path == "/api/memory":
                     from .. import memory as _mem
                     return self._json(dict(_mem.status(p.store, _tuning.T.get("memory_half_life_days")), episodes=_mem.episodes(p.store, int(qs.get("limit", 20)))))
@@ -469,12 +575,18 @@ class Handler(BaseHTTPRequestHandler):
                     from .. import timeparse as _tp
                     return self._json(_tp.parse(qs.get("q", ""), p.s.timezone, p.s.week_start) or {"expr": None})
             self.send_error(404)
+        except AuthError as e:      # identify() 단계의 거부 (잘못된/폐기된 API 키 등)
+            self._deny(e, None, u.path, "read")
         except Exception as e:
             self._json({"error": str(e), "trace": traceback.format_exc()}, 500)
 
     # ---------------- POST ----------------
     def do_POST(self) -> None:
         u = urlparse(self.path)
+        if u.path == "/mcp":
+            return self._mcp("POST")
+        if Handler.mcp_only and u.path not in ("/api/auth/login", "/api/auth/logout"):
+            return self._json({"error": "mcp-only server: use POST /mcp"}, 404)
         body = self._body()
         auth = self._auth()
         host = self.headers.get("Host") or ""
@@ -489,11 +601,17 @@ class Handler(BaseHTTPRequestHandler):
             auth.audit(user, "login", "auth", True, self._ip())
             return self._json({"ok": True, "user": user.to_dict()}, cookies=[auth.make_cookie(user, self._https())])
         if u.path == "/api/auth/logout":
-            user = self._user()
+            try:
+                user = self._user()
+            except AuthError:
+                user = None
             if user:
                 auth.audit(user, "logout", "auth", True, self._ip())
             return self._json({"ok": True}, cookies=[auth.clear_cookie()])
-        user = self._user()
+        try:
+            user = self._user()
+        except AuthError as e:      # 잘못된/폐기된 API 키 → 401 (게스트로 강등하지 않음)
+            return self._deny(e, None, u.path, "?")
         if u.path == "/api/auth/password":
             if not user or user.via != "local":
                 return self._json({"error": "로컬 계정으로 로그인한 경우에만 비밀번호를 바꿀 수 있습니다"}, 403)
@@ -519,10 +637,51 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/auth/users":
             return self._users_admin(body, user)
         if u.path == "/api/security":
-            if body.get("action") == "reload":
-                auth.reload()
-                return self._json({"ok": True, "mode": auth.mode})
-            return self._json({"error": "unknown action"}, 400)
+            act = body.get("action") or ""
+            try:
+                if act == "reload":
+                    auth.reload()
+                    out: Dict[str, Any] = {"ok": True, "mode": auth.mode}
+                elif act == "set_permissions":
+                    out = {"ok": True, "permissions": auth.set_permissions(body.get("permissions") or {})}
+                elif act == "set_permission":
+                    out = {"ok": True, "permissions": auth.set_permission(str(body.get("key") or ""), str(body.get("role") or ""))}
+                elif act == "set_anonymous":
+                    auth.cfg["anonymous_role"] = str(body.get("role") or "")
+                    from ..auth import save_security
+                    save_security(auth.cfg)
+                    auth.reload()
+                    out = {"ok": True, "anonymous_role": auth.anonymous_role}
+                elif act == "set_cli":
+                    c = auth.cfg.setdefault("cli", {})
+                    if "default_role" in body:
+                        c["default_role"] = str(body.get("default_role") or "admin")
+                    if "require_login" in body:
+                        c["require_login"] = bool(body.get("require_login"))
+                    from ..auth import save_security
+                    save_security(auth.cfg)
+                    auth.reload()
+                    out = {"ok": True, "cli": auth.cfg.get("cli")}
+                else:
+                    return self._json({"error": "unknown action"}, 400)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            auth.audit(user, "security " + act, level, True, self._ip(), detail={k: v for k, v in body.items() if k not in ("_password",)})
+            return self._json(out)
+        if u.path == "/api/apikeys":
+            act = body.get("action") or "list"
+            try:
+                if act == "add":
+                    r = auth.add_api_key(str(body.get("name") or ""), str(body.get("role") or "viewer"), str(body.get("note") or ""))
+                    auth.audit(user, "apikeys add", level, True, self._ip(), detail={"name": r["name"], "role": r["role"], "id": r["id"]})
+                    return self._json(dict(r, keys=auth.list_api_keys()))
+                if act == "remove":
+                    ok = auth.remove_api_key(str(body.get("id") or ""))
+                    auth.audit(user, "apikeys remove", level, ok, self._ip(), detail={"id": body.get("id")})
+                    return self._json({"ok": ok, "keys": auth.list_api_keys()}, 200 if ok else 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            return self._json({"keys": auth.list_api_keys()})
         if u.path == "/api/snapshot":
             act = body.get("action") or "create"
             p = self.pipe
@@ -537,7 +696,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "unknown action"}, 400)
             auth.audit(user, "snapshot " + act, level, True, self._ip(), detail={"name": body.get("name"), "tag": body.get("tag")})
             return self._json(r)
-        if u.path == "/api/cli" and level == "destructive":
+        if u.path == "/api/cli" and level in ("destructive", "rebuild"):
             argv = body.get("argv") or []
             if isinstance(argv, str):
                 import shlex
@@ -560,7 +719,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not auth.remove_user(str(body.get("name") or "")):
                     return self._json({"error": "no such user"}, 404)
             elif act == "set_role":
-                if user and body.get("name") == user.name and body.get("role") != "admin":
+                if user and body.get("name") == user.name and str(body.get("role")) != "admin":
                     return self._json({"error": "자기 자신의 admin 권한은 내릴 수 없습니다 (다른 admin 이 변경)"}, 400)
                 auth.set_role(str(body.get("name") or ""), str(body.get("role") or "viewer"))
             elif act == "set_password":
@@ -578,6 +737,9 @@ class Handler(BaseHTTPRequestHandler):
         actor = str(body.get("_actor") or "")
         try:
             if u.path == "/api/build":
+                if body.get("channel"):
+                    ch = str(body.get("channel"))
+                    return self._json(self._start_job("build", lambda progress: self._do_build_channel(body, progress), label="build %s" % ch))
                 return self._json(self._start_job("build", lambda progress: self._do_build(body, progress, actor),
                                                   label="build --full" if (body.get("full") or body.get("reset")) else "build (incremental)"))
             if u.path == "/api/eval":
@@ -700,9 +862,9 @@ class Handler(BaseHTTPRequestHandler):
                     if isinstance(argv, str):
                         import shlex
                         argv = shlex.split(argv, posix=True)
-                    if argv and argv[0] in ("serve", "watch") and "--once" not in argv:
+                    if argv and argv[0] in ("serve", "watch", "mcp") and "--once" not in argv:
                         return self._json({"code": 1, "output": "%s 는 콘솔에서 실행할 수 없습니다 (서버가 이미 실행 중; watch 는 --once 로)." % argv[0]})
-                    return self._json(run_captured(argv, p.s, p))
+                    return self._json(run_captured(argv, p.s, p, actor=str(body.get("_actor") or "web")))
                 if u.path == "/api/rules":
                     from ..graph_rules import save_rules
                     save_rules(body.get("rules") or {})
@@ -767,6 +929,18 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"ok": True})
                     if act == "enrich":
                         return self._json(_mcp.enrich(p.s, body.get("q", "")))
+                    if act == "retrieve":
+                        return self._json({"results": _mcp.retrieve(p.s, body.get("q", ""), int(body.get("k") or 5), names=body.get("names"), include_fallback=True)})
+                    if act == "tools":
+                        cfg = _mcp.load_sources().get(str(body.get("name") or ""))
+                        if not cfg:
+                            return self._json({"error": "unknown source"}, 400)
+                        return self._json({"name": body.get("name"), "tools": _mcp.remote_tools(str(body.get("name")), cfg)})
+                    if act == "federated":
+                        from .. import mcp as _m
+                        tools = _m.federated_tools(p.s, refresh=True)
+                        return self._json({"mcp_federation": p.s.toggles.mcp_federation, "tools": [t["name"] for t in tools],
+                                           "errors": {k: v.get("error") for k, v in _m._FED_CACHE.items() if v.get("error")}, "plugins": _m.load_plugins(p.s)})
                     return self._json({"error": "unknown action"}, 400)
                 if u.path == "/api/memory":
                     from .. import memory as _mem
@@ -814,6 +988,21 @@ class Handler(BaseHTTPRequestHandler):
                     _hl.save_agents(body.get("agents") or {})
                     p.reload()
                     return self._json({"ok": True})
+                if u.path == "/api/forensic/expect":
+                    from .. import forensic as _fx
+                    rid = int(body.get("request_id", 0) or 0)
+                    if not rid:
+                        reqs = p.store.requests("query", 1)
+                        rid = int(reqs[0]["id"]) if reqs else 0
+                    docs_ = body.get("docs") or []
+                    terms_ = body.get("terms") or []
+                    if isinstance(docs_, str):
+                        docs_ = [x.strip() for x in docs_.replace(";", ",").split(",") if x.strip()]
+                    if isinstance(terms_, str):
+                        terms_ = [x.strip() for x in terms_.replace(";", ",").split(",") if x.strip()]
+                    rep = _fx.trace_expectation(p, rid, docs_, terms_, body.get("chunks") or [], note=str(body.get("note") or ""), propose=bool(body.get("propose")))
+                    rep["text"] = _fx.format_expectation(rep)
+                    return self._json(rep)
                 if u.path == "/api/forensic/llm":
                     from .. import forensic as _fx
                     rid = int(body.get("request_id", 0))
@@ -908,9 +1097,22 @@ class Handler(BaseHTTPRequestHandler):
                                   snapshot_keep=int(d.get("snapshot_keep", 3) or 3))
                 progress("reset: cleared %d tables, kept_logs=%s, removed_wiki_pages=%d%s" % (
                     len(r["cleared_tables"]), r["kept_logs"], r["removed_wiki_pages"], (" · 스냅샷 %s (snapshot restore 로 복원 가능)" % r["snapshot"]) if r.get("snapshot") else ""))
-            res, tr = p.build(full=bool(body.get("full") or body.get("reset")), progress=progress, debug=body.get("debug"))
+            channels = body.get("channels") or None
+            if isinstance(channels, str):
+                channels = [x.strip() for x in channels.split(",") if x.strip()]
+            res, tr = p.build(full=bool(body.get("full") or body.get("reset")), progress=progress, debug=body.get("debug"), channels=channels)
         flag = (" --full" if do_reset else " --full --no-reset") if (body.get("full") or do_reset) else ""
+        if channels:
+            flag += " --channels " + ",".join(channels)
         return {"result": res, "trace": tr, "cli": _cli_equiv("build", "", ov, Toggles()) + flag}
+
+    def _do_build_channel(self, body: Dict[str, Any], progress) -> Dict[str, Any]:
+        p = self.pipe
+        ov = body.get("overrides") or {}
+        ch = str(body.get("channel") or "")
+        with _with_overrides(p, ov):
+            res, tr = p.build_channel(ch, full=bool(body.get("full")), progress=progress, debug=body.get("debug"), force=bool(body.get("force")))
+        return {"result": res, "trace": tr, "cli": "python -m llmwiki build %s%s --trace" % (ch, " --full" if body.get("full") else "")}
 
     def _do_eval(self, body: Dict[str, Any], progress) -> Dict[str, Any]:
         p = self.pipe
@@ -930,14 +1132,15 @@ class Handler(BaseHTTPRequestHandler):
             return {"result": r, "trace": tr, "cli": _cli_equiv("eval", "", ov, Toggles()).replace(" --trace", "") + " --k %d" % k}
 
 
-def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = False) -> None:
+def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = False, mcp_only: bool = False) -> None:
     Handler.pipe = pipe
     Handler.host = host
+    Handler.mcp_only = bool(mcp_only)
     Handler.auth = Auth(pipe.s, host)
     auth = Handler.auth
     loopback = host in ("127.0.0.1", "localhost", "::1")
-    if auth.mode == "on" and not auth.has_any_login():
-        print("!! security.json 에 사용자(users)도 SSO 도 없어 아무도 로그인할 수 없습니다. 먼저: python -m llmwiki users add <id> --role admin")
+    if auth.mode == "on" and not auth.has_any_login() and not auth.anonymous_role:
+        print("!! security.json 에 사용자(users)·API 키·SSO 가 없고 anonymous_role 도 비어 있어 아무도 접근할 수 없습니다. 먼저: python -m llmwiki users add <id> --role admin (또는 apikey add)")
         if not insecure:
             raise SystemExit(2)
     if auth.mode == "off" and not loopback:
@@ -945,11 +1148,14 @@ def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = Fals
             print("!! %s 에 바인드하면 네트워크의 누구나 접근합니다. security.json 의 users/sso 를 설정하고(mode auto → on) 실행하거나, 정말로 인증 없이 열려면 --insecure." % host)
             raise SystemExit(2)
         print("!! --insecure: 인증 없이 %s 에 공개합니다 (파괴적 작업은 확인 문구만 요구)" % host)
-    _ensure_watcher(pipe)
+    if not mcp_only:
+        _ensure_watcher(pipe)
     httpd = ThreadingHTTPServer((host, port), Handler)
-    print("LLM Wiki UI: http://%s:%d/  (Ctrl+C to stop)%s  [auth: %s%s]" % (
-        host, port, "  [auto_build on: every %ss]" % pipe.s.auto_build_interval if pipe.s.toggles.auto_build else "",
-        auth.mode, (", users=%d, sso=%s" % (len(auth.cfg.get("users") or {}), "on" if auth.public_info()["sso"] else "off")) if auth.mode == "on" else ""))
+    print("%s: http://%s:%d/%s  (Ctrl+C to stop)%s  [auth: %s%s%s]" % (
+        "LLM Wiki MCP (Streamable HTTP)" if mcp_only else "LLM Wiki UI", host, port, "mcp" if mcp_only else "  · MCP: POST /mcp",
+        "  [auto_build on: every %ss]" % pipe.s.auto_build_interval if (pipe.s.toggles.auto_build and not mcp_only) else "",
+        auth.mode, (", users=%d, api_keys=%d, sso=%s" % (len(auth.cfg.get("users") or {}), len(auth.cfg.get("api_keys") or {}), "on" if auth.public_info()["sso"] else "off")) if auth.mode == "on" else "",
+        (", anonymous=%s" % auth.anonymous_role) if (auth.mode == "on" and auth.anonymous_role) else ""))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

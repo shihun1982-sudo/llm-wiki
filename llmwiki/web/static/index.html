@@ -77,14 +77,27 @@
         <div class="cols">
           <div class="col">
             <h3>답변 <span id="answer-mode" class="pill"></span> <span id="answer-ms" class="pill"></span> <span id="answer-cached" class="pill hidden">cached</span> <span id="answer-ground" class="pill"></span></h3>
+            <div id="q-llm-report" class="banner warn hidden"></div>
             <div id="answer" class="answer"></div>
             <div class="feedback">
               <button class="secondary" data-fb="1">👍 도움됨</button>
               <button class="secondary" data-fb="-1">👎 틀림/부족</button>
               <input id="fb-note" type="text" placeholder="정정 내용 (선택) → wiki 편집 노트 제안으로 저장">
               <button class="secondary mini" id="btn-q-forensic">🔬 포렌식</button>
+              <button class="secondary mini" id="btn-q-expect" title="답변에 있어야 했던 문서/용어를 알려주면 어느 단계에서 빠졌는지 추적합니다">🎯 기대 결과 포렌식</button>
+              <button class="secondary mini" id="btn-q-analysis" title="모든 단계의 결과·설정·품질/속도/토큰 렌즈 소견을 한 장의 마크다운으로 (LLM 에게 그대로 넘길 수 있음). 사이드바 토글 analysis_mode 를 켜고 질의하면 debug·프롬프트 샘플까지 포함">📊 상세 분석 리포트</button>
               <span id="fb-result" class="muted"></span>
             </div>
+            <div id="q-expect-form" class="form hidden">
+              <label>기대 문서 ID <input id="qe-docs" type="text" placeholder="ISSUE-2003, CL-55303 (쉼표 구분; doc_id 부분 문자열도 가능)" style="min-width:280px"></label>
+              <label>기대 용어·수치 <input id="qe-terms" type="text" placeholder="1.5dB, PA gain (쉼표 구분)" style="min-width:220px"></label>
+              <label>메모 <input id="qe-note" type="text" placeholder="왜 이 결과가 필요한지 (선택)" style="min-width:220px"></label>
+              <label class="inline"><input type="checkbox" id="qe-propose"> 수정안을 제안 큐(HITL)에 등록</label>
+              <button class="mini" id="btn-q-expect-run">분석</button>
+              <div class="muted small">같은 설정으로 검색을 다시 실행해 기대 근거가 fts / vector / graph → 융합 → 리랭크 → 컨텍스트 → 답변 중 어디서 탈락했는지 표로 보여 줍니다. CLI: <code>forensic expect &lt;request_id&gt; --doc … --term …</code></div>
+            </div>
+            <div id="q-expect-out" class="small hidden"></div>
+            <div id="q-analysis" class="small hidden"></div>
             <div id="q-forensic" class="small hidden"></div>
             <h3>근거 판정 · 검증 · 계획</h3>
             <div id="q-evidence" class="kv"></div>
@@ -130,6 +143,17 @@
         <button id="btn-verify-fix" class="secondary">검증 + 정리(fix)</button>
         <span id="scan-result" class="muted small"></span>
       </div>
+      <div class="row" id="build-channels">
+        <span class="muted small" title="일반 빌드에서 처리할 채널 (끄면 그 단계는 skipped). 세 채널은 chunks 만 읽으므로 서로 독립">채널:</span>
+        <label class="inline"><input type="checkbox" id="bc-fts" checked> fts</label>
+        <label class="inline"><input type="checkbox" id="bc-vector" checked> vector</label>
+        <label class="inline"><input type="checkbox" id="bc-graph" checked> graph</label>
+        <span class="muted small">· 채널만 다시 만들기 (chunks 불변, builder 이상):</span>
+        <button class="secondary mini" data-channel="fts" title="chunks_fts 를 전부 다시 씀 (토크나이저·복합어·메타 토큰 변경 후). 임베딩·그래프 불변">FTS 재색인</button>
+        <button class="secondary mini" data-channel="vector" title="임베딩 없는 청크만 임베딩 (전부 다시는 아래 체크). FTS·그래프 불변">벡터 재임베딩</button>
+        <label class="inline"><input type="checkbox" id="bc-vector-full"> 전부 다시</label>
+        <button class="secondary mini" data-channel="graph" title="그래프 테이블을 비우고 전체 청크에서 재추출 + 커뮤니티 + 위키. FTS·임베딩 불변">그래프 재구축</button>
+      </div>
       <div class="muted small">코퍼스: <code id="corpus-dirs"></code> · 스케줄: OS 스케줄러(작업 스케줄러/cron)에서 <code>python -m llmwiki build</code> 호출 권장 (setup/schedule_build.ps1). 서버 워처는 Observability › 시스템.</div>
       <div id="build-status" class="statrow"></div>
       <div id="build-alerts"></div>
@@ -163,7 +187,8 @@
 
     <section id="tab-sources" class="tab">
       <div class="row"><button id="btn-src-test" class="secondary">연결 테스트</button><button id="btn-src-ingest">ingest (raw data → mcp_cache)</button><label class="inline"><input type="checkbox" id="src-dry"> dry-run</label><button id="btn-src-save" class="secondary">mcp_sources.json 저장</button><span id="src-msg" class="muted small"></span></div>
-      <div class="muted small">외부 MCP(예: Mango — issue / CL / build binary raw data). tool 이름·인자·결과 경로는 매핑으로 선언. 토글 <code>mcp_sources</code> 가 켜져 있어야 빌드 ingest / 질의 enrich(fallback mcp 단계) 에 사용됩니다.</div>
+      <div class="row"><input id="src-q" placeholder="외부 RAG 검색(retrieve) 질의 — 예: RX AGC 수렴" style="min-width:320px"><button id="btn-src-retrieve" class="secondary">외부 검색(retrieve)</button><button id="btn-src-federated" class="secondary">페더레이션 도구 목록</button></div>
+      <div class="muted small">외부 소스 = 다른 RAG · MCP 서버 · REST 검색 API (전송 stdio / http / rest). 용도: <b>ingest</b>(raw data → 문서로 색인, 토글 <code>mcp_sources</code>) · <b>retrieve</b>(질의마다 검색 채널 <code>ext_&lt;source&gt;</code> 로 융합, 토글 <code>external_rag</code>) · <b>expose</b>(외부 tool 을 우리 MCP 에 <code>&lt;source&gt;__&lt;tool&gt;</code> 로 노출, 토글 <code>mcp_federation</code>) · enrich(구, fallback mcp 단계). 형식 원본: <code>setup/mcp_sources.example.json</code>, 설명: docs/RAG_FEDERATION.md</div>
       <div id="src-out" class="small"></div>
       <textarea id="src-json" spellcheck="false"></textarea>
     </section>
@@ -230,6 +255,7 @@
 
     <section id="tab-forensics" class="tab">
       <div class="row"><button id="btn-fx-refresh" class="secondary">새로고침</button><input id="fx-req" type="number" placeholder="request id" style="width:110px"><button id="btn-fx-run" class="secondary">진단 실행</button><button id="btn-fx-llm" class="secondary">LLM 소견 추가</button><button id="btn-fx-consolidate" class="secondary">누적 소견 → 제안 (consolidate)</button></div>
+      <div class="row"><span class="muted small">🎯 기대 결과 포렌식 (request id 기준):</span><input id="fx-docs" type="text" placeholder="기대 문서 ID (쉼표)" style="max-width:220px"><input id="fx-terms" type="text" placeholder="기대 용어 (쉼표)" style="max-width:200px"><input id="fx-note" type="text" placeholder="메모" style="max-width:200px"><label class="inline"><input type="checkbox" id="fx-propose"> 제안 등록</label><button id="btn-fx-expect" class="secondary">기대 결과 분석</button></div>
       <div id="fx-summary" class="statrow"></div>
       <div class="cols"><div class="col narrow-wide"><div id="fx-list"></div></div><div class="col wide"><div id="fx-detail" class="muted">목록에서 선택하거나 request id 로 진단하세요.</div></div></div>
     </section>
@@ -365,23 +391,29 @@
       <div id="sec-summary" class="statrow"></div>
       <div class="cols">
         <div class="col">
-          <h3>사용자 <small class="muted">(로컬 ID/비밀번호 계정 · SSO 사용자의 역할 지정)</small></h3>
+          <h3>역할 <small class="muted">(viewer &lt; class3 &lt; class2 &lt; class1 &lt; builder &lt; admin — 누적)</small></h3>
+          <div id="sec-roles" class="small"></div>
+          <h3 style="margin-top:14px">사용자 <small class="muted">(로컬 ID/비밀번호 계정 · SSO 사용자의 역할 지정)</small></h3>
           <div id="sec-users"></div>
           <div class="form" id="sec-add-form">
-            <label>id <input id="su-name" type="text" style="min-width:140px"> 역할 <select id="su-role"><option>viewer</option><option>operator</option><option>admin</option></select> 비밀번호 <input id="su-pass" type="password" style="min-width:140px" placeholder="(비우면 SSO 전용)"> <button id="btn-user-add" class="mini">추가</button></label>
-            <div class="muted small">viewer = 질의·검색·읽기 · operator = 증분 빌드/제안 적용/규칙 편집 등 복구 가능한 변경 · admin = 설정·사용자·전체 초기화</div>
+            <label>id <input id="su-name" type="text" style="min-width:140px"> 역할 <select id="su-role"><option>viewer</option><option>class3</option><option>class2</option><option>class1</option><option>builder</option><option>admin</option></select> 비밀번호 <input id="su-pass" type="password" style="min-width:140px" placeholder="(비우면 SSO 전용)"> <button id="btn-user-add" class="mini">추가</button></label>
+            <div class="muted small">viewer = 조회·질의(DB 무영향) · class3 = +실행(eval/trial) · class2 = +지식 편집(규칙·pin·제안 승인) · class1 = +색인 갱신(증분 빌드) · builder = +전체/채널 리빌드·복원 · admin = +설정·사용자·권한</div>
           </div>
           <h3 style="margin-top:14px">내 비밀번호 변경 <small class="muted">(로컬 계정)</small></h3>
           <div class="form"><label>현재 <input id="pw-old" type="password" style="min-width:120px"> 새 비밀번호 <input id="pw-new" type="password" style="min-width:120px"> <button id="btn-pw-change" class="mini secondary">변경</button></label></div>
+          <h3 style="margin-top:14px">API 키 <small class="muted">(MCP HTTP · 스크립트용 Bearer 토큰, 역할 부여)</small></h3>
+          <div id="sec-keys"></div>
         </div>
         <div class="col">
-          <h3>스냅샷 <small class="muted">(전체 초기화 전 자동 저장 · 수동 저장 · 복원)</small></h3>
+          <h3>권한 표 <small class="muted">(등급별 최소 역할 · 개별 작업 오버라이드 · 익명/CLI 기본 역할 — security.json permissions)</small></h3>
+          <div id="sec-perms"></div>
+          <h3 style="margin-top:14px">스냅샷 <small class="muted">(전체 초기화 전 자동 저장 · 수동 저장 · 복원)</small></h3>
           <div id="sec-snapshots"></div>
           <h3 style="margin-top:14px">감사 로그 <small class="muted">(logs/audit.jsonl — 누가 언제 무엇을)</small></h3>
           <div id="sec-audit"></div>
         </div>
       </div>
-      <div class="muted small" style="margin-top:8px">설정 파일: <code id="sec-path"></code> · SSO(OIDC/헤더) 설정과 역할 매핑은 docs/SECURITY.md</div>
+      <div class="muted small" style="margin-top:8px">설정 파일: <code id="sec-path"></code> · SSO(OIDC/헤더) 설정과 역할 매핑·권한 표·API 키는 docs/SECURITY.md</div>
     </section>
 
     <!-- ================= OBSERVABILITY ================= -->

@@ -42,11 +42,12 @@
   const next = new URLSearchParams(location.search).get('next') || '/';
   try { const t = localStorage.getItem('llmwiki.theme'); if (t && t !== 'auto' && t !== 'light') document.documentElement.dataset.theme = t; else if (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.dataset.theme = 'dark'; } catch (e) {}
   fetch('/api/auth/me').then((r) => r.json()).then((j) => {
-    if (j.user) { location.replace(next); return; }
+    if (j.user && j.user.via !== 'anon') { location.replace(next); return; }
     if (j.mode === 'off') { location.replace('/'); return; }
     if (j.sso) { $('#sso').classList.remove('hidden'); $('#sso-link').textContent = j.sso_label || '사내 SSO 로 로그인'; $('#sso-link').href = '/auth/sso/start?next=' + encodeURIComponent(next); }
-    if (!j.local) { $('#local').classList.add('hidden'); $('#or').classList.add('hidden'); if (!j.sso) $('#note').textContent = '로그인 방법이 설정되어 있지 않습니다. 관리자: python -m llmwiki users add <id> --role admin'; }
-    else $('#note').textContent = '계정이 없으면 관리자에게 요청하세요 (users add). ' + (j.sso ? 'SSO 계정은 그룹에 따라 역할이 부여됩니다.' : '');
+    const guest = j.anonymous_role ? ' 로그인 없이도 게스트(' + j.anonymous_role + ') 권한으로 조회·질의는 가능합니다: <a href="/">게스트로 계속 →</a>' : '';
+    if (!j.local) { $('#local').classList.add('hidden'); $('#or').classList.add('hidden'); if (!j.sso) $('#note').innerHTML = '로그인 방법이 설정되어 있지 않습니다. 관리자: python -m llmwiki users add &lt;id&gt; --role admin' + guest; else $('#note').innerHTML = guest; }
+    else $('#note').innerHTML = '계정이 없으면 관리자에게 요청하세요 (users add). 역할: ' + (j.roles || []).join(' < ') + '. ' + (j.sso ? 'SSO 계정은 그룹에 따라 역할이 부여됩니다.' : '') + guest;
   }).catch(() => {});
   $('#f').addEventListener('submit', async (e) => {
     e.preventDefault(); $('#b').disabled = true; $('#err').textContent = '';

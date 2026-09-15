@@ -1,0 +1,76 @@
+{
+  "_comment": "security.json 원본 (setup/security.example.json → 루트 security.json 으로 복사). 설명: docs/SECURITY.md. users 는 비어 있으니 첫 admin 을 만든다: python -m llmwiki users add <id> --role admin  (비밀번호 프롬프트/--password). 그 뒤 serve --host 0.0.0.0 로 공개.",
+  "_how": {
+    "mode": "auto = 127.0.0.1 바인드면 로그인 없음(로컬 admin), 그 외 바인드면 로그인 필요 | on = 항상 로그인 | off = 항상 로컬 admin(공개 금지)",
+    "anonymous_role": "로그인 없이 접속한 사람(게스트)의 역할. viewer = DB 를 바꾸지 않는 모든 기능(질의·검색·포렌식·피드백·제안). '' 이면 게스트 접속 불가(로그인 페이지로)",
+    "permissions.levels": "작업 등급별 최소 역할. read<run<edit<index<rebuild<admin<destructive. 역할 순서 viewer<class3<class2<class1<builder<admin",
+    "permissions.ops": "개별 작업 오버라이드. 키 = 감사 로그의 op 이름 (예 '/api/eval', 'cli:trial run', '*' 접두는 미분류 경로). 값 = 최소 역할",
+    "cli": "CLI 실행자의 기본 역할(default_role). 공용 서버에서 viewer 로 낮추면 스케줄러/스크립트는 --user 또는 .env LLMWIKI_USER/LLMWIKI_API_KEY 로 로그인",
+    "api_keys": "apikey add <이름> --role <역할> 로 생성 (토큰 lwk_… 은 생성 시 한 번만 표시, 여기엔 sha256 해시만 저장). MCP HTTP 클라이언트·스크립트용",
+    "sso": "OIDC(issuer/client_id/redirect_uri + .env LLMWIKI_OIDC_CLIENT_SECRET) 또는 리버스 프록시 헤더(header.user/groups + trusted_proxies). role_map 의 그룹명 → 역할",
+    "destructive": "전체 리빌드·스냅샷 복원·로그 삭제·설정 초기화: 확인 문구(confirm_phrase) + 비밀번호 재입력(require_reauth) + 자동 스냅샷(snapshot_before)"
+  },
+  "mode": "auto",
+  "session_hours": 12,
+  "secure_cookie": "auto",
+  "anonymous_role": "viewer",
+  "local": {
+    "enabled": true,
+    "min_password_len": 8
+  },
+  "sso": {
+    "enabled": false,
+    "type": "oidc",
+    "button_label": "사내 SSO 로 로그인",
+    "issuer": "",
+    "client_id": "",
+    "client_secret_env": "LLMWIKI_OIDC_CLIENT_SECRET",
+    "redirect_uri": "",
+    "scopes": "openid profile email",
+    "username_claim": "preferred_username",
+    "email_claim": "email",
+    "groups_claim": "groups",
+    "role_map": {
+      "admin": ["wiki-admins"],
+      "builder": ["wiki-builders"],
+      "class1": [],
+      "class2": [],
+      "class3": []
+    },
+    "default_role": "viewer",
+    "allowed_domains": [],
+    "ca_bundle": "",
+    "header": {
+      "user": "X-Forwarded-User",
+      "groups": "X-Forwarded-Groups",
+      "trusted_proxies": ["127.0.0.1", "::1"]
+    }
+  },
+  "users": {},
+  "api_keys": {},
+  "permissions": {
+    "levels": {
+      "read": "viewer",
+      "run": "class3",
+      "edit": "class2",
+      "index": "class1",
+      "rebuild": "builder",
+      "admin": "admin",
+      "destructive": "admin"
+    },
+    "ops": {}
+  },
+  "cli": {
+    "default_role": "admin",
+    "require_login": false
+  },
+  "destructive": {
+    "confirm_phrase": "DELETE INDEX",
+    "require_reauth": true,
+    "snapshot_before": true,
+    "snapshot_keep": 3
+  },
+  "warn": {
+    "confirm": true
+  }
+}

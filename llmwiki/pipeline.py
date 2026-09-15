@@ -44,7 +44,10 @@ from . import prompts as _prompts
 from . import logging_setup as _log
 from . import progress as _pg
 from .providers import parse_json, LLMError
+from . import providers as _providers
 from .buildlock import BuildLock, BuildLockedError
+
+BUILD_CHANNELS = ("fts", "vector", "graph")
 
 
 class Pipeline:
@@ -265,8 +268,9 @@ class Pipeline:
     # BUILD
     # =====================================================================
     def build(self, full: bool = False, progress=None, debug: Optional[int] = None, force: bool = False,
-              health: Optional[bool] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """force=True: health 실패/락 대기 없이 강행. health=None 이면 toggles.health_check 를 따름."""
+              health: Optional[bool] = None, channels: Optional[List[str]] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """force=True: health 실패/락 대기 없이 강행. health=None 이면 toggles.health_check 를 따름.
+        channels: ['fts','vector','graph'] 중 이번 빌드에서 처리할 채널만 (없는 채널의 단계는 skipped). 문서 로드·청킹은 항상 수행."""
         with self._lock:
             lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="build")
             try:
@@ -274,15 +278,36 @@ class Pipeline:
             except BuildLockedError as e:
                 _log.log("warning", "build refused: %s" % e, "build")
                 raise
+            saved = None
+            if channels:
+                chs = {c.strip().lower() for c in channels if c.strip()}
+                bad = chs - set(BUILD_CHANNELS)
+                if bad:
+                    lock.release()
+                    raise ValueError("unknown channel(s) %s (fts|vector|graph)" % sorted(bad))
+                t = self.s.toggles
+                saved = {k: getattr(t, k) for k in ("build_fts", "embed", "rule_graph", "llm_graph", "doc_vector", "wiki_pages", "communities")}
+                t.build_fts = t.build_fts and "fts" in chs
+                t.embed = t.embed and "vector" in chs
+                t.doc_vector = t.doc_vector and "vector" in chs
+                if "graph" not in chs:
+                    t.rule_graph = t.llm_graph = t.wiki_pages = t.communities = False
             try:
-                return self._build(full, progress, debug, force, health)
+                res, tr = self._build(full, progress, debug, force, health)
+                if channels:
+                    res["channels"] = sorted(chs)
+                return res, tr
             finally:
+                if saved:
+                    for k, v in saved.items():
+                        setattr(self.s.toggles, k, v)
                 lock.release()
 
     def _build(self, full: bool, progress, debug: Optional[int], force: bool = False,
                health: Optional[bool] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         s, t = self.s, self.s.toggles
         prof = Profiler("build", debug=self.s.debug_level if debug is None else debug, log=t.log_stages)
+        _providers.reset_incidents()
         incremental = (not full) and t.incremental
         result: Dict[str, Any] = {"mode": "incremental" if incremental else "full", "alerts": []}
         error: Optional[str] = None
@@ -372,7 +397,7 @@ class Pipeline:
 
             # ---- 3. chunk_index (+ 문서 계약: front matter → doc_meta, lint, 메타 토큰) ----
             doc_meta_changed: Dict[str, Dict[str, Any]] = {}
-            with prof.stage("chunk_index", docs=len(changed), trigram=bool(t.fts_trigram), schema_lint=bool(t.schema_lint)) as st:
+            with prof.stage("chunk_index", docs=len(changed), trigram=bool(t.fts_trigram), schema_lint=bool(t.schema_lint), fts=bool(t.build_fts)) as st:
                 removed_touched: List[str] = []
                 for d in removed:
                     removed_touched.extend(self.store.entities_for_chunks(self.store.chunk_ids_of_docs([d])))
@@ -396,7 +421,7 @@ class Pipeline:
                         nm = _schema.normalize_meta(fm, d.doc_id, d.title, d.text, d.mtime)
                         lint = _schema.lint_document(fm, nm, d.text, bool(fm)) if t.schema_lint else []
                     extra = _schema.meta_tokens(nm)
-                    self.store.upsert_doc(d, chunks, tokenize_for_fts, extra_tokens=extra, trigram=bool(t.fts_trigram))
+                    self.store.upsert_doc(d, chunks, tokenize_for_fts, extra_tokens=extra, trigram=bool(t.fts_trigram), fts=bool(t.build_fts))
                     self.store.upsert_doc_meta(nm, lint)
                     doc_meta_changed[d.doc_id] = nm
                     ne = sum(1 for x in lint if x["level"] == "error")
@@ -426,7 +451,9 @@ class Pipeline:
                 result["lint"] = {"errors": lint_err, "warnings": lint_warn, "inferred": inferred, "doc_types": lint_by_type}
                 if lint_err:
                     result["alerts"].append({"level": "warn", "check": "schema_lint", "detail": "%d docs with schema errors (corpus lint 로 확인)" % lint_err})
-                report("indexed %d chunks (FTS)%s" % (n_chunks, " lint errors=%d" % lint_err if lint_err else ""))
+                if not t.build_fts and changed:
+                    result["alerts"].append({"level": "warn", "check": "build_fts", "detail": "build_fts off — %d docs 의 FTS 행을 쓰지 않음 (build fts 로 재색인)" % len(changed), "fix": "build fts"})
+                report("indexed %d chunks%s%s" % (n_chunks, " (FTS)" if t.build_fts else " (FTS skipped: build_fts off)", " lint errors=%d" % lint_err if lint_err else ""))
 
             # ---- 4. embed (재개·캐시·적응형 배치·진행률) ----
             n_missing = len(self.store.missing_embeddings(self.embedder.name)) if t.embed else 0
@@ -598,6 +625,13 @@ class Pipeline:
             _log.log("error", "build failed: %s" % error, "build")
             raise
         finally:
+            from .query_engine import llm_report_from_incidents
+            rep = llm_report_from_incidents(_providers.drain_incidents())
+            if rep:
+                result["llm_report"] = rep
+                if t.llm_failure_report:
+                    result.setdefault("alerts", []).append({"level": "warn", "check": "llm_failures", "detail": "; ".join(rep["summary"])[:400],
+                                                            "fix": "agents.json timeout_s/retries · config llm_timeout/llm_retries · models test --live"})
             trace = prof.finish()
             result["ms"] = trace["ms"]
             result["tokens"] = trace["summary"]["llm"]
@@ -607,6 +641,189 @@ class Pipeline:
                     "build", "%s build: %s docs, %s changed, %s removed" % (result["mode"], result.get("docs", "?"),
                                                                         result.get("changed", "?"), result.get("removed", "?")),
                     trace, {k: v for k, v in result.items() if k != "stats"}, {"toggles": t.__dict__}, error, keep=s.keep_requests)
+            except Exception:
+                pass
+        return result, trace
+
+    # =====================================================================
+    # CHANNEL BUILD (fts | vector | graph — 하나만 다시 만든다)
+    # =====================================================================
+    def build_channel(self, channel: str, full: bool = False, progress=None, debug: Optional[int] = None, force: bool = False) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """chunks 는 그대로 두고 한 채널의 산출물만 다시 만든다.
+          fts    : chunks_fts(+chunks_tri) 를 전부 다시 씀 (토크나이저·복합어·메타 토큰 변경 후). 임베딩·그래프 불변.
+          vector : 임베딩 없는 청크만(기본) 또는 전부(full; hash 는 IDF 재적합) 임베딩. FTS·그래프 불변. doc_vector 토글이 켜져 있으면 문서 카드도 재생성.
+          graph  : 그래프 테이블을 비우고 전체 청크에서 재추출 + 커뮤니티 + doc_refs + 위키 페이지. FTS·임베딩 불변.
+        끝나면 verify(요약)·build_version 증가(캐시 무효화)·warm_cache. requests 테이블에 kind=build 로 기록."""
+        channel = str(channel or "").strip().lower()
+        if channel not in BUILD_CHANNELS:
+            raise ValueError("unknown channel %r (fts|vector|graph)" % channel)
+        with self._lock:
+            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="build %s" % channel)
+            lock.acquire()
+            try:
+                return self._build_channel(channel, full, progress, debug, force)
+            finally:
+                lock.release()
+
+    def _build_channel(self, channel: str, full: bool, progress, debug: Optional[int], force: bool) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        s, t = self.s, self.s.toggles
+        prof = Profiler("build", debug=self.s.debug_level if debug is None else debug, log=t.log_stages)
+        _providers.reset_incidents()
+        result: Dict[str, Any] = {"mode": "channel:%s" % channel, "channel": channel, "full": bool(full), "alerts": []}
+        error: Optional[str] = None
+
+        def report(msg: str) -> None:
+            _log.log("info", msg, "build")
+            _pg.note(msg)
+            if progress:
+                progress(msg)
+
+        try:
+            n_chunks = int(self.store.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+            if n_chunks == 0:
+                raise RuntimeError("chunks 가 없습니다 — 먼저 build (전체 빌드) 로 문서를 청킹하세요")
+            before = {"fts": self.store.conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0],
+                      "embeddings": self.store.conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0],
+                      "entities": self.store.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
+                      "relations": self.store.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]}
+            with prof.stage("build_channel", channel=channel, full=bool(full), chunks=n_chunks) as st0:
+                self._init_text_plugins()
+                if channel == "fts":
+                    with prof.stage("reindex_fts", trigram=bool(t.fts_trigram), tokenizer=self.tokenizer) as st:
+                        r = self.store.reindex_fts(tokenize_for_fts, _schema.meta_tokens, trigram=bool(t.fts_trigram),
+                                                   progress=lambda i, n, d: _pg.tick(i, n, d))
+                        st.note(**r)
+                        result["reindexed"] = r
+                        report("fts reindexed: %d chunks in %d docs" % (r["chunks"], r["docs"]))
+                    if t.fts_optimize:
+                        t0 = time.perf_counter()
+                        self.store.fts_optimize()
+                        result["fts_optimize_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+                elif channel == "vector":
+                    if not t.embed and not force:
+                        raise RuntimeError("toggles.embed 가 꺼져 있습니다 (--embed 또는 --force)")
+                    from .embed_run import EmbedRunner
+                    self._ensure_providers(prof, ())
+                    emb = self.embedder
+                    with prof.stage("embed", provider=emb.name, model=getattr(emb, "model", None), adaptive=bool(t.embed_adaptive), dtype=s.embed_store_dtype, full=bool(full)) as st:
+                        all_chunks = self.store.all_chunks()
+                        if isinstance(emb, HashEmbedder):
+                            have_idf = emb._idf is not None or bool(self.store.kv_get("hash_idf"))
+                            if full or not have_idf:
+                                emb.fit_idf([c["heading"] + "\n" + c["text"] for c in all_chunks])
+                                self.store.kv_set("hash_idf", emb._idf.tolist())
+                                todo = all_chunks
+                                st.note(idf_refit=True)
+                            else:
+                                missing = set(self.store.missing_embeddings(emb.name))
+                                todo = [c for c in all_chunks if c["chunk_id"] in missing]
+                        else:
+                            if full:
+                                todo = all_chunks
+                            else:
+                                missing = set(self.store.missing_embeddings(emb.name))
+                                todo = [c for c in all_chunks if c["chunk_id"] in missing]
+                        if full and emb.name != "hash":
+                            # 캐시를 지우진 않지만 embeddings 행은 새로 만든다 (같은 내용은 캐시 적중 → 비용 0)
+                            pass
+                        runner = EmbedRunner(self.store, emb, s, prof.run_id, report, adaptive=bool(t.embed_adaptive))
+                        er = runner.run(todo, dtype=s.embed_store_dtype)
+                        st.note(todo=len(todo), **{k: v for k, v in er.items() if k not in ("alerts", "failed_ids")})
+                        result["embedded"] = er["embedded"]
+                        result["embed"] = {k: v for k, v in er.items() if k != "alerts"}
+                        for a in er.get("alerts", []):
+                            result["alerts"].append({"level": a["level"], "check": "embed", "detail": a["msg"]})
+                        pruned = self.store.prune_embeddings(emb.name)
+                        result["pruned_other_provider"] = pruned
+                        report("embedded %d chunks (todo %d, cache %d, failed %d, pruned other provider %d)" % (er["embedded"], len(todo), er["cache_hits"], er["failed"], pruned))
+                    if t.doc_vector:
+                        from .precompute import build_doc_vectors
+                        with prof.stage("doc_vectors") as st:
+                            dv = build_doc_vectors(self, None)
+                            st.note(**dv)
+                            result["doc_vectors"] = dv.get("doc_vectors")
+                elif channel == "graph":
+                    if not (t.rule_graph or t.llm_graph) and not force:
+                        raise RuntimeError("toggles.rule_graph / llm_graph 가 모두 꺼져 있습니다 (--rule-graph 또는 --force)")
+                    self._ensure_providers(prof, ("extract", "summary") if (t.llm_graph or t.community_summary) else ())
+                    with prof.stage("graph_build", full=True) as st:
+                        self.store.clear_graph()
+                        chunks = self.store.all_chunks()
+                        dmeta = {r["doc_id"]: self.store._meta_row(r) for r in self.store.conn.execute("SELECT * FROM doc_meta")}
+                        titles = {d["doc_id"]: d["title"] for d in self.store.list_docs()}
+                        gstats = build_graph_for_chunks(self.store, chunks, titles, prof, self.rules if (t.rule_graph or force) else None,
+                                                        self.llm_for("extract") if t.llm_graph else None, t.llm_graph,
+                                                        self.s.role_llm("extract")["effort"], s.llm_graph_budget, s.llm_graph_min_chars,
+                                                        doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report)
+                        gstats.pop("touched", None)
+                        fin = finalize_graph(self.store, prof, bool(t.communities), self.llm_for("summary"), t.community_summary,
+                                             self.s.role_llm("summary")["effort"], None, "" if t.communities else "disabled")
+                        st.note(**gstats, **fin, provenance=self.store.provenance_counts())
+                        result["graph"] = dict(gstats, **fin)
+                        report("graph rebuilt: entities touched=%s explicit=%s id_links=%s" % (gstats.get("touched_entities"), gstats.get("explicit_relations"), gstats.get("id_relations")))
+                    if t.wiki_pages:
+                        result["wiki"] = write_wiki(self.store, s.wiki_dir, prof, min_degree=_tuning.T.get("wiki_min_degree"), prune=True, only=None)
+                    n_orph, _names = self.store.prune_orphan_entities(return_names=True)
+                    result["pruned"] = {"orphan_entities": n_orph, "dangling": self.store.prune_dangling()}
+                self.store.commit()
+                self.store.wal_checkpoint()
+                after = {"fts": self.store.conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0],
+                         "embeddings": self.store.conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0],
+                         "entities": self.store.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
+                         "relations": self.store.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]}
+                result["counts_before"], result["counts_after"] = before, after
+                # 독립성 확인: 다른 채널의 행 수는 그대로여야 한다
+                untouched = {"fts": ("embeddings", "entities", "relations"), "vector": ("fts", "entities", "relations"), "graph": ("fts", "embeddings")}[channel]
+                changed_other = [k for k in untouched if before[k] != after[k]]
+                if changed_other:
+                    result["alerts"].append({"level": "warn", "check": "channel_isolation", "detail": "다른 채널의 행 수가 바뀜: %s" % changed_other})
+                st0.note(before=before, after=after, other_channels_unchanged=not changed_other)
+            if t.verify_after_build:
+                with prof.stage("verify") as st:
+                    vr = self.store.verify(self.embedder.name if t.embed else None, fix=False, wiki_dir=s.wiki_dir)
+                    problems = [c for c in vr["checks"] if not c["ok"]]
+                    st.note(ok=vr["ok"], problems=[(c["name"], c["count"]) for c in problems])
+                    result["verify"] = {"ok": vr["ok"], "problems": [(c["name"], c["count"]) for c in problems]}
+                    for c in problems:
+                        if c["name"] in ("embedding_coverage", "community_unassigned") and channel != "vector":
+                            continue
+                        result["alerts"].append({"level": "warn", "check": "verify:" + c["name"], "detail": "%s (%d)" % (c["detail"], c["count"]),
+                                                 "fix": "build verify --fix" if c.get("fixable") else ""})
+            lb = self.store.kv_get("last_build") or {}
+            lb = dict(lb, channel_build={"channel": channel, "ts": time.time(), "full": bool(full), "alerts": result["alerts"][:10]})
+            self.store.kv_set("last_build", lb)
+            result["build_version"] = self.store.bump_build_version()
+            self._seen_version = result["build_version"]
+            self._qcache.clear()
+            self.store.invalidate_caches()
+            if t.warm_cache:
+                with prof.stage("warm_cache") as st:
+                    info: Dict[str, Any] = {}
+                    if t.embed:
+                        ids, mat = self.store.vector_matrix(self.embedder.name)
+                        info["vectors"] = len(ids)
+                    info["entities_indexed"] = len(self.store.entity_index())
+                    st.note(**info)
+            result["stats"] = self.store.stats()
+        except Exception as e:
+            error = "%s: %s" % (type(e).__name__, e)
+            result["error"] = error
+            _log.log("error", "channel build failed: %s" % error, "build")
+            raise
+        finally:
+            from .query_engine import llm_report_from_incidents
+            rep = llm_report_from_incidents(_providers.drain_incidents())
+            if rep:
+                result["llm_report"] = rep
+                if t.llm_failure_report:
+                    result.setdefault("alerts", []).append({"level": "warn", "check": "llm_failures", "detail": "; ".join(rep["summary"])[:400]})
+            trace = prof.finish()
+            result["ms"] = trace["ms"]
+            result["tokens"] = trace["summary"]["llm"]
+            result["run_id"] = trace.get("run_id")
+            try:
+                result["request_id"] = self.store.log_request("build", "channel build: %s%s" % (channel, " (full)" if full else ""), trace,
+                                                              {k: v for k, v in result.items() if k != "stats"}, {"toggles": t.__dict__}, error, keep=s.keep_requests)
             except Exception:
                 pass
         return result, trace
@@ -846,7 +1063,8 @@ class Pipeline:
                 res, tr = self.query(qd["q"], log=log)
                 chunks = {h["chunk_id"]: {"text": h["text"]} for h in res["hits"]}
                 sc = score_result(qd, res["hits"], chunks, res["answer"], k)
-                rows.append(dict(sc, q=qd["q"], ms=tr["ms"], top=[h["chunk_id"] for h in res["hits"][:k]],
+                from .evalset import primary_hits
+                rows.append(dict(sc, q=qd["q"], ms=tr["ms"], top=[h["chunk_id"] for h in primary_hits(res["hits"])[:k]],
                                  tokens=res.get("tokens", {}).get("total_tokens", 0), cached=res.get("cached", False),
                                  request_id=res.get("request_id"), run_id=res.get("run_id")))
         agg = aggregate(rows)

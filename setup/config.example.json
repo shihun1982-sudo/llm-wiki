@@ -55,6 +55,15 @@
   "openai_embed_model": "",
   "anthropic_base_url": "",
   "llm_timeout": 600,
+  "llm_retries": 3,
+  "llm_retry_backoff_s": 2.0,
+  "web_host": "127.0.0.1",
+  "web_port": 8765,
+  "mcp_transport": "stdio",
+  "mcp_host": "127.0.0.1",
+  "mcp_port": 8766,
+  "mcp_url": "",
+  "mcp_plugins_dir": "plugins/mcp_tools",
   "rerank_url": "",
   "rerank_api_model": "",
   "rerank_api_style": "cohere",
@@ -73,9 +82,10 @@
     "query_rules": true, "time_scope": true, "query_expand": false, "query_decompose": false,
     "evidence_check": true, "evidence_check_llm": false, "fallback_loop": false,
     "claim_check": true, "claim_check_llm": false, "answer_refine": false, "evidence_compress": false, "router_llm": false,
-    "pins": true, "precompute": false, "doc_vector": false, "feedback_boost": false, "forensic_auto": true, "mcp_sources": false,
+    "pins": true, "precompute": false, "doc_vector": false, "feedback_boost": false, "forensic_auto": true, "mcp_sources": false, "external_rag": false, "mcp_federation": false,
     "embed_adaptive": true, "fts_trigram": false, "schema_lint": true, "explicit_relations": true, "precompute_after_build": false, "verify_after_build": true,
     "memory_decay": true, "evolve_from_forensics": true,
-    "auto_build": false, "health_check": true, "log_stages": true, "profile_expansion": false
+    "auto_build": false, "health_check": true, "log_stages": true, "profile_expansion": false,
+    "build_fts": true, "doc_expand": true, "llm_failure_report": true
   }
 }

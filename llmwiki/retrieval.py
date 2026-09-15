@@ -508,6 +508,10 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
             head_hit = any(k in head for k in kws)
             # 다중 소스 합의 보너스 + 커버리지 + 길이 패널티(너무 짧은 청크) + 헤딩 일치 보너스
             consensus = len(h.ranks) / float(n_src)
+            if h.chunk_id.startswith("ext:"):
+                # 외부 RAG 결과는 리스트가 하나뿐이라 내부 채널 합의와 비교할 수 없다 → 그 소스 안의 순위(1/rank)를 합의값으로 쓴다
+                ext_ranks = [r for n_, r in h.ranks.items() if n_.startswith("ext_")]
+                consensus = 1.0 / float(min(ext_ranks)) if ext_ranks else 0.0
             h.rerank = round(w_cover * cover + w_cons * consensus + w_len * min(1.0, len(c["text"]) / 400.0) + (w_head if head_hit else 0.0), 4)
         ranked = sorted(cands, key=lambda h: (-(h.rerank or 0), -h.fused))
         st.note(top=[(h.chunk_id, h.rerank) for h in ranked[:5]], keywords=kws)

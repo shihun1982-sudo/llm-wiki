@@ -49,7 +49,11 @@ window.LW = (function () {
     const opts = body === undefined ? { headers: { 'X-Requested-With': 'llmwiki' } } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'llmwiki' }, body: JSON.stringify(body) };
     const r = await fetch(path, opts);
     let j; try { j = await r.json(); } catch (e) { j = { error: 'invalid response ' + r.status }; }
-    if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j; }
+    if (r.status === 401) {
+      // 게스트(anonymous_role)가 상위 작업을 눌렀을 때는 화면을 버리지 않고 로그인 안내만 (need 가 있으면 어떤 역할이 필요한지 표시)
+      if (j && j.need && STATE.auth && STATE.auth.user && STATE.auth.user.via === 'anon') { toast('로그인 필요: ' + (j.need.op || path) + ' 은(는) ' + (j.need.role || '') + ' 이상 (게스트 ' + STATE.auth.user.role + ')'); if (confirm('이 작업은 로그인이 필요합니다 (' + (j.need.role || '') + ' 이상). 로그인 화면으로 이동할까요?')) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j; }
+      location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j;
+    }
     if (r.status === 428 && j && j.need && !_retry) {
       const extra = await stepUp(j.need, path);
       if (!extra) { toast('취소됨'); return { error: 'cancelled', cancelled: true }; }
@@ -195,7 +199,8 @@ window.LW = (function () {
     if (ub) {
       const a = j.auth || {}, u = a.user || {};
       if (a.mode === 'off') { ub.innerHTML = `<span title="security.json mode=off/auto(loopback): 로그인 없음. 파괴적 작업은 확인 문구만 요구">🔓 로그인 없음 (local admin)</span>`; }
-      else { ub.innerHTML = `<span title="via ${esc(u.via || '')}">👤 ${esc(u.name || '?')} <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-logout" title="로그아웃">⎋</a>`; const lo = $('#btn-logout'); if (lo) lo.onclick = async (e) => { e.preventDefault(); await api('/api/auth/logout', {}); location.href = '/login'; }; }
+      else if (u.via === 'anon') { ub.innerHTML = `<span title="로그인하지 않은 접속자 — security.json anonymous_role(${esc(u.role || '')}) 권한. 상위 작업은 로그인 필요">👥 게스트 <small>(${esc(u.role || '')})</small></span> <a href="/login?next=${encodeURIComponent(location.pathname + location.hash)}" title="로그인">로그인 →</a>`; }
+      else { ub.innerHTML = `<span title="via ${esc(u.via || '')} · 역할 순서 ${esc((a.roles || []).join(' < '))}">👤 ${esc(u.name || '?')} <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-logout" title="로그아웃">⎋</a>`; const lo = $('#btn-logout'); if (lo) lo.onclick = async (e) => { e.preventDefault(); await api('/api/auth/logout', {}); location.href = '/login'; }; }
       document.body.dataset.role = u.role || 'admin';
     }
     const al = j.alerts || [];

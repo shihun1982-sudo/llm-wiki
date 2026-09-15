@@ -16,14 +16,35 @@ from typing import Any, Dict, List, Optional, Tuple
 from .answer import build_context, generate_answer, check_claims, check_claims_llm, apply_claim_policy, refine_answer
 from .profiler import Profiler
 from .providers import parse_json, LLMError
+from . import providers as _providers
 from .retrieval import fts_search, vector_search, graph_search, rerank, route, Hit, parse_weight_map
-from .textutil import keywords
+from .textutil import keywords, words, normalize_token
 from . import evidence as _ev
 from . import fusion as _fusion
 from . import logging_setup as _log
 from . import prompts as _prompts
 from . import timeparse as _time
 from . import tuning as _tuning
+
+# LLM 역할이 최종 실패했을 때 파이프라인이 자동으로 타는 대체 경로 (llm_report 설명용)
+ROLE_FALLBACK = {"answer": "추출식 답변(원문 문장 구조화)으로 대체", "rerank": "로컬 휴리스틱 리랭크로 대체", "expand": "LLM 질의 확장 생략(규칙 확장만)",
+                 "verify": "휴리스틱 근거/claim 판정만 사용", "forensic": "휴리스틱 포렌식 소견만", "extract": "규칙 기반 그래프만", "summary": "커뮤니티 요약 생략",
+                 "review": "LLM 리뷰 생략"}
+
+
+def llm_report_from_incidents(incidents: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """providers 의 incident 목록 → 결과에 실을 보고서 {failures, fallbacks, summary}."""
+    if not incidents:
+        return None
+    fallbacks = []
+    lines = []
+    for f in incidents:
+        fb = ROLE_FALLBACK.get(f.get("role"), "해당 단계 생략")
+        fallbacks.append({"role": f.get("role"), "fallback": fb})
+        last = (f.get("errors") or ["?"])[-1]
+        lines.append("%s(%s/%s) %d회 시도 후 실패%s — %s → %s" % (f.get("role"), f.get("provider"), f.get("model"), f.get("attempts"),
+                                                               " (timeout %ss)" % f.get("timeout_s") if "timeout" in str(last).lower() else "", str(last)[:160], fb))
+    return {"failures": incidents, "fallbacks": fallbacks, "summary": lines}
 
 DOC_TYPE_HINTS = {
     "issue": ("이슈", "issue", "문제", "장애", "결함", "버그", "현상", "원인"),
@@ -95,12 +116,18 @@ class RoundConfig:
 class QueryEngine:
     def __init__(self, pipe):
         self.pipe = pipe
+        self.rounds: List[Dict[str, Any]] = []     # 검색 라운드 내부 상태 캡처 (forensic expect 가 단계별 순위를 읽는다)
+        self.record_request = True                 # False 면 requests 테이블에 남기지 않는다 (forensic expect 의 재실행)
 
     # ---------------------------------------------------------------- 진입
     def run(self, q: str, log: bool = True, debug: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         p = self.pipe
         s, t, T = p.s, p.s.toggles, _tuning.T
+        if debug is None and t.analysis_mode:
+            debug = max(2, int(s.debug_level or 0))      # 상세 분석 모드: 단계별 debug + 프롬프트/응답 샘플까지 남긴다
         prof = Profiler("query", debug=s.debug_level if debug is None else debug, log=t.log_stages)
+        _providers.reset_incidents()
+        self.rounds = []
         _log.log("info", "query: %s" % q[:200], "query")
         with prof.stage("sync_index") as st:
             st.note(build_version=p.store.build_version(), reloaded_caches=p.sync_with_db())
@@ -339,6 +366,14 @@ class QueryEngine:
             prof.skipped("claim_check")
         ans["cited"] = sorted(set(int(n) for n in __import__("re").findall(r"\[C(\d+)\]", ans["answer"])))
 
+        # ---- LLM 실패 보고 (재시도 후에도 실패한 호출과 그때 탄 대체 경로) ----
+        llm_report = llm_report_from_incidents(_providers.drain_incidents())
+        if llm_report and t.llm_failure_report:
+            if any(f.get("role") == "answer" for f in llm_report["failures"]) and ans["mode"] != "llm":
+                ans["answer"] = ("> ⚠ LLM 실행 보고: %s\n> 지금까지의 검색 결과(근거 %d건)로 아래 답변을 구성했습니다. 설정: agents.json timeout_s/retries · config.json llm_timeout/llm_retries.\n\n"
+                                 % (" · ".join(llm_report["summary"]), len(ctx["citations"]))) + ans["answer"]
+            _log.log("warning", "llm failures in query: %s" % "; ".join(llm_report["summary"]), "query")
+
         # ---- 결과 ----
         hit_dicts = self._hit_dicts(final, chunks, ctx, fts_snips)
         groundedness = claims_info["groundedness"] if claims_info else None
@@ -347,7 +382,7 @@ class QueryEngine:
             "hits": hit_dicts, "route": route_info, "graph": {k: v for k, v in graph_res.items() if k != "chunks"},
             "plan": plan, "evidence": dict(ev or {}, llm=llm_ev, verdict=verdict) if t.evidence_check else None, "fallback": rounds,
             "claims": {k: v for k, v in (claims_info or {}).items() if k != "claims"} if claims_info else None, "groundedness": groundedness,
-            "boosts": R.get("boost_stats"),
+            "boosts": R.get("boost_stats"), "doc_expand": R.get("expand_info"), "llm_report": llm_report,
             "config": {"toggles": dict(t.__dict__), "weights": R["weights"], "llm": al.name, "llm_model": al.model,
                        "rerank_llm": p.llm_for("rerank").describe().get("model"), "embedder": p.embedder.name,
                        "tuning": _tuning.T.to_dict(), "alt_queries": alt_llm, "round": R["cfg"].to_dict()},
@@ -367,10 +402,16 @@ class QueryEngine:
         if log and t.evolve_capture:
             result["query_id"] = p.store.log_query(q, result["config"], [h.chunk_id for h in final], ans["answer"],
                                                    {"top_fused": final[0].fused if final else 0, "n_hits": len(final), "verdict": verdict, "groundedness": groundedness}, trace)
-        result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None, keep=s.keep_requests)
+        # requests 에는 hits 전문 대신 요약(hits_brief) 을 남긴다 — forensic expect 가 '원 요청에서 이 청크가 어디까지 갔나' 를 읽는다
+        result["hits_brief"] = [{"chunk_id": h["chunk_id"], "n": h.get("n"), "in_context": bool(h.get("in_context")), "why": h.get("why"),
+                                 "fused": h.get("fused"), "rerank": h.get("rerank")} for h in hit_dicts]
+        if self.record_request:
+            result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None, keep=s.keep_requests)
+        else:
+            result["request_id"] = None
         # ---- 포렌식 자동 ----
-        need_forensic = t.forensic_auto and (verdict != "sufficient" or ans["mode"] == "insufficient" or
-                                             (groundedness is not None and groundedness < float(T.get("claim_min_groundedness"))))
+        need_forensic = self.record_request and t.forensic_auto and (verdict != "sufficient" or ans["mode"] == "insufficient" or
+                                                                     (groundedness is not None and groundedness < float(T.get("claim_min_groundedness"))))
         if need_forensic:
             from . import forensic as _fx
             try:
@@ -380,18 +421,24 @@ class QueryEngine:
                 _log.log("warning", "forensic recorded #%s (%s)" % (fid, diag["severity"]), "query", request_id=result["request_id"], verdict=verdict)
             except Exception as e:
                 result["forensic"] = {"error": str(e)[:200]}
-        if log and t.evolve_capture:
+        if log and t.evolve_capture and self.record_request:
             from . import memory as _mem
             try:
                 _mem.record_episode(p.store, result["request_id"], q, "query", ans["mode"] if ans["mode"] != "llm" else verdict, [h.chunk_id for h in final],
                                     keywords(q)[:6], {"groundedness": groundedness, "fallback_rounds": len(rounds)})
             except Exception:
                 pass
-        if key:
+        # ---- 상세 분석 리포트 (analysis_mode) ----
+        if t.analysis_mode and self.record_request:
+            from . import analysis as _an
+            result["analysis"] = _an.run_for_result(p, result, trace)
+            if result["analysis"].get("md"):
+                _log.log("info", "analysis report: %s" % result["analysis"]["md"], "query", request_id=result["request_id"])
+        if key and self.record_request:
             p._qcache[key] = {"result": dict(result), "trace": trace}
             while len(p._qcache) > max(1, s.query_cache_size):
                 p._qcache.popitem(last=False)
-        if pkey and t.precompute and ans["mode"] != "insufficient":
+        if pkey and t.precompute and ans["mode"] != "insufficient" and self.record_request:
             from . import precompute as _pc
             try:
                 _pc.put_cached(p.store, pkey, q, result, source="query")
@@ -453,18 +500,100 @@ class QueryEngine:
         for h in final:
             c = chunks.get(h.chunk_id)
             dm = meta.get(c["doc_id"]) if c else None
+            ext = c.get("external") if isinstance(c, dict) else None
             out.append(dict(h.to_dict(), n=cite_n.get(h.chunk_id), in_context=h.chunk_id in cite_n, doc_id=c["doc_id"] if c else "",
                             heading=c["heading"] if c else "", text=c["text"] if c else "", snippet=fts_snips.get(h.chunk_id, ""),
-                            doc_type=(dm or {}).get("doc_type"), ext_id=(dm or {}).get("ext_id"), date=(dm or {}).get("date")))
+                            doc_type=(dm or {}).get("doc_type") or (ext or {}).get("doc_type"), ext_id=(dm or {}).get("ext_id"), date=(dm or {}).get("date"),
+                            **({"external": ext} if ext else {})))
         for cit in ctx["citations"]:
-            if cit.get("kind") == "neighbor" and cit["chunk_id"] in chunks:
+            if cit.get("kind") in ("neighbor", "doc_expand") and cit["chunk_id"] in chunks:
                 c = chunks[cit["chunk_id"]]
                 dm = meta.get(c["doc_id"]) or {}
-                out.append({"chunk_id": cit["chunk_id"], "scores": {}, "ranks": {}, "fused": 0.0, "why": ["neighbor"], "rerank": None, "boosts": {},
+                out.append({"chunk_id": cit["chunk_id"], "scores": {}, "ranks": {}, "fused": 0.0, "why": [cit["kind"]], "rerank": cit.get("score"), "boosts": {},
                             "n": cit["n"], "in_context": True, "doc_id": c["doc_id"], "heading": c["heading"], "text": c["text"], "snippet": "",
-                            "doc_type": dm.get("doc_type"), "ext_id": dm.get("ext_id"), "date": dm.get("date")})
+                            "doc_type": dm.get("doc_type"), "ext_id": dm.get("ext_id"), "date": dm.get("date"), "parent": cit.get("parent")})
         out.sort(key=lambda d: (d["n"] is None, d["n"] or 0))
         return out
+
+    # ---------------------------------------------------------------- 문서 단위 확장 (doc_expand)
+    def _doc_expand(self, store, q: str, final: List[Hit], chunks: Dict[str, Any], T: Any) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
+        """final 의 상위 문서들에서 아직 컨텍스트에 없는 청크를 질의 관련도로 점수화해 추가 후보를 고른다.
+        반환: [(chunk_id, parent_chunk_id, score)], 진단 메타. 점수 = keyword(커버리지) | vector(부모 청크 대비 정규화 코사인) | hybrid."""
+        import numpy as np
+        p = self.pipe
+        kws = keywords(q)
+        top_docs, max_chunks = int(T.get("doc_expand_top_docs")), int(T.get("doc_expand_max_chunks"))
+        min_score, mode, w = float(T.get("doc_expand_min_score")), str(T.get("doc_expand_mode")), float(T.get("doc_expand_w"))
+        have = {h.chunk_id for h in final}
+        docs_order: List[str] = []
+        parent_of: Dict[str, str] = {}
+        for h in final:
+            c = chunks.get(h.chunk_id)
+            if not c:
+                continue
+            if c["doc_id"] not in parent_of:
+                parent_of[c["doc_id"]] = h.chunk_id
+                docs_order.append(c["doc_id"])
+        docs_order = docs_order[:top_docs]
+        qv = None
+        idx: Dict[str, int] = {}
+        mat = None
+        if mode in ("vector", "hybrid") and p.s.toggles.embed:
+            try:
+                ids, mat = store.vector_matrix(p.embedder.name)
+                if ids:
+                    qv = np.asarray(p.embedder.embed([q])[0], dtype=np.float32)
+                    if qv.shape[0] != mat.shape[1]:
+                        qv = None
+                    else:
+                        idx = {cid: i for i, cid in enumerate(ids)}
+            except Exception:
+                qv = None
+
+        def _sim(cid: str) -> Optional[float]:
+            if qv is None or cid not in idx:
+                return None
+            return float(np.asarray(mat[idx[cid]], dtype=np.float32) @ qv)
+
+        out: List[Tuple[str, str, float]] = []
+        per_doc: Dict[str, Any] = {}
+        cand_total = 0
+        for d in docs_order:
+            parent = parent_of[d]
+            psim = _sim(parent)
+            scored = []
+            for r in store.all_chunks(d):
+                cid = r["chunk_id"]
+                if cid in have:
+                    continue
+                text = ((r["heading"] or "") + " " + (r["text"] or "")).lower()
+                toks = set(normalize_token(x) for x in words(text))
+                kw = (sum(1 for k in kws if k in toks or k in text) / float(len(kws))) if kws else 0.0
+                sim = _sim(cid)
+                vs = None
+                if sim is not None:
+                    vs = min(1.0, max(0.0, (sim / psim) if (psim and psim > 0) else sim))
+                if mode == "keyword" or vs is None:
+                    score = kw
+                elif mode == "vector":
+                    score = vs
+                else:
+                    score = w * vs + (1.0 - w) * kw
+                scored.append((round(score, 4), int(r["ordinal"] or 0), cid, round(kw, 3), None if vs is None else round(vs, 3)))
+            cand_total += len(scored)
+            pick = sorted([x for x in scored if x[0] >= min_score], key=lambda x: -x[0])[:max_chunks]
+            pick.sort(key=lambda x: x[1])    # 문서 순서(ordinal)로 컨텍스트에 넣는다
+            for sc, _o, cid, kw, vs in pick:
+                out.append((cid, parent, sc))
+                have.add(cid)
+            per_doc[d] = {"parent": parent, "candidates": len(scored), "added": len(pick),
+                          "picked": [{"chunk": cid, "score": sc, "kw": kw, "vec": vs} for sc, _o, cid, kw, vs in pick],
+                          "best_rejected": max([x[0] for x in scored if x[0] < min_score] or [0.0])}
+        need = [cid for cid, _, _ in out if cid not in chunks]
+        if need:
+            chunks.update(store.get_chunks(need))
+        return out, {"docs": len(docs_order), "candidates": cand_total, "added": len(out), "mode": mode, "vector": qv is not None,
+                     "min_score": min_score, "max_chunks": max_chunks, "per_doc": per_doc}
 
     # ---------------------------------------------------------------- 검색 라운드
     def _retrieve(self, prof: Profiler, q: str, q_search: str, qr: Optional[Dict[str, Any]], route_info: Dict[str, Any], weights: Dict[str, float],
@@ -540,6 +669,31 @@ class QueryEngine:
             w["doc_vector"] = float(T.get("channel_w_doc_vector"))
         else:
             prof.skipped("doc_vector_search")
+        # ---- 외부 RAG 채널 (mcp_sources.json retrieve 매핑) — 결과는 가상 청크 ext:<source>:<id> 로 융합에 참여 ----
+        ext_chunks: Dict[str, Dict[str, Any]] = {}
+        if t.external_rag:
+            from . import mcp_client as _mcp
+            with prof.stage("external_rag", k=int(T.get("external_rag_k") * cfg.k_mult), fallback=bool(cfg.mcp_enrich)) as st:
+                try:
+                    rows = _mcp.retrieve(s, q_search, max(1, int(T.get("external_rag_k") * cfg.k_mult)), include_fallback=bool(cfg.mcp_enrich))
+                    errs = [r for r in rows if r.get("error")]
+                    per: Dict[str, int] = {}
+                    for r in rows:
+                        if r.get("error"):
+                            continue
+                        ch = "ext_" + r["source"]
+                        lists.setdefault(ch, []).append((r["chunk_id"], float(r["score"])))
+                        w[ch] = float(T.get("channel_w_external")) * float(r.get("weight") or 1.0)
+                        ext_chunks[r["chunk_id"]] = {"chunk_id": r["chunk_id"], "doc_id": "ext:%s:%s" % (r["source"], r["id"]), "ordinal": 0, "heading": r["title"],
+                                                     "text": r["text"], "start": 0, "end": len(r["text"] or ""),
+                                                     "external": {"source": r["source"], "id": r["id"], "url": r.get("url"), "score": r["score"], "doc_type": r.get("doc_type")}}
+                        per[r["source"]] = per.get(r["source"], 0) + 1
+                    st.note(results=len(ext_chunks), per_source=per, errors=[{"source": e["source"], "error": e["error"]} for e in errs][:3])
+                    st.debug(items=[(c["chunk_id"], c["heading"][:40], round(c["external"]["score"], 3)) for c in list(ext_chunks.values())[:8]])
+                except Exception as e:
+                    st.note(error=str(e)[:200])
+        else:
+            prof.skipped("external_rag")
         if cfg.mcp_enrich and t.mcp_sources:
             from . import mcp_client as _mcp
             with prof.stage("mcp_enrich") as st:
@@ -555,6 +709,8 @@ class QueryEngine:
         with prof.stage("rrf_fuse", rrf_k=s.rrf_k, method=method, weights=w, sources={n: len(v) for n, v in lists.items()}) as st:
             hits, fmeta = _fusion.fuse(lists, w, s.rrf_k, method, T.get("fusion_multi_bonus"))
             st.note(**fmeta, top=[(h.chunk_id, round(h.fused, 4), h.why) for h in hits[:6]])
+            st.debug(order=[h.chunk_id for h in hits[:60]])
+        fused_order = [h.chunk_id for h in hits]
         # pin 주입 (후보에 없으면 추가)
         have = {h.chunk_id for h in hits}
         for cid in pin_info.get("inject", []):
@@ -564,7 +720,10 @@ class QueryEngine:
                 h.why = ["pin"]
                 hits.append(h)
                 have.add(cid)
-        chunks = store.get_chunks([h.chunk_id for h in hits])
+        chunks: Dict[str, Any] = dict(store.get_chunks([h.chunk_id for h in hits if h.chunk_id not in ext_chunks]))
+        for cid in (h.chunk_id for h in hits):
+            if cid in ext_chunks:
+                chunks[cid] = ext_chunks[cid]
         # ---- 부스트 ----
         prov_chunks: Dict[str, str] = {}
         for r in graph_res.get("relations", []) or []:
@@ -583,19 +742,65 @@ class QueryEngine:
                 st.note(filter_relaxed=True)
                 # filter 로 0건 → boost 로 완화 재적용은 다음 라운드(wide) 에서; 여기서는 통계만
             st.note(**stats, top=[(h.chunk_id, round(h.fused, 4), h.boosts) for h in hits[:5]])
+            st.debug(order=[h.chunk_id for h in hits[:60]])
+        boost_order = [h.chunk_id for h in hits]
         # ---- 리랭크 · 컨텍스트 ----
+        n_cands = int(s.rerank_candidates * cfg.k_mult)
+        if ext_chunks and int(T.get("external_rag_inject") or 0) > 0:
+            # 외부 소스별 상위 n개를 리랭크 후보 창 안으로 (창 끝 요소 바로 위의 fused 로) — 최종 순위는 리랭커가 결정
+            win = n_cands or max(s.top_k_final * 2, 10)
+            per_src: Dict[str, int] = {}
+            moved: List[str] = []
+            pos = {h.chunk_id: i for i, h in enumerate(hits)}
+            for ch, lst in lists.items():
+                if not ch.startswith("ext_"):
+                    continue
+                for cid, _sc in lst:
+                    if per_src.get(ch, 0) >= int(T.get("external_rag_inject")):
+                        break
+                    per_src[ch] = per_src.get(ch, 0) + 1
+                    i = pos.get(cid)
+                    if i is not None and i >= win and win - 1 < len(hits):
+                        hits[i].fused = hits[win - 1].fused + 1e-6
+                        hits[i].why.append("ext_inject")
+                        moved.append(cid)
+            if moved:
+                hits.sort(key=lambda h: -h.fused)
+                with prof.stage("external_inject", moved=moved, window=win) as st:
+                    st.note(n=len(moved))
+        rerank_before = [h.chunk_id for h in hits[: (n_cands or max(s.top_k_final * 2, 10))]]
         if t.rerank:
             rl = p.llm_for("rerank")
             meta = store.doc_meta_map()
             doc_tokens = {d: "%s %s" % (m.get("ext_id") or "", m.get("doc_type") or "") for d, m in meta.items() if m.get("ext_id") or m.get("doc_type")}
             hits = rerank(hits, chunks, q_search, rl, s.top_k_final, prof, s.role_llm("rerank")["effort"], use_llm=t.rerank_llm,
-                          n_cands=int(s.rerank_candidates * cfg.k_mult), chunk_chars=s.rerank_chunk_chars, settings=s, doc_tokens=doc_tokens)
+                          n_cands=n_cands, chunk_chars=s.rerank_chunk_chars, settings=s, doc_tokens=doc_tokens)
         else:
             prof.skipped("rerank")
         final = hits[: s.top_k_final]
+        # ---- 문서 단위 확장 ----
+        extra: List[Tuple[str, str, float]] = []
+        expand_info: Dict[str, Any] = {}
+        if t.doc_expand:
+            with prof.stage("doc_expand", top_docs=T.get("doc_expand_top_docs"), max_chunks=T.get("doc_expand_max_chunks"), min_score=T.get("doc_expand_min_score"),
+                            mode=T.get("doc_expand_mode")) as st:
+                try:
+                    extra, expand_info = self._doc_expand(store, q_search, final, chunks, T)
+                    st.note(docs=expand_info.get("docs"), candidates=expand_info.get("candidates"), added=expand_info.get("added"), vector=expand_info.get("vector"),
+                            picked=[(cid, sc) for cid, _, sc in extra[:8]])
+                    st.debug(per_doc=expand_info.get("per_doc"))
+                except Exception as e:
+                    st.note(error=str(e)[:200])
+                    extra, expand_info = [], {"error": str(e)[:200]}
+        else:
+            prof.skipped("doc_expand")
         with prof.stage("context", max_chars=s.context_max_chars, trim=t.context_trim, dedupe=t.dedupe_hits, neighbors_extra=cfg.neighbors_extra) as st:
             ctx = build_context(final, chunks, graph_res if t.graph else None, s.context_max_chars, query=q_search, trim=t.context_trim, dedupe=t.dedupe_hits,
-                                chunk_chars=s.context_chunk_chars, stage=st, store=store, neighbors=(T.get("context_neighbors") + cfg.neighbors_extra))
-            st.note(chars=ctx["chars"], citations=len(ctx["citations"]))
-        return {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": ctx, "graph_res": graph_res, "fts_snips": fts_snips,
-                "cfg": cfg, "boost_stats": stats}
+                                chunk_chars=s.context_chunk_chars, stage=st, store=store, neighbors=(T.get("context_neighbors") + cfg.neighbors_extra), extra=extra)
+            st.note(chars=ctx["chars"], citations=len(ctx["citations"]), doc_expand_in_context=sum(1 for c in ctx["citations"] if c.get("kind") == "doc_expand"))
+        R = {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": ctx, "graph_res": graph_res, "fts_snips": fts_snips,
+             "cfg": cfg, "boost_stats": stats, "expand": extra, "expand_info": expand_info, "ext_chunks": ext_chunks,
+             "fused_order": fused_order, "boost_order": boost_order, "rerank_before": rerank_before, "final_order": [h.chunk_id for h in final],
+             "context_ids": [c["chunk_id"] for c in ctx["citations"]], "q_search": q_search}
+        self.rounds.append(R)
+        return R

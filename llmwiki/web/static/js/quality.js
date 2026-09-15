@@ -77,13 +77,22 @@
     const s = await api('/api/forensics/summary');
     $('#fx-summary').innerHTML = `<div class="stat"><b>${s.n}</b>기록</div>` + Object.keys(s.by_verdict || {}).map((k) => `<div class="stat"><b>${s.by_verdict[k]}</b>${esc(k)}</div>`).join('') + `<div class="stat"><b>${esc(JSON.stringify(s.suggestion_kinds || {}))}</b>제안 종류</div><div class="stat"><b>${esc((s.top_topics || []).slice(0, 6).map((t) => t[0] + '(' + t[1] + ')').join(', '))}</b>주제</div><div class="stat"><b>${esc((s.problem_stages || []).slice(0, 5).map((t) => t[0] + '(' + t[1] + ')').join(', '))}</b>문제 단계</div>`;
     const rows = await api('/api/forensics?limit=60');
-    $('#fx-list').innerHTML = '<table><tr><th>#</th><th>시각</th><th>req</th><th>판정</th><th>g</th><th>질의</th><th>소견</th></tr>' + rows.map((r) => `<tr data-id="${r.id}"><td>${r.id}</td><td class="muted small">${dt(r.ts)}</td><td>${r.request_id || '-'}</td><td><span class="pill ${r.verdict === 'sufficient' ? 'ok' : r.verdict === 'weak' ? 'warn' : 'bad'}">${esc(r.verdict)}</span></td><td class="num">${r.groundedness == null ? '-' : fmt(r.groundedness, 2)}</td><td class="small">${esc((r.query || '').slice(0, 50))}</td><td class="num">${(r.findings || []).length}</td></tr>`).join('') + '</table>' + (rows.length ? '' : '<div class="muted">기록 없음</div>');
+    $('#fx-list').innerHTML = '<table><tr><th>#</th><th>시각</th><th>req</th><th>판정</th><th>g</th><th>출처</th><th>질의</th><th>소견</th></tr>' + rows.map((r) => `<tr data-id="${r.id}"><td>${r.id}</td><td class="muted small">${dt(r.ts)}</td><td>${r.request_id || '-'}</td><td><span class="pill ${r.verdict === 'sufficient' ? 'ok' : r.verdict === 'weak' ? 'warn' : 'bad'}">${esc(r.verdict)}</span></td><td class="num">${r.groundedness == null ? '-' : fmt(r.groundedness, 2)}</td><td class="small">${esc(r.origin || '')}</td><td class="small">${esc((r.query || '').slice(0, 50))}</td><td class="num">${(r.findings || []).length}</td></tr>`).join('') + '</table>' + (rows.length ? '' : '<div class="muted">기록 없음</div>');
     $$('#fx-list tr[data-id]').forEach((tr) => tr.onclick = () => { $$('#fx-list tr').forEach((x) => x.classList.remove('sel')); tr.classList.add('sel'); const f = rows.find((x) => String(x.id) === tr.dataset.id); $('#fx-detail').innerHTML = renderForensic(f); });
   }
   $('#btn-fx-refresh').onclick = loadForensics;
   $('#btn-fx-run').onclick = async () => { const id = $('#fx-req').value; if (!id) return; $('#fx-detail').innerHTML = '진단 중…'; $('#fx-detail').innerHTML = renderForensic(await api('/api/forensic?request_id=' + id + '&rerun=1')); loadForensics(); };
   $('#btn-fx-llm').onclick = async () => { const id = $('#fx-req').value || (STATE.lastRequestId || ''); if (!id) { toast('request id 필요'); return; } $('#fx-detail').innerHTML = 'LLM 분석 중…'; const r = await api('/api/forensic/llm', { request_id: parseInt(id, 10) }); if (!r.available) { $('#fx-detail').innerHTML = '<div class="banner warn">forensic 역할 LLM 이 없습니다 (Settings › 모델).</div>'; return; } const merged = Object.assign({}, r.heuristic, { request_id: id, findings: (r.heuristic.findings || []).concat(((r.llm || {}).findings || []).map((f) => Object.assign({ source: 'llm', severity: 'warn' }, f))), suggestions: (r.heuristic.suggestions || []).concat(((r.llm || {}).suggestions || []).map((s) => Object.assign({ source: 'llm' }, s))) }); $('#fx-detail').innerHTML = renderForensic(merged); };
   $('#btn-fx-consolidate').onclick = async () => { const r = await api('/api/memory', { action: 'consolidate' }); toast('consolidate: 제안 ' + (r.proposals || []).length + '건'); };
+  $('#btn-fx-expect').onclick = async () => {
+    const id = $('#fx-req').value || (STATE.lastRequestId || '');
+    const docs = $('#fx-docs').value.trim(), terms = $('#fx-terms').value.trim();
+    if (!docs && !terms) { toast('기대 문서 ID 또는 용어를 입력하세요'); return; }
+    $('#fx-detail').innerHTML = '기대 결과 포렌식 실행 중…';
+    const rep = await api('/api/forensic/expect', { request_id: id ? parseInt(id, 10) : 0, docs, terms, note: $('#fx-note').value.trim(), propose: $('#fx-propose').checked });
+    $('#fx-detail').innerHTML = LW.renderExpect ? LW.renderExpect(rep) : `<pre class="pre">${esc(rep.text || JSON.stringify(rep, null, 1))}</pre>`;
+    loadForensics();
+  };
   loaders.forensics = loadForensics;
   LW.renderForensic = renderForensic;
 })(window.LW);

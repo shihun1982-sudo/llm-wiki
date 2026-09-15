@@ -24,24 +24,34 @@ from llmwiki import auth as A  # noqa: E402
 class ClassifyTest(unittest.TestCase):
     def test_api_levels(self):
         c = A.classify_api
-        self.assertEqual(c("POST", "/api/build", {"full": True})[0], "destructive")
-        self.assertEqual(c("POST", "/api/build", {"reset": True, "full": False})[0], "destructive")
-        self.assertEqual(c("POST", "/api/build", {"full": False})[0], "warn")
+        self.assertEqual(c("POST", "/api/build", {"full": True})[0], "rebuild")
+        self.assertEqual(c("POST", "/api/build", {"reset": True, "full": False})[0], "rebuild")
+        self.assertEqual(c("POST", "/api/build", {"full": True, "purge_logs": True})[0], "destructive")
+        self.assertEqual(c("POST", "/api/build", {"channel": "fts"})[0], "rebuild")
+        self.assertEqual(c("POST", "/api/build", {"full": False})[0], "index")
         self.assertEqual(c("POST", "/api/maintenance", {"action": "purge_requests"})[0], "destructive")
-        self.assertEqual(c("POST", "/api/maintenance", {"action": "vacuum"})[0], "warn")
+        self.assertEqual(c("POST", "/api/maintenance", {"action": "vacuum"})[0], "index")
         self.assertEqual(c("POST", "/api/query", {"q": "x"})[0], "read")
+        self.assertEqual(c("POST", "/api/forensic/expect", {})[0], "read")
+        self.assertEqual(c("POST", "/api/eval", {})[0], "run")
+        self.assertEqual(c("POST", "/api/pins", {"action": "add"})[0], "edit")
         self.assertEqual(c("POST", "/api/config", {})[0], "admin")
-        self.assertEqual(c("POST", "/api/cli", {"argv": "build --full"})[0], "destructive")
+        self.assertEqual(c("POST", "/api/cli", {"argv": "build --full"})[0], "rebuild")
+        self.assertEqual(c("POST", "/api/cli", {"argv": "build vector"})[0], "rebuild")
         self.assertEqual(c("POST", "/api/cli", {"argv": ["config", "reset"]})[0], "destructive")
-        self.assertEqual(c("POST", "/api/cli", {"argv": "stats"})[0], "run")     # 콘솔은 operator 이상
-        self.assertEqual(c("POST", "/api/cli", {"argv": "build"})[0], "warn")
+        self.assertEqual(c("POST", "/api/cli", {"argv": "stats"})[0], "run")     # 콘솔은 class3 이상
+        self.assertEqual(c("POST", "/api/cli", {"argv": "build"})[0], "index")
         self.assertEqual(c("POST", "/api/cli", {"argv": "users add x --role admin"})[0], "admin")
-        self.assertEqual(c("POST", "/api/snapshot", {"action": "restore", "name": "x"})[0], "destructive")
-        self.assertEqual(c("POST", "/api/build/verify", {"fix": True})[0], "warn")
+        self.assertEqual(c("POST", "/api/cli", {"argv": "pin add --doc x"})[0], "edit")
+        self.assertEqual(c("POST", "/api/snapshot", {"action": "restore", "name": "x"})[0], "rebuild")
+        self.assertEqual(c("POST", "/api/build/verify", {"fix": True})[0], "index")
         self.assertEqual(c("POST", "/api/build/verify", {})[0], "read")
         self.assertEqual(c("GET", "/api/audit", {})[0], "admin")
         self.assertEqual(c("GET", "/api/status", {})[0], "read")
-        self.assertEqual(c("POST", "/api/no/such", {})[0], "warn")   # 모르는 POST 는 안전하게 warn
+        self.assertEqual(c("POST", "/api/no/such", {})[0], "edit")   # 모르는 POST 는 안전하게 edit
+        self.assertEqual(A.norm_role("operator"), "class1")
+        self.assertEqual(A.norm_role("bogus"), "viewer")
+        self.assertTrue(A.RANK["builder"] > A.RANK["class1"] > A.RANK["class2"] > A.RANK["class3"] > A.RANK["viewer"])
 
     def test_password_and_signer(self):
         h = A.hash_password("secret-1234")
@@ -64,7 +74,7 @@ class AuthGateTest(unittest.TestCase):
         A.save_security(dict(A.DEFAULT_SECURITY, mode="on"))
         self.auth = A.Auth(self.s, host="0.0.0.0")
         self.auth.add_user("alice", "alice-pass-1", "admin")
-        self.auth.add_user("bob", "bob-pass-12", "operator")
+        self.auth.add_user("bob", "bob-pass-12", "operator")      # 구 역할 이름 → class1
         self.auth.add_user("vic", "vic-pass-12", "viewer")
 
     def tearDown(self):
@@ -85,15 +95,52 @@ class AuthGateTest(unittest.TestCase):
         self.assertIsNone(self.auth.login_local("alice", "wrong"))
         bob = self.auth.login_local("bob", "bob-pass-12")
         vic = self.auth.login_local("vic", "vic-pass-12")
-        # viewer: 읽기만
+        self.assertEqual(bob.role, "class1")
+        # viewer: 읽기만 (run 은 class3)
         self.assertIsNone(self._need(vic, "/api/query", {"q": "x"}))
         self.assertEqual(self._need(vic, "/api/build", {"full": False}).status, 403)
-        # operator: warn 은 확인 필요(mode on), 확인하면 통과; destructive 는 역할 부족
+        self.assertEqual(self._need(vic, "/api/eval", {}).status, 403)
+        # class1(구 operator): index 는 확인 필요(mode on), 확인하면 통과; rebuild 는 역할 부족
         e = self._need(bob, "/api/build", {"full": False})
         self.assertEqual(e.status, 428)
         self.assertTrue(e.need.get("confirm"))
         self.assertIsNone(self._need(bob, "/api/build", {"full": False, "_confirm": True}))
         self.assertEqual(self._need(bob, "/api/build", {"full": True, "_confirm": True}).status, 403)
+        self.assertIsNone(self._need(bob, "/api/pins", {"action": "add", "_confirm": True}))     # edit 도 가능
+        # permissions 오버라이드: run 을 viewer 에게, 개별 op 를 올림
+        self.auth.set_permission("run", "viewer")
+        self.assertIsNone(self._need(vic, "/api/eval", {}))
+        self.auth.set_permission("/api/eval", "builder")
+        self.assertEqual(self._need(vic, "/api/eval", {}).status, 403)
+        self.assertEqual(self._need(bob, "/api/eval", {}).status, 403)
+        self.assertEqual(self.auth.min_role("run", "/api/eval"), "builder")
+        self.auth.set_permission("/api/eval", "")
+        self.assertEqual(self.auth.min_role("run", "/api/eval"), "viewer")
+        self.auth.set_permission("run", "")
+        self.assertEqual(self.auth.min_role("run", "/api/eval"), "class3")
+        # 익명 접속 (anonymous_role) → 게스트 viewer, 상위 작업은 401(로그인 유도)
+        guest = self.auth.identify({}, "9.9.9.9")
+        self.assertEqual((guest.name, guest.role, guest.via), ("guest", "viewer", "anon"))
+        self.assertIsNone(self._need(guest, "/api/query", {"q": "x"}))
+        self.assertEqual(self._need(guest, "/api/build", {"full": False}).status, 401)
+        self.auth.cfg["anonymous_role"] = ""
+        self.assertIsNone(self.auth.identify({}, "9.9.9.9"))
+        self.auth.cfg["anonymous_role"] = "viewer"
+        # API 키 → Bearer 로 신원 확인, 역할 부여
+        k = self.auth.add_api_key("mcp-client", "class3")
+        self.assertTrue(k["token"].startswith("lwk_"))
+        u = self.auth.identify({"Authorization": "Bearer " + k["token"]}, "9.9.9.9")
+        self.assertEqual((u.role, u.via), ("class3", "apikey"))
+        self.assertIsNone(self._need(u, "/api/eval", {}))
+        # 잘못된/폐기된 lwk_ 키는 게스트로 강등하지 않고 401 — 호출측(MCP 클라이언트)이 키 문제를 알 수 있어야 한다
+        with self.assertRaises(A.AuthError) as cm:
+            self.auth.identify({"Authorization": "Bearer lwk_bad_x"}, "9.9.9.9")
+        self.assertEqual(cm.exception.status, 401)
+        self.assertTrue(self.auth.remove_api_key(k["id"]))
+        with self.assertRaises(A.AuthError):
+            self.auth.identify({"Authorization": "Bearer " + k["token"]}, "9.9.9.9")
+        # lwk_ 형식이 아닌 Bearer(프록시가 붙인 토큰 등)는 무시하고 게스트로
+        self.assertEqual(self.auth.identify({"Authorization": "Bearer something-else"}, "9.9.9.9").via, "anon")
         # admin destructive: 확인 + 문구 + 비밀번호
         e = self._need(alice, "/api/build", {"full": True})
         self.assertEqual(e.status, 428)
@@ -147,8 +194,10 @@ class AuthGateTest(unittest.TestCase):
         self.auth.reload()
         h = {"X-Forwarded-User": "carol", "X-Forwarded-Groups": "eng,wiki-ops"}
         u = self.auth.identify(h, "10.0.0.1")
-        self.assertEqual((u.name, u.role, u.via), ("carol", "operator", "sso"))
+        self.assertEqual((u.name, u.role, u.via), ("carol", "class1", "sso"))     # role_map 의 operator 그룹 → class1
+        self.auth.cfg["anonymous_role"] = ""
         self.assertIsNone(self.auth.identify(h, "10.0.0.9"))        # 신뢰하지 않는 주소의 헤더는 무시
+        self.auth.cfg["anonymous_role"] = "viewer"
         u2 = self.auth.identify({"X-Forwarded-User": "dave", "X-Forwarded-Groups": "wiki-admins"}, "10.0.0.1")
         self.assertEqual(u2.role, "admin")
         self.auth.set_role("dave", "viewer")                           # 로컬 지정이 IdP 그룹보다 우선
@@ -279,10 +328,11 @@ class WebAuthIntegrationTest(unittest.TestCase):
         cls.p.build(full=True)
         cfg = json.loads(json.dumps(A.DEFAULT_SECURITY))
         cfg["mode"] = "on"
+        cfg["anonymous_role"] = ""          # 이 테스트는 로그인 필수 모드
         A.save_security(cfg)
         auth = A.Auth(s, host="0.0.0.0")
         auth.add_user("admin1", "admin-pass-1", "admin")
-        auth.add_user("op1", "op-pass-123", "operator")
+        auth.add_user("op1", "op-pass-123", "class1")
         auth.add_user("view1", "view-pass-1", "viewer")
         ws.Handler.pipe = cls.p
         ws.Handler.auth = auth
@@ -378,10 +428,29 @@ class WebAuthIntegrationTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(j["code"], 0, j)
         self.assertEqual(self._req("POST", "/api/cli", {"argv": "stats"}, cookie=view)[0], 403)
+        self.assertEqual(self._req("POST", "/api/pins", {"action": "add", "doc": "d0", "_confirm": True}, cookie=op)[0], 200)   # class1 ⊇ edit
         # 사용자 관리 (admin) + 감사 로그
-        code, j, _ = self._req("POST", "/api/auth/users", {"action": "add", "name": "new1", "password": "new1-pass-1", "role": "viewer", "_confirm": True}, cookie=admin)
+        code, j, _ = self._req("POST", "/api/auth/users", {"action": "add", "name": "new1", "password": "new1-pass-1", "role": "class2", "_confirm": True}, cookie=admin)
         self.assertEqual(code, 200, j)
-        self.assertTrue(any(u["name"] == "new1" for u in j["users"]))
+        self.assertTrue(any(u["name"] == "new1" and u["role"] == "class2" for u in j["users"]))
+        # 권한 표 편집 (admin) → run 을 viewer 에게 → viewer 가 eval 가능
+        code, j, _ = self._req("POST", "/api/security", {"action": "set_permission", "key": "run", "role": "viewer", "_confirm": True}, cookie=admin)
+        self.assertEqual(code, 200, j)
+        self.assertEqual(j["permissions"]["levels"]["run"], "viewer")
+        code, j, _ = self._req("POST", "/api/cli", {"argv": "stats"}, cookie=view)
+        self.assertEqual(code, 200, j)
+        code, j, _ = self._req("POST", "/api/security", {"action": "set_permission", "key": "run", "role": "", "_confirm": True}, cookie=admin)
+        self.assertEqual(j["permissions"]["levels"]["run"], "class3")
+        # API 키 발급 → Bearer 로 질의
+        code, j, _ = self._req("POST", "/api/apikeys", {"action": "add", "name": "t", "role": "viewer", "_confirm": True}, cookie=admin)
+        self.assertEqual(code, 200, j)
+        tok = j["token"]
+        req = urllib.request.Request("http://127.0.0.1:%d/api/query" % self.port, data=json.dumps({"q": "RX DMA underrun", "overrides": {"llm_answer": False}}).encode("utf-8"),
+                                     method="POST", headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            self.assertEqual(r.status, 200)
+        code, j, _ = self._req("GET", "/api/apikeys", cookie=admin)
+        self.assertTrue(any(k["name"] == "t" for k in j["keys"]))
         code, au, _ = self._req("GET", "/api/audit?n=50", cookie=admin)
         self.assertEqual(code, 200, au)
         ops = [r["op"] for r in au["rows"]]
@@ -414,11 +483,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class CliConfirmTest(unittest.TestCase):
     def test_non_interactive_refuses_without_yes(self):
-        from llmwiki.cli import run_captured
+        from llmwiki.cli import run_captured, run
         from llmwiki.pipeline import Pipeline
         tmp = tempfile.mkdtemp()
         try:
             os.environ["LLMWIKI_SECURITY_PATH"] = os.path.join(tmp, "security.json")
+            os.environ["LLMWIKI_LOGS_DIR_PATH"] = os.path.join(tmp, "logs")
             corpus = os.path.join(tmp, "corpus")
             os.makedirs(corpus)
             with open(os.path.join(corpus, "a.md"), "w", encoding="utf-8") as f:
@@ -440,10 +510,51 @@ class CliConfirmTest(unittest.TestCase):
                 self.assertIn("t1", out5["output"])
                 out6 = run_captured(["snapshot", "restore", "x", "--yes"], s, p)
                 self.assertNotEqual(out6["code"], 0)
+                # ---- CLI 권한 게이트: cli.default_role=viewer 면 빌드 거부(5), --user 로 승격하면 통과 ----
+                cfg = A.load_security()
+                cfg["cli"] = {"default_role": "viewer", "require_login": False}
+                A.save_security(cfg)
+                a = A.Auth(s)
+                a.add_user("b1", "builder-pass-1", "builder")
+                import io as _io
+                from contextlib import redirect_stdout
+                buf = _io.StringIO()
+                with redirect_stdout(buf):
+                    code = run(["build", "--full", "--yes", "--no-snapshot"], s, p, gate=True)
+                self.assertEqual(code, 5, buf.getvalue())
+                self.assertIn("권한 부족", buf.getvalue())
+                buf = _io.StringIO()
+                with redirect_stdout(buf):
+                    code = run(["stats"], s, p, gate=True)            # read 는 viewer 로 가능
+                self.assertEqual(code, 0, buf.getvalue())
+                os.environ["LLMWIKI_PASSWORD"] = "builder-pass-1"
+                try:
+                    buf = _io.StringIO()
+                    with redirect_stdout(buf):
+                        code = run(["--user", "b1", "build", "--full", "--yes", "--no-snapshot"], s, p, gate=True)
+                    self.assertEqual(code, 0, buf.getvalue())
+                    os.environ["LLMWIKI_PASSWORD"] = "wrong"
+                    buf = _io.StringIO()
+                    with redirect_stdout(buf):
+                        code = run(["--user", "b1", "build", "--yes"], s, p, gate=True)
+                    self.assertEqual(code, 5)
+                finally:
+                    os.environ.pop("LLMWIKI_PASSWORD", None)
+                rows = A.Auth.audit_tail(20)
+                self.assertTrue(any(r["via"] == "cli" and r["ok"] is False for r in rows))
+                # security perms CLI
+                out7 = run_captured(["security", "perms", "set", "run=viewer", "/api/eval=class2"], s, p)
+                self.assertEqual(out7["code"], 0, out7)
+                self.assertEqual(A.load_security()["permissions"]["levels"]["run"], "viewer")
+                self.assertEqual(A.load_security()["permissions"]["ops"]["/api/eval"], "class2")
+                out8 = run_captured(["apikey", "add", "k1", "--role", "class3"], s, p)
+                self.assertIn("lwk_", out8["output"])
+                self.assertIn("k1", run_captured(["apikey", "list"], s, p)["output"])
             finally:
                 p.store.close()
         finally:
             os.environ.pop("LLMWIKI_SECURITY_PATH", None)
+            os.environ.pop("LLMWIKI_LOGS_DIR_PATH", None)
             shutil.rmtree(tmp, ignore_errors=True)
 
 

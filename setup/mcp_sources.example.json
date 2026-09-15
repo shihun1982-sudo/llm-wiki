@@ -1,0 +1,80 @@
+{
+  "_comment": "mcp_sources.json 원본 — 다른 RAG · MCP 서버 · REST 검색 API 를 붙이는 파일 (docs/RAG_FEDERATION.md). 루트 mcp_sources.json 으로 복사해 enabled/url/token 을 채운다. 값 치환: {query} {k} {since} {project_root} ${ENV}. 토글: mcp_sources(ingest/enrich) · external_rag(retrieve 채널) · mcp_federation(expose).",
+  "_how": {
+    "transport": "stdio(command/cwd/env 로 자식 프로세스) | http(url + token/token_env/headers, MCP Streamable HTTP) | rest(base_url + headers, 일반 JSON API; tool = 엔드포인트 경로)",
+    "retrieve": "질의마다 호출해 검색 채널 ext_<source> 로 융합. tool/args(질의 {query}, 건수 {k}), result_path(결과 배열 경로), id/title/text/score/url_field, doc_type, weight(채널 가중), when=always|fallback, max_chars, (rest) method",
+    "expose": "true = 그 서버의 모든 tool 을 <source>__<tool> 로 우리 MCP 에 노출 | [\"tool\", …] = 일부만. rest 는 tools 배열로 스키마를 직접 선언",
+    "ingest": "빌드 때 raw data 를 문서로 (docs/BRINGUP_GUIDE.md §4 외부 MCP)",
+    "enrich": "구 방식: fallback mcp 단계에서 컨텍스트 꼬리에 텍스트로 첨부 (retrieve when=fallback 이 대체)"
+  },
+  "peer_wiki": {
+    "desc": "다른 팀의 LLM Wiki(같은 소프트웨어) 또는 MCP 를 제공하는 사내 RAG — Streamable HTTP. 토큰은 그 서버에서 apikey add 로 발급받아 .env PEER_WIKI_TOKEN 에",
+    "enabled": false,
+    "transport": "http",
+    "url": "http://other-team-host:8765/mcp",
+    "token_env": "PEER_WIKI_TOKEN",
+    "headers": {},
+    "timeout_s": 60,
+    "retrieve": [
+      {"tool": "wiki_search", "args": {"channel": "fts", "query": "{query}", "k": "{k}"}, "result_path": "", "id_field": "chunk_id", "title_field": "chunk_id",
+       "text_field": "snippet", "score_field": "score", "doc_type": "peer", "weight": 0.8, "when": "always", "max_chars": 1500}
+    ],
+    "expose": ["wiki_query", "wiki_doc", "wiki_entity"]
+  },
+  "kb_rest": {
+    "desc": "MCP 가 없는 일반 RAG/검색 API (예: 사내 KB 의 POST /search {query,k} → {results:[{id,title,content,score,url}]}). 목업: python -m llmwiki.mcp_client --mock-rest 8799",
+    "enabled": false,
+    "transport": "rest",
+    "base_url": "http://kb-host:8799",
+    "headers": {"X-Api-Key": "${KB_API_KEY}"},
+    "method": "POST",
+    "timeout_s": 20,
+    "ping": "/health",
+    "retrieve": [
+      {"tool": "/search", "args": {"query": "{query}", "k": "{k}"}, "result_path": "results", "id_field": "id", "title_field": "title",
+       "text_field": "content", "score_field": "score", "url_field": "url", "doc_type": "kb", "weight": 1.0, "when": "always"}
+    ],
+    "tools": [
+      {"name": "search", "description": "사내 KB 검색", "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "k": {"type": "integer"}}, "required": ["query"]}}
+    ],
+    "expose": true
+  },
+  "mango": {
+    "desc": "Mango MCP — issue / CL / build binary raw data (stdio). ingest 로 문서화해 색인, retrieve 로 실시간 검색 채널",
+    "enabled": false,
+    "transport": "stdio",
+    "command": ["python", "-m", "mango_mcp"],
+    "cwd": "",
+    "env": {"MANGO_TOKEN": "${MANGO_MCP_TOKEN}"},
+    "timeout_s": 60,
+    "ingest": [
+      {"tool": "list_issues", "args": {"since": "{since}"}, "result_path": "items", "doc_type": "issue", "id_field": "id", "title_field": "title",
+       "text_field": "description", "date_field": "updated_at", "fields": {"status": "status", "tags": "labels", "related.cls": "cl_ids"}},
+      {"tool": "list_cls", "args": {"since": "{since}"}, "result_path": "items", "doc_type": "cl", "id_field": "id", "title_field": "subject",
+       "text_field": "message", "date_field": "merged_at", "fields": {"related.issues": "issue_ids", "author": "author"}}
+    ],
+    "retrieve": [
+      {"tool": "search", "args": {"q": "{query}", "limit": "{k}"}, "result_path": "items", "id_field": "id", "title_field": "title", "text_field": "snippet",
+       "doc_type": "issue", "weight": 0.7, "when": "fallback"}
+    ],
+    "expose": false
+  },
+  "mock": {
+    "desc": "테스트용 목업 MCP 서버 (네트워크 없음). enabled=true 로 두고 토글 external_rag/mcp_federation 을 켜면 배선을 바로 확인할 수 있다",
+    "enabled": false,
+    "transport": "stdio",
+    "command": ["{python}", "-m", "llmwiki.mcp_client", "--mock-server"],
+    "cwd": "",
+    "env": {},
+    "timeout_s": 30,
+    "ingest": [
+      {"tool": "list_issues", "args": {"since": "{since}"}, "result_path": "items", "doc_type": "issue", "id_field": "id", "title_field": "title",
+       "text_field": "description", "date_field": "updated_at", "fields": {"status": "status", "tags": "labels", "related.cls": "cl_ids"}}
+    ],
+    "retrieve": [
+      {"tool": "search", "args": {"q": "{query}", "limit": "{k}"}, "result_path": "items", "id_field": "id", "title_field": "title", "text_field": "snippet",
+       "score_field": "score", "url_field": "url", "doc_type": "issue", "weight": 1.0, "when": "always"}
+    ],
+    "expose": ["search"]
+  }
+}

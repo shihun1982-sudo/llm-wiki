@@ -161,6 +161,11 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("channel_w_vector", "rrf_fuse", "float", 1.0, "사용자 채널 가중치 배율(벡터).", "", "1.0", 0.0, 3.0),
     _p("channel_w_graph", "rrf_fuse", "float", 1.0, "사용자 채널 가중치 배율(그래프).", "", "1.0", 0.0, 3.0),
     _p("channel_w_doc_vector", "rrf_fuse", "float", 0.7, "문서 카드 벡터 채널 가중치 배율.", "", "0.7", 0.0, 3.0),
+    _p("channel_w_external", "rrf_fuse", "float", 1.0, "외부 RAG 채널(ext_<source>, external_rag 토글) 가중치 배율. 소스별 weight(mcp_sources.json retrieve.weight) 와 곱한다.",
+       "외부 결과를 내부 채널보다 앞세우려면 >1, 참고용이면 0.5 이하.", "1.0", 0.0, 3.0),
+    _p("external_rag_k", "rrf_fuse", "int", 5, "외부 RAG 소스마다 요청할 결과 수 (retrieve.args 의 {k}). fallback 라운드에서는 k_mult 배.", "많을수록 외부 지연·토큰↑.", "5", 1, 50),
+    _p("external_rag_inject", "rrf_fuse", "int", 2, "외부 소스별 상위 n개 결과를 (RRF 순위와 무관하게) 리랭크 후보 창에 보장 주입. 외부 채널은 리스트가 하나뿐이라 내부 리스트 여러 개(fts/alt/vector…)와 RRF 로 경쟁하면 후보 밖으로 밀리기 쉬우므로, 최종 판단은 리랭커에 맡긴다.",
+       "0 이면 순수 RRF 경쟁. 크면 외부 결과가 항상 리랭크를 받는다(리랭크 비용↑).", "2", 0, 20),
     _p("doc_type_boost", "rrf_fuse", "str", "", "문서 유형 부스트 맵 `issue:1.2,cl:1.1` (fused × 값). 라우터가 힌트를 잡으면 해당 유형 추가 ×1.2.",
        "질문 유형과 문서 유형이 맞을 때 상위로.", "issue:1.2,coding_rule:1.1"),
     _p("pin_boost", "rrf_fuse", "float", 10.0, "pin 된 청크의 fused 점수 배율 (사실상 최상위 고정).", "", "10.0", 1.0, 100.0),
@@ -189,6 +194,14 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("dedupe_similarity", "context", "float", 0.85, "dedupe_hits 시 토큰 Jaccard 유사도가 이 이상인 문단(다른 문서 포함)을 중복으로 제거.",
        "일정표와 회의록에 같은 문장이 반복되는 코퍼스에서 토큰 절약. 너무 낮으면 관련 문단이 사라짐.", "0.85", 0.5, 1.0),
     _p("context_graph_relations", "context", "int", 15, "컨텍스트 끝에 붙이는 그래프 관계 수.", "관계 텍스트는 다중 홉 답변에 도움, 토큰↑.", "15", 0, 100),
+    _p("doc_expand_top_docs", "context", "int", 3, "문서 단위 확장(doc_expand 토글): 리랭크 상위 청크가 속한 문서 중 앞에서 몇 개 문서를 확장할지.",
+       "많을수록 여러 문서의 보조 청크가 들어와 근거 완전성↑ 토큰↑.", "3 (기본). 단일 문서 질문이 많으면 1~2.", 1, 20),
+    _p("doc_expand_max_chunks", "context", "int", 3, "문서 단위 확장: 문서당 추가할 최대 청크 수.", "문서 전체를 넣으려면 크게 (컨텍스트 상한 context_max_chars 는 그대로 적용).", "3", 1, 50),
+    _p("doc_expand_min_score", "context", "float", 0.2, "문서 단위 확장: 이 점수(0~1) 이상인 청크만 추가. 점수 = 키워드 커버리지·벡터 유사도(모드별).",
+       "낮추면 관련 없는 청크까지 들어와 토큰 낭비, 높이면 확장이 거의 안 됨. 0 이면 상한까지 무조건 추가.", "0.2", 0.0, 1.0),
+    _p("doc_expand_mode", "context", "choice", "hybrid", "문서 단위 확장 점수 방식: keyword(질의 키워드 커버리지) | vector(질의-청크 코사인, 부모 청크 대비 정규화) | hybrid(가중합).",
+       "hash 임베더에서는 keyword 비중이 안전. 의미 임베더면 vector/hybrid.", "hybrid", choices=["keyword", "vector", "hybrid"]),
+    _p("doc_expand_w", "context", "float", 0.5, "hybrid 모드에서 벡터 점수 가중 (키워드는 1-w).", "", "0.5", 0.0, 1.0),
     # ------------------------------------------------------------------ evidence / fallback
     _p("evidence_min_score", "evidence", "float", 0.015, "충분성 휴리스틱: 상위 fused 점수가 이 미만이면 weak.", "rrf 스케일(1/(60+r)): 단일 채널 1위 ≈0.0164, 채널 2개 합의 ≈0.03. 0.02 로 올리면 단일 채널 근거는 모두 weak.", "0.015", 0.0, 1.0),
     _p("evidence_min_channels", "evidence", "int", 1, "충분성 휴리스틱: 상위 후보가 등장한 채널 수가 이 미만이면 weak.", "2 로 올리면 채널 합의를 요구.", "1", 0, 4),
@@ -217,6 +230,11 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("memory_half_life_days", "forensic", "int", 60, "제안·규칙·pin strength 반감기(일). 재사용/긍정 피드백 시 strength 강화.", "", "60", 1, 3650),
     _p("memory_archive_strength", "forensic", "float", 0.2, "미승인 제안의 strength 가 이 미만이면 자동 보관(archive).", "", "0.2", 0.0, 1.0),
     _p("forensic_min_events", "forensic", "int", 3, "같은 주제의 포렌식 소견이 이 횟수 이상 누적되면 corpus_gap 제안 생성.", "", "3", 1, 100),
+    _p("forensic_near_miss_mult", "forensic", "int", 3, "기대 결과 포렌식(forensic expect): 기대 청크가 채널 top_k 밖이지만 top_k × 이 배수 안에 있으면 'top_k 상향' 튜닝 제안을 낸다.",
+       "크면 먼 순위까지 상향 제안(잡음↑), 1 이면 제안 없음에 가깝다.", "3", 1, 20),
+    _p("forensic_term_candidates", "forensic", "int", 6, "기대 결과 포렌식: FTS 탈락 청크에서 뽑는 대표 용어(동의어 후보) 수. 헤딩 용어가 먼저, 그다음 빈도순.", "", "6", 1, 30),
+    _p("forensic_term_targets", "forensic", "int", 20, "기대 결과 포렌식: 문서 지정 없이 용어만 준 경우 코퍼스에서 그 용어를 담은 청크를 최대 몇 개까지 목표로 삼을지.", "많으면 재실행 판정이 느려진다.", "20", 1, 200),
+    _p("forensic_pin_confidence", "forensic", "float", 0.6, "기대 결과 포렌식이 내는 pin 제안의 confidence (evolve 목록 정렬·자동 적용 임계와 비교되는 값).", "", "0.6", 0.0, 1.0),
 ]
 
 _INDEX: Dict[str, Dict[str, Any]] = {p["key"]: p for p in TUNABLES}

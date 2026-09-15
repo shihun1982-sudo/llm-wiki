@@ -56,12 +56,16 @@ def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="llmwiki", description="LLM Wiki: FTS + Vector + GraphRAG (self-evolving)")
+    ap.add_argument("--user", dest="cli_user", default=None, help="CLI 실행자 로컬 계정 (security.json users). 비밀번호는 --password / LLMWIKI_PASSWORD / 프롬프트. 기본 역할은 security.json cli.default_role")
+    ap.add_argument("--password", dest="cli_password", default=None, help="--user 의 비밀번호 (스크립트용; 가능하면 LLMWIKI_PASSWORD 환경변수 사용)")
     sub = ap.add_subparsers(dest="cmd")
 
-    p = sub.add_parser("build", help="코퍼스 색인 (FTS/Vector/Graph/Wiki) · build status · build verify [--fix]")
-    p.add_argument("action", nargs="?", choices=["run", "status", "verify"], default="run", help="run(기본) | status(진행/락/임베딩 진행률) | verify(정합성 검사)")
+    p = sub.add_parser("build", help="코퍼스 색인 (FTS/Vector/Graph/Wiki) · build status · build verify [--fix] · build fts|vector|graph [--full] (채널 리빌드)")
+    p.add_argument("action", nargs="?", choices=["run", "status", "verify", "fts", "vector", "graph"], default="run",
+                   help="run(기본) | status | verify | fts(FTS 색인만 다시) | vector(임베딩만: 없는 청크, --full 이면 전부) | graph(그래프만 전체 재추출)")
+    p.add_argument("--channels", default=None, help="run: 이번 빌드에서 처리할 채널만 (fts,vector,graph 쉼표 목록; 나머지 단계는 skipped)")
     p.add_argument("--fix", action="store_true", help="verify: 안전한 정리(댕글링·고아·n_chunks·stale 위키) 수행")
-    p.add_argument("--full", action="store_true", help="증분 무시, 전체 리빌드")
+    p.add_argument("--full", action="store_true", help="증분 무시, 전체 리빌드 (vector: 캐시 무시 전부 재임베딩)")
     p.add_argument("--reset", dest="reset", action="store_true", default=None, help="색인 DB 파일 삭제 후 완전 초기화 빌드 (--full 의 기본 동작; 질의 로그/제안/동의어/위키 편집노트 보존)")
     p.add_argument("--no-reset", dest="reset", action="store_false", default=None, help="--full 시 DB 파일을 지우지 않고 테이블만 재생성")
     p.add_argument("--purge-logs", action="store_true", help="완전 초기화 시 질의 로그/제안/동의어도 삭제")
@@ -73,15 +77,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("users", help="Web 로그인 사용자 관리 (security.json): add | list | remove | set-role | passwd")
     p.add_argument("action", choices=["add", "list", "remove", "set-role", "passwd"])
     p.add_argument("name", nargs="?", help="사용자 id")
-    p.add_argument("--role", default=None, help="viewer | operator | admin")
+    p.add_argument("--role", default=None, help="viewer | class3 | class2 | class1 | builder | admin (operator=class1)")
     p.add_argument("--password", default=None, help="비밀번호 (생략하면 프롬프트; 환경변수 LLMWIKI_PASSWORD 도 인식)")
     p.add_argument("--display", default="", help="표시 이름")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("security", help="로그인/역할/파괴적 작업 정책 보기·초기화 (security.json)")
-    p.add_argument("action", choices=["show", "init", "audit"], nargs="?", default="show")
+    p = sub.add_parser("security", help="로그인/역할/권한/파괴적 작업 정책 (security.json): show | init | audit | perms [show|set <level|op>=<role> …|reset]")
+    p.add_argument("action", choices=["show", "init", "audit", "perms"], nargs="?", default="show")
+    p.add_argument("args", nargs="*", help="perms set read=viewer run=viewer '/api/eval=class2' 'cli:trial run=class2' | perms reset")
     p.add_argument("--n", type=int, default=50, help="audit: 최근 N 건")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("apikey", help="API 키 (MCP HTTP / 스크립트용 Bearer 토큰, 역할 부여): add <name> --role viewer | list | remove <id|name>")
+    p.add_argument("action", choices=["add", "list", "remove"], nargs="?", default="list")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--role", default="viewer")
+    p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("snapshot", help="색인 스냅샷: list | create [--tag t] | restore <name> | prune [--keep N]")
@@ -130,8 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["status", "report", "clear-cache", "runs"], nargs="?", default="report")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("mcp-source", help="외부 MCP 소스(mcp_sources.json): list | test [name] | ingest [name] [--since] [--dry-run] | enrich \"질의\" | fetch <name> <tool> [json]")
-    p.add_argument("action", choices=["list", "test", "ingest", "enrich", "fetch"], nargs="?", default="list")
+    p = sub.add_parser("mcp-source", help="외부 소스/다른 RAG(mcp_sources.json): list | test [name] | tools <name> | retrieve \"질의\" [--source n] | ingest [name] [--since] [--dry-run] | enrich \"질의\" | fetch <name> <tool> [json] | federated")
+    p.add_argument("action", choices=["list", "test", "tools", "retrieve", "ingest", "enrich", "fetch", "federated"], nargs="?", default="list")
+    p.add_argument("--source", default=None, help="retrieve: 이 소스만")
+    p.add_argument("--k", type=int, default=5, help="retrieve: 소스당 결과 수")
     p.add_argument("args", nargs="*")
     p.add_argument("--since", default=None)
     p.add_argument("--dry-run", action="store_true")
@@ -161,10 +175,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stale", action="store_true")
     _add_toggle_flags(p)   # --json 포함
 
-    p = sub.add_parser("forensic", help="포렌식: <request_id> | last | list | summary | run <request_id> [--llm]")
+    p = sub.add_parser("forensic", help="포렌식: <request_id> | last | list | summary | run <request_id> [--llm] | expect <request_id|last> --doc … --term … (기대 결과 포렌식)")
     p.add_argument("target", nargs="?", default="last")
-    p.add_argument("args", nargs="*", help="run <request_id>")
+    p.add_argument("args", nargs="*", help="run <request_id> | expect <request_id|last>")
     p.add_argument("--llm", action="store_true", help="LLM(forensic 역할) 추가 소견")
+    p.add_argument("--doc", dest="docs", action="append", default=[], help="expect: 기대 문서 (ext_id 예 ISSUE-2003, 또는 doc_id 부분 문자열). 여러 번")
+    p.add_argument("--term", dest="terms", action="append", default=[], help="expect: 답변/근거에 있어야 했던 용어·수치. 여러 번")
+    p.add_argument("--chunk", dest="chunks", action="append", default=[], help="expect: 기대 청크 id (doc_id#n). 여러 번")
+    p.add_argument("--note", default="", help="expect: 자유 메모 (에피소드 피드백에 저장)")
+    p.add_argument("--propose", action="store_true", help="expect: 수정안(pin/규칙)을 자가진화 제안 큐에 등록")
     p.add_argument("--limit", type=int, default=30)
     p.add_argument("--json", action="store_true")
 
@@ -199,7 +218,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("question", nargs="+")
     p.add_argument("--k", type=int, default=None)
     p.add_argument("--no-log", action="store_true")
+    p.add_argument("--analyze", action="store_true", help="상세 분석 모드로 실행(=--analysis-mode) 하고 리포트 경로·상위 소견을 출력. --print-analysis 로 리포트 전문 출력")
+    p.add_argument("--print-analysis", action="store_true", help="--analyze 와 함께: 마크다운 리포트 전문을 stdout 에")
+    p.add_argument("--focus", choices=["quality", "speed", "tokens", "all"], default="all", help="--analyze: 렌즈 초점")
     _add_toggle_flags(p)
+
+    p = sub.add_parser("analyze", help="상세 분석 리포트: <request_id>|last [--focus quality|speed|tokens] [--print] [--out 파일] — logs/analysis/req_<id>.md (docs/ANALYSIS_MODE.md)")
+    p.add_argument("target", nargs="?", default="last", help="request_id 또는 last")
+    p.add_argument("--focus", choices=["quality", "speed", "tokens", "all"], default="all")
+    p.add_argument("--print", dest="print_md", action="store_true", help="마크다운 전문을 stdout 에 (기본은 경로·요약만)")
+    p.add_argument("--out", default=None, help="마크다운을 이 파일에도 저장")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("eval", help="회귀 평가 (eval/questions.json)")
     p.add_argument("--k", type=int, default=5)
@@ -286,13 +315,60 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--flow", default=None, help="query|build|evolve|watch")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("mcp", help="MCP 서버 (stdio JSON-RPC) — Claude Desktop/Code 등에서 도구로 사용")
+    p = sub.add_parser("mcp", help="MCP 서버: stdio(기본) | --transport http (Streamable HTTP, 원격 LLM 다수) | --connect URL (stdio→HTTP 브리지)")
+    p.add_argument("--transport", choices=["stdio", "http"], default=None, help="stdio(같은 PC 클라이언트가 자식 프로세스로 실행) | http(POST /mcp 서버; serve 도 /mcp 를 제공). 기본 config.json mcp_transport")
+    p.add_argument("--host", default=None, help="http: 바인드 주소 (외부 공개는 0.0.0.0 + API 키). 기본 config.json mcp_host")
+    p.add_argument("--port", type=int, default=None, help="http: 포트. 기본 config.json mcp_port")
+    p.add_argument("--connect", default=None, help="브리지: 원격 MCP HTTP URL (예 http://host:8765/mcp). stdin/stdout 의 JSON-RPC 를 그 URL 로 중계 (LLMWIKI_MCP_URL, config.json mcp_url)")
+    p.add_argument("--token", default=None, help="브리지/HTTP: API 키 (apikey add …; LLMWIKI_MCP_TOKEN)")
+    p.add_argument("--insecure", action="store_true", help="http: 로그인 설정 없이 외부에 공개 (권장하지 않음)")
+    p.add_argument("--client-config", action="store_true", help="실행하지 않고, 이 환경(python 경로·프로젝트 루트·web_host/web_port) 기준 MCP 클라이언트 설정 JSON(stdio/http/브리지) 을 출력")
+    p.add_argument("--url", default=None, help="--client-config: 클라이언트가 접근할 서버 URL (기본 http://<web_host>:<web_port>; 0.0.0.0 이면 이 PC 호스트명)")
 
-    p = sub.add_parser("serve", help="Web UI 서버")
-    p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 등 외부 공개 시 security.json 의 로그인 설정이 필요 (없으면 거부)")
+    p = sub.add_parser("serve", help="Web UI 서버 (+ /mcp Streamable HTTP MCP)")
+    p.add_argument("--port", type=int, default=None, help="기본 config.json web_port (8765)")
+    p.add_argument("--host", default=None, help="0.0.0.0 등 외부 공개 시 security.json 의 로그인 설정이 필요 (없으면 거부). 기본 config.json web_host")
     p.add_argument("--insecure", action="store_true", help="로그인 설정 없이 외부에 공개 (권장하지 않음)")
     return ap
+
+
+def _strip_global(argv: List[str]) -> List[str]:
+    """--user/--password 전역 옵션을 뺀 argv (권한 분류용)."""
+    out: List[str] = []
+    skip = False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a in ("--user", "--password"):
+            skip = True
+            continue
+        if a.startswith("--user=") or a.startswith("--password="):
+            continue
+        out.append(a)
+    return out
+
+
+def _cli_gate(argv: List[str], ns: argparse.Namespace) -> Optional[int]:
+    """CLI 권한 게이트: security.json 의 등급표/permissions 로 실행자 역할을 검사한다. 통과하면 None, 거부면 종료 코드.
+    실행자 역할: --user/LLMWIKI_USER(로컬 계정) > LLMWIKI_API_KEY > cli.default_role(기본 admin). 거부는 감사 로그에 남는다."""
+    from .auth import classify_cli, cli_actor, cli_min_role, AuthError, RANK, User, LEVEL_LABEL, write_audit
+    level, op = classify_cli(_strip_global(argv))
+    try:
+        name, role, via = cli_actor(getattr(ns, "cli_user", None), getattr(ns, "cli_password", None))
+    except AuthError as e:
+        print("!! %s" % e.error)
+        return 5
+    need = cli_min_role(level, op)
+    ns._actor = (name, role, via)
+    if RANK[role] < RANK[need]:
+        print("!! 권한 부족: '%s' 작업(%s)은 %s 이상만 실행할 수 있습니다 (현재 %s@%s). --user <id> 로 로그인하거나 security.json cli.default_role/permissions 를 확인하세요."
+              % (op, LEVEL_LABEL[level], need, role, via))
+        write_audit(User(name, role, via), op, level, False, "cli", error="cli gate: need %s" % need)
+        return 5
+    if level not in ("read",):
+        write_audit(User(name, role, via), op, level, True, "cli")
+    return None
 
 
 def _overrides_from_ns(ns: argparse.Namespace) -> Dict[str, Any]:
@@ -373,12 +449,17 @@ def _print_trace(trace: Dict[str, Any], depth: int = 0, total: Optional[float] =
             sm["sql_statements"], ", ".join("%s %.0f%%" % (x["name"], x["pct"]) for x in sm["slowest"][:3])))
 
 
-def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, pipe=None) -> int:
+def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, pipe=None, gate: bool = True) -> int:
+    """gate=False: Web 콘솔처럼 호출자가 이미 권한을 판정한 경우 (run_captured)."""
     ap = build_parser()
     ns = ap.parse_args(argv)
     if not ns.cmd:
         ap.print_help()
         return 0
+    if gate:
+        code = _cli_gate(list(argv if argv is not None else sys.argv[1:]), ns)
+        if code is not None:
+            return code
     s = settings or load_settings()
     s = apply_overrides(s.copy() if settings else s, _overrides_from_ns(ns))
     from .pipeline import Pipeline
@@ -441,8 +522,33 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         print("counts:", json.dumps(vr["counts"]))
         return 0 if vr["ok"] else 1
 
+    if ns.cmd == "build" and ns.action in ("fts", "vector", "graph"):
+        from .buildlock import BuildLockedError
+        if not _confirm_destructive(ns, "채널 리빌드: %s%s" % (ns.action, " (--full: 전부 다시)" if ns.full else ""),
+                                    {"fts": "chunks_fts 행을 전부 다시 씁니다 (임베딩·그래프 불변)", "vector": "임베딩이 없는 청크를 임베딩합니다 (--full 이면 전부; FTS·그래프 불변)",
+                                     "graph": "엔티티/관계/멘션/커뮤니티/위키 페이지를 비우고 전체 청크에서 다시 만듭니다 (FTS·임베딩 불변)"}[ns.action]):
+            _out({"error": "cancelled"}, as_json, "build %s cancelled" % ns.action)
+            return 4
+        try:
+            with _pg.cli_monitor("cli-build-%s-%d" % (ns.action, int(time.time())), "build", "build %s" % ns.action, enabled=not as_json and not _CAPTURED):
+                res, tr = p.build_channel(ns.action, full=ns.full, progress=lambda m: print("  ·", m) if not as_json else None, force=ns.force)
+        except BuildLockedError as e:
+            _out({"error": str(e), "holder": e.holder}, as_json, "build refused: %s" % e)
+            return 2
+        except (RuntimeError, ValueError) as e:
+            _out({"error": str(e)}, as_json, "build %s aborted: %s" % (ns.action, e))
+            return 3
+        if ns.trace:
+            _print_trace(tr, verbose=(ns.debug_level or 0) >= 2)
+        _out({"result": res, "trace": tr if ns.trace else None}, as_json,
+             "build %s done: before=%s after=%s verify=%s build_version=%s%s" % (ns.action, json.dumps(res.get("counts_before")), json.dumps(res.get("counts_after")),
+                                                                              (res.get("verify") or {}).get("ok"), res.get("build_version"),
+                                                                              ("\nALERTS: " + json.dumps(res["alerts"], ensure_ascii=False)) if res.get("alerts") else ""))
+        return 0
+
     if ns.cmd == "build":
         from .buildlock import BuildLockedError
+        channels = [x.strip() for x in (ns.channels or "").split(",") if x.strip()] or None
         do_reset = ns.reset if ns.reset is not None else bool(ns.full)   # --full 의 기본값 = 완전 초기화
         if do_reset or ns.purge_logs:
             stt = p.store.stats()
@@ -472,10 +578,13 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         try:
             # 진행 표시: 단계/진도율/LLM 대기 시간을 stderr 에 1초 간격으로 출력 (--json 이나 Web 콘솔에서는 조용히 bind 만)
             with _pg.cli_monitor("cli-build-%d" % int(time.time()), "build", "build --full" if ns.full else "build", enabled=not as_json and not _CAPTURED):
-                res, tr = p.build(full=ns.full, progress=lambda m: print("  ·", m) if not as_json else None, force=ns.force)
+                res, tr = p.build(full=ns.full, progress=lambda m: print("  ·", m) if not as_json else None, force=ns.force, channels=channels)
         except BuildLockedError as e:
             _out({"error": str(e), "holder": e.holder}, as_json, "build refused: %s" % e)
             return 2
+        except ValueError as e:
+            _out({"error": str(e)}, as_json, "build aborted: %s" % e)
+            return 1
         except RuntimeError as e:
             if "health check failed" in str(e):
                 _out({"error": str(e)}, as_json, "build aborted: %s" % e)
@@ -633,11 +742,36 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         from . import mcp_client as _mcp
         if ns.action == "list":
             srcs = _mcp.load_sources()
-            _out(srcs, as_json, "\n".join("%-8s enabled=%-5s %s\n%9s command=%s ingest=%d enrich=%d" % (k, v.get("enabled"), v.get("desc", ""), "", v.get("command"), len(v.get("ingest") or []), len(v.get("enrich") or [])) for k, v in srcs.items())
-                 + "\n\n토글 mcp_sources=%s  파일: %s" % (p.s.toggles.mcp_sources, _mcp.sources_path()))
+            rows = [_mcp.source_summary(k, v) for k, v in srcs.items()]
+            _out(rows, as_json, "\n".join("%-10s enabled=%-5s %-5s %s\n%11s target=%s ingest=%d enrich=%d retrieve=%s expose=%s" % (
+                r["name"], r["enabled"], r["transport"], r["desc"], "", r["target"], r["ingest"], r["enrich"],
+                ",".join("%s(%s,w=%s)" % (x["tool"], x["when"], x["weight"]) for x in r["retrieve"]) or "-", r["expose"]) for r in rows)
+                 + "\n\n토글 mcp_sources=%s external_rag=%s mcp_federation=%s  파일: %s" % (p.s.toggles.mcp_sources, p.s.toggles.external_rag, p.s.toggles.mcp_federation, _mcp.sources_path()))
             return 0
         if ns.action == "test":
             _out(_mcp.test_sources(p.s, ns.args or None), True)
+            return 0
+        if ns.action == "tools":
+            if not ns.args:
+                print("usage: mcp-source tools <name>")
+                return 1
+            cfg = _mcp.load_sources().get(ns.args[0])
+            if not cfg:
+                print("unknown source", ns.args[0])
+                return 1
+            _out(_mcp.remote_tools(ns.args[0], cfg), True)
+            return 0
+        if ns.action == "retrieve":
+            rows = _mcp.retrieve(p.s, " ".join(ns.args), ns.k, names=[ns.source] if ns.source else None, include_fallback=True)
+            _out(rows, as_json, "\n".join(("- [%s] 오류: %s" % (r["source"], r["error"])) if r.get("error") else
+                                           ("- [%s] %-12s %.3f %s | %s" % (r["source"], r["id"], r["score"], r["title"][:50], (r["text"] or "")[:100].replace("\n", " "))) for r in rows)
+                 + ("\n(결과 없음 — retrieve 매핑이 있는 enabled 소스가 없거나 결과 0건)" if not rows else ""))
+            return 0
+        if ns.action == "federated":
+            from . import mcp as _m
+            tools = _m.federated_tools(p.s, refresh=True)
+            _out({"mcp_federation": p.s.toggles.mcp_federation, "tools": [t["name"] for t in tools], "errors": {k: v.get("error") for k, v in _m._FED_CACHE.items() if v.get("error")},
+                  "plugins": _m.load_plugins(p.s)}, True)
             return 0
         if ns.action == "ingest":
             _out(_mcp.ingest(p.s, ns.args or None, since=ns.since, dry_run=ns.dry_run), True)
@@ -654,7 +788,7 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 print("unknown source", ns.args[0])
                 return 1
             args = json.loads(ns.args[2]) if len(ns.args) > 2 else {}
-            with _mcp.MCPClient(ns.args[0], cfg) as c:
+            with _mcp.open_source(ns.args[0], cfg) as c:
                 _out(c.call_tool(ns.args[1], args), True)
             return 0
 
@@ -727,6 +861,27 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
     if ns.cmd == "forensic":
         from . import forensic as _fx
         tgt = ns.target
+        if tgt == "expect":
+            ref = ns.args[0] if ns.args else "last"
+            if ref == "last":
+                reqs = p.store.requests("query", 1)
+                if not reqs:
+                    print("no query request")
+                    return 1
+                rid = int(reqs[0]["id"])
+            else:
+                try:
+                    rid = int(ref)
+                except ValueError:
+                    print("usage: forensic expect <request_id|last> --doc ISSUE-2003 --term 0x40 [--chunk id] [--note …] [--propose]")
+                    return 1
+            if not (ns.docs or ns.terms or ns.chunks):
+                print("기대 결과를 하나 이상 주세요: --doc <ext_id|doc_id 부분> · --term <용어> · --chunk <chunk_id>")
+                return 1
+            with _pg.cli_monitor("cli-fx-%d" % int(time.time()), "query", "forensic expect #%d" % rid, enabled=not as_json and not _CAPTURED):
+                rep = _fx.trace_expectation(p, rid, ns.docs, ns.terms, ns.chunks, note=ns.note, propose=ns.propose)
+            _out(rep, as_json, _fx.format_expectation(rep))
+            return 0 if not rep.get("error") else 1
         if tgt == "summary":
             _out(_fx.summary(p.store), True)
             return 0
@@ -861,10 +1016,45 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             print(_prompts.path(ns.name))
         return 0
 
+    if ns.cmd == "analyze":
+        from . import analysis as _an
+        rid = None if ns.target in ("last", "", None) else int(ns.target)
+        r = _an.analyze(p, rid, focus=None if ns.focus == "all" else ns.focus)
+        if r.get("error"):
+            print("ERROR:", r["error"])
+            return 1
+        if ns.out:
+            with open(ns.out, "w", encoding="utf-8") as f:
+                f.write(r["markdown"])
+        if as_json:
+            _out({"summary": r["summary"], "paths": r["paths"], "report": r["report"]}, True)
+            return 0
+        if ns.print_md:
+            print(r["markdown"])
+            return 0
+        sm = r["summary"]
+        print("분석 리포트: %s  (json: %s)%s" % (r["paths"].get("md"), r["paths"].get("json"), ("  (+ %s)" % ns.out) if ns.out else ""))
+        print("request #%s · %.0f ms (LLM %.0f ms) · 토큰 %s · 판정 %s · groundedness %s · 상세도 %s" % (
+            sm["request_id"], sm.get("total_ms") or 0, sm.get("llm_ms") or 0, (sm.get("tokens") or {}).get("total_tokens"), sm.get("verdict"), sm.get("groundedness"), sm.get("detail_level")))
+        for lens in ("quality", "speed", "tokens"):
+            if ns.focus not in ("all", lens):
+                continue
+            for f in sm["top"].get(lens) or []:
+                print("  [%s] %-7s %s%s" % (f["severity"], lens, f["title"], ("  → " + ", ".join(f["knobs"])) if f.get("knobs") else ""))
+        print("전문: analyze %s --print   |  LLM 에게 넘기기: 위 .md 파일을 그대로 첨부 (docs/ANALYSIS_MODE.md)" % sm["request_id"])
+        return 0
+
     if ns.cmd == "query":
         q = " ".join(ns.question)
+        if getattr(ns, "analyze", False):
+            p.s.toggles.analysis_mode = True
         with _pg.cli_monitor("cli-query-%d" % int(time.time()), "query", q[:80], enabled=not as_json and not _CAPTURED):
             res, tr = p.query(q, log=not ns.no_log)
+        if getattr(ns, "analyze", False) and res.get("analysis") and ns.focus != "all" and res["analysis"].get("md"):
+            from . import analysis as _an
+            r2 = _an.analyze(p, res.get("request_id"), focus=ns.focus)
+            if not r2.get("error"):
+                res["analysis"] = dict(r2["summary"], **r2["paths"])
         if as_json:
             _out({"result": res, "trace": tr}, True)
             return 0
@@ -886,6 +1076,22 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         if ns.trace:
             print("=" * 70)
             _print_trace(tr, verbose=(ns.debug_level or 0) >= 2)
+        an = res.get("analysis")
+        if an:
+            print("=" * 70)
+            if an.get("error"):
+                print("분석 리포트 생성 실패:", an["error"])
+            else:
+                print("📊 분석 리포트: %s" % an.get("md"))
+                for lens in ("quality", "speed", "tokens"):
+                    if ns.focus not in ("all", lens):
+                        continue
+                    for f in (an.get("top") or {}).get(lens) or []:
+                        print("  [%s] %-7s %s%s" % (f["severity"], lens, f["title"], ("  → " + ", ".join(f["knobs"])) if f.get("knobs") else ""))
+                if getattr(ns, "print_analysis", False) and an.get("md"):
+                    print("=" * 70)
+                    with open(an["md"], "r", encoding="utf-8") as f:
+                        print(f.read())
         return 0
 
     if ns.cmd == "eval":
@@ -1143,7 +1349,9 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                  or "(사용자 없음 — users add <id> --role admin)")
             info = a.public_info()
             if not as_json:
-                print("mode=%s (effective: %s) · local=%s · sso=%s · 파일: %s" % (a.cfg.get("mode"), a.mode, info["local"], info["sso"], __import__("llmwiki.auth", fromlist=["security_path"]).security_path()))
+                print("mode=%s (effective: %s) · local=%s · sso=%s · anonymous=%s · 역할: %s · 파일: %s" % (
+                    a.cfg.get("mode"), a.mode, info["local"], info["sso"], a.anonymous_role or "(로그인 필수)", "<".join(ROLES),
+                    __import__("llmwiki.auth", fromlist=["security_path"]).security_path()))
             return 0
         if not ns.name:
             print("사용자 id 필요")
@@ -1177,15 +1385,42 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             print("removed" if a.remove_user(ns.name) else "no such user")
             return 0
         if ns.action == "set-role":
-            if ns.role not in ROLES:
-                print("--role viewer|operator|admin 필요")
+            from .auth import norm_role, ROLE_ALIASES
+            if str(ns.role or "").lower() not in ROLES and str(ns.role or "").lower() not in ROLE_ALIASES:
+                print("--role %s 필요" % "|".join(ROLES))
                 return 1
             a.set_role(ns.name, ns.role)
-            print("role updated: %s → %s" % (ns.name, ns.role))
+            print("role updated: %s → %s" % (ns.name, norm_role(ns.role)))
             return 0
 
+    if ns.cmd == "apikey":
+        from .auth import Auth
+        a = Auth(p.s)
+        if ns.action == "add":
+            if not ns.name:
+                print("apikey add <name> --role viewer")
+                return 1
+            try:
+                r = a.add_api_key(ns.name, ns.role, ns.note)
+            except ValueError as e:
+                print("error: %s" % e)
+                return 1
+            _out(r, as_json, "API key created (지금만 표시됩니다 — 안전한 곳에 보관):\n  id=%s name=%s role=%s\n  token=%s\n사용: Authorization: Bearer %s  (MCP HTTP / curl / LLMWIKI_API_KEY)"
+                 % (r["id"], r["name"], r["role"], r["token"], r["token"]))
+            return 0
+        if ns.action == "remove":
+            ok = a.remove_api_key(ns.name or "")
+            print("removed" if ok else "no such key")
+            return 0 if ok else 1
+        rows = a.list_api_keys()
+        _out(rows, as_json, "\n".join("%-10s %-24s %-8s created=%s last_used=%s %s" % (r["id"], r["name"], r["role"],
+                                                                                       time.strftime("%m-%d %H:%M", time.localtime(r.get("created") or 0)),
+                                                                                       time.strftime("%m-%d %H:%M", time.localtime(r["last_used"])) if r.get("last_used") else "-",
+                                                                                       r.get("note") or "") for r in rows) or "(no api keys — apikey add <name> --role viewer)")
+        return 0
+
     if ns.cmd == "security":
-        from .auth import Auth, load_security, save_security, DEFAULT_SECURITY
+        from .auth import Auth, load_security, save_security, DEFAULT_SECURITY, LEVELS, LEVEL_LABEL, DEFAULT_LEVEL_ROLE, ROLE_LABEL, ROLES
         from . import auth as _auth
         if ns.action == "init":
             if os.path.exists(_auth.security_path()):
@@ -1199,15 +1434,52 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             _out(rows, as_json, "\n".join("%s %-12s %-9s %-5s %-12s %s%s" % (r.get("time"), r.get("user"), r.get("role"), "ok" if r.get("ok") else "DENY",
                                                                             r.get("level"), r.get("op"), (" · " + r["error"]) if r.get("error") else "") for r in rows) or "(no audit rows)")
             return 0
+        if ns.action == "perms":
+            a = Auth(p.s)
+            sub = ns.args[0] if ns.args else "show"
+            if sub == "set":
+                for kv in ns.args[1:]:
+                    k, _, v = kv.partition("=")
+                    try:
+                        a.set_permission(k.strip(), v.strip())
+                    except ValueError as e:
+                        print("ERROR:", e)
+                        return 1
+            elif sub == "reset":
+                a.set_permissions({"levels": dict(DEFAULT_LEVEL_ROLE), "ops": {}})
+            elif sub != "show":
+                print("usage: security perms [show | set <level|op>=<role> … | reset]")
+                return 1
+            perms = a.permissions()
+            if as_json:
+                _out(perms, True)
+                return 0
+            print("역할 (낮→높): %s" % " < ".join(ROLES))
+            for r in ROLES:
+                print("  %-8s %s" % (r, ROLE_LABEL[r]))
+            print("\n등급별 최소 역할 (permissions.levels):")
+            for lv in LEVELS:
+                print("  %-12s %-8s %s%s" % (lv, perms["levels"][lv], LEVEL_LABEL[lv], "" if perms["levels"][lv] == DEFAULT_LEVEL_ROLE[lv] else "  (기본 %s)" % DEFAULT_LEVEL_ROLE[lv]))
+            print("\n개별 작업 오버라이드 (permissions.ops): %s" % ("(없음)" if not perms["ops"] else ""))
+            for k, v in perms["ops"].items():
+                print("  %-36s %s" % (k, v))
+            c = a.cfg.get("cli") or {}
+            print("\n익명 접속 역할: %s · CLI 기본 역할: %s (require_login=%s) · 파일: %s" % (a.anonymous_role or "(로그인 필수)", c.get("default_role"), c.get("require_login"), _auth.security_path()))
+            print("변경: security perms set run=viewer  |  security perms set '/api/eval=class2'  |  security perms set 'cli:trial run=class2'")
+            return 0
         a = Auth(p.s)
         cfg = json.loads(json.dumps(a.cfg))
         for v in (cfg.get("users") or {}).values():
             v.pop("pw", None)
-        _out({"path": _auth.security_path(), "effective_mode": a.mode, "security": cfg}, as_json,
-             "file: %s\nmode: %s (effective %s)\nusers: %d · sso: %s (%s)\ndestructive: phrase=%r reauth=%s snapshot_before=%s keep=%s\n%s" % (
-                 _auth.security_path(), cfg.get("mode"), a.mode, len(cfg.get("users") or {}), "on" if (cfg.get("sso") or {}).get("enabled") else "off",
+        for v in (cfg.get("api_keys") or {}).values():
+            v.pop("hash", None)
+        _out({"path": _auth.security_path(), "effective_mode": a.mode, "security": cfg, "permissions": a.permissions()}, as_json,
+             "file: %s\nmode: %s (effective %s) · anonymous_role: %s · cli.default_role: %s\nusers: %d · api_keys: %d · sso: %s (%s)\ndestructive: phrase=%r reauth=%s snapshot_before=%s keep=%s\npermissions.levels: %s\npermissions.ops: %d\n%s" % (
+                 _auth.security_path(), cfg.get("mode"), a.mode, a.anonymous_role or "(로그인 필수)", (cfg.get("cli") or {}).get("default_role"),
+                 len(cfg.get("users") or {}), len(cfg.get("api_keys") or {}), "on" if (cfg.get("sso") or {}).get("enabled") else "off",
                  (cfg.get("sso") or {}).get("type"), (cfg.get("destructive") or {}).get("confirm_phrase"), (cfg.get("destructive") or {}).get("require_reauth"),
                  (cfg.get("destructive") or {}).get("snapshot_before"), (cfg.get("destructive") or {}).get("snapshot_keep"),
+                 json.dumps(a.permissions()["levels"]), len(a.permissions()["ops"]),
                  "" if os.path.exists(_auth.security_path()) else "(파일 없음 — 기본값. 'security init' 으로 생성)"))
         return 0
 
@@ -1309,13 +1581,30 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         return 0
 
     if ns.cmd == "mcp":
-        from .mcp import serve_stdio
+        from .mcp import serve_stdio, bridge_stdio_to_http, client_config_snippets
+        url = ns.connect or os.environ.get("LLMWIKI_MCP_URL") or getattr(p.s, "mcp_url", "") or ""
+        token = ns.token or os.environ.get("LLMWIKI_MCP_TOKEN") or ""
+        if getattr(ns, "client_config", False):
+            import socket
+            base = ns.url or url.rsplit("/mcp", 1)[0]
+            if not base:
+                host = p.s.web_host if p.s.web_host not in ("0.0.0.0", "::", "") else socket.gethostname()
+                base = "http://%s:%d" % (host, int(p.s.web_port))
+            _out(client_config_snippets(base, token), True)
+            return 0
+        if url:
+            return bridge_stdio_to_http(url, token, timeout=int(getattr(p.s, "llm_timeout", 600) or 600))
+        transport = ns.transport or getattr(p.s, "mcp_transport", "stdio") or "stdio"
+        if transport == "http":
+            from .web.server import serve
+            serve(p, ns.host or p.s.mcp_host, int(ns.port or p.s.mcp_port), insecure=bool(ns.insecure), mcp_only=True)
+            return 0
         serve_stdio(p)
         return 0
 
     if ns.cmd == "serve":
         from .web.server import serve
-        serve(p, ns.host, ns.port, insecure=bool(getattr(ns, "insecure", False)))
+        serve(p, ns.host or p.s.web_host, int(ns.port or p.s.web_port), insecure=bool(getattr(ns, "insecure", False)))
         return 0
     print("unknown command: %s" % ns.cmd)
     return 1
@@ -1324,15 +1613,15 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
 _CAPTURED = False   # Web 콘솔(run_captured)에서 실행 중이면 True — 진행 모니터의 stderr 출력을 끈다
 
 
-def run_captured(argv: List[str], settings: Settings, pipe) -> Dict[str, Any]:
-    """Web 콘솔용: stdout 을 캡처해 문자열로 반환."""
+def run_captured(argv: List[str], settings: Settings, pipe, actor: str = "web") -> Dict[str, Any]:
+    """Web 콘솔용: stdout 을 캡처해 문자열로 반환. 권한은 서버(/api/cli)가 이미 판정했으므로 CLI 게이트를 타지 않는다."""
     global _CAPTURED
     buf = io.StringIO()
     code = 0
     _CAPTURED = True
     try:
         with redirect_stdout(buf):
-            code = run(argv, settings, pipe)
+            code = run(argv, settings, pipe, gate=False)
     except SystemExit as e:  # argparse 오류/--help
         code = int(e.code or 0)
     except Exception as e:

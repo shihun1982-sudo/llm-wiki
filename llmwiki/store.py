@@ -208,17 +208,20 @@ class Store:
         c.execute("DELETE FROM doc_vectors WHERE doc_id=?", (doc_id,))
         self._vec_cache = None
 
-    def upsert_doc(self, doc, chunks, tokens_fn, extra_tokens: str = "", trigram: bool = False) -> None:
+    def upsert_doc(self, doc, chunks, tokens_fn, extra_tokens: str = "", trigram: bool = False, fts: bool = True) -> None:
+        """fts=False 면 chunks 만 쓰고 FTS 행은 만들지 않는다 (toggles.build_fts off → 나중에 `build fts` 로 재색인)."""
         c = self.conn
         c.execute("INSERT OR REPLACE INTO docs(doc_id,path,title,kind,hash,meta,n_chunks,built_at,mtime,size) VALUES(?,?,?,?,?,?,?,?,?,?)",
                   (doc.doc_id, doc.path, doc.title, doc.kind, doc.hash, json.dumps(doc.meta, ensure_ascii=False),
                    len(chunks), time.time(), float(getattr(doc, "mtime", 0) or 0), int(getattr(doc, "size", 0) or 0)))
-        if trigram:
+        if trigram and fts:
             self.ensure_trigram()
         for ch in chunks:
             c.execute("INSERT OR REPLACE INTO chunks(chunk_id,doc_id,ordinal,heading,text,start,end) VALUES(?,?,?,?,?,?,?)",
                       (ch.chunk_id, ch.doc_id, ch.ordinal, ch.heading, ch.text, ch.start, ch.end))
             c.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (ch.chunk_id,))
+            if not fts:
+                continue
             toks = tokens_fn(ch.heading + "\n" + ch.text)
             if extra_tokens:
                 toks = toks + " " + extra_tokens
@@ -228,6 +231,52 @@ class Store:
                 c.execute("DELETE FROM chunks_tri WHERE chunk_id=?", (ch.chunk_id,))
                 c.execute("INSERT INTO chunks_tri(chunk_id,doc_id,body) VALUES(?,?,?)", (ch.chunk_id, ch.doc_id, ch.heading + "\n" + ch.text))
         self._vec_cache = None
+
+    def reindex_fts(self, tokens_fn, meta_tokens_fn=None, trigram: bool = False, doc_ids: Optional[List[str]] = None, progress=None) -> Dict[str, Any]:
+        """FTS 채널만 다시 만든다 (`build fts`): chunks 테이블은 읽기만 하고 chunks_fts(+chunks_tri) 행을 전부(또는 doc_ids 만) 다시 쓴다.
+        embeddings / entities / relations / mentions 는 건드리지 않는다. 반환: {docs, chunks}."""
+        c = self.conn
+        if doc_ids is None:
+            c.execute("DELETE FROM chunks_fts")
+            if trigram:
+                self.ensure_trigram()
+                c.execute("DELETE FROM chunks_tri")
+            elif self._has_trigram():
+                self.drop_trigram()
+            docs = [r["doc_id"] for r in c.execute("SELECT doc_id FROM docs ORDER BY doc_id")]
+        else:
+            docs = list(doc_ids)
+            for d in docs:
+                for cid in [r["chunk_id"] for r in c.execute("SELECT chunk_id FROM chunks WHERE doc_id=?", (d,))]:
+                    c.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (cid,))
+                    if self._has_trigram():
+                        c.execute("DELETE FROM chunks_tri WHERE chunk_id=?", (cid,))
+            if trigram:
+                self.ensure_trigram()
+        n = 0
+        for i, d in enumerate(docs):
+            extra = ""
+            if meta_tokens_fn is not None:
+                nm = self.get_doc_meta(d)
+                if nm:
+                    try:
+                        extra = meta_tokens_fn(nm) or ""
+                    except Exception:
+                        extra = ""
+            for r in c.execute("SELECT chunk_id, doc_id, heading, text FROM chunks WHERE doc_id=? ORDER BY ordinal", (d,)).fetchall():
+                toks = tokens_fn((r["heading"] or "") + "\n" + (r["text"] or ""))
+                if extra:
+                    toks = toks + " " + extra
+                c.execute("INSERT INTO chunks_fts(chunk_id,doc_id,heading,body,tokens) VALUES(?,?,?,?,?)", (r["chunk_id"], r["doc_id"], r["heading"], r["text"], toks))
+                if trigram:
+                    c.execute("INSERT INTO chunks_tri(chunk_id,doc_id,body) VALUES(?,?,?)", (r["chunk_id"], r["doc_id"], (r["heading"] or "") + "\n" + (r["text"] or "")))
+                n += 1
+            if progress and (i % 50 == 0 or i == len(docs) - 1):
+                progress(i + 1, len(docs), d)
+            if i % 200 == 199:
+                c.commit()
+        c.commit()
+        return {"docs": len(docs), "chunks": n}
 
     # ---------- trigram 폴백 FTS (한글 부분 문자열) ----------
     _tri_checked: Optional[bool] = None

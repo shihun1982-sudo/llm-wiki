@@ -11,10 +11,15 @@ agents.json (프로젝트 루트, 없으면 기본값 생성):
      "text_paths": ["part.text", "text", "content", "message.content", "result"],   # 이벤트에서 텍스트를 뽑는 경로(점 표기)
      "usage_paths": {"input": ["usage.input_tokens", "tokens.input"], "output": ["usage.output_tokens", "tokens.output"]},
      "model": "",                       # 기본 모델 (역할 model 이 비면 사용)
-     "timeout_s": 300, "cwd": "{project_root}", "env": {}, "max_output_chars": 400000 }}
+     "timeout_s": 300,                  # 1회 실행 제한(초). 넘으면 프로세스를 죽이고 재시도
+     "retries": 3,                      # transient 실패(retry_on) 재시도 횟수 → 최대 1+retries 회 실행
+     "retry_backoff_s": 5,              # 재시도 사이 대기(초) × 시도 번호
+     "retry_on": ["timeout", "exec", "exit", "empty"],   # 재시도 대상: 타임아웃 / 실행 실패 / 종료 코드≠0 / 빈 출력
+     "cwd": "{project_root}", "env": {}, "max_output_chars": 400000 }}
 provider 지정: llm_provider="headless:opencode" 또는 llm_roles.answer.provider="headless:opencode".
 결과: 텍스트를 순서대로 이어붙여 반환 → 기존 parse_json 으로 구조화 결과 회수.
-`python -m llmwiki.headless --mock` 은 테스트용 목업 에이전트(표준입력 프롬프트 → ndjson 이벤트).
+최종 실패는 LLMError(transient) 로 올라가고 BaseLLM 이 incident 로 기록 → 질의 결과 llm_report / 빌드 alerts 에 보고된다.
+`python -m llmwiki.headless --mock` 은 테스트용 목업 에이전트(표준입력 프롬프트 → ndjson 이벤트). `--mock --sleep N` 은 N초 멈춤(타임아웃 테스트).
 """
 from __future__ import annotations
 
@@ -30,6 +35,8 @@ from typing import Any, Dict, List, Optional
 from .config import ROOT, path_for
 from .providers import BaseLLM, LLMError
 
+RETRY_DEFAULTS: Dict[str, Any] = {"timeout_s": 300, "retries": 3, "retry_backoff_s": 5, "retry_on": ["timeout", "exec", "exit", "empty"]}
+
 DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
     "opencode": {
         "desc": "OpenCode CLI (opencode run --format json). 모델은 provider/model 형식 (예 anthropic/claude-sonnet-4-5).",
@@ -37,7 +44,8 @@ DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
         "prompt_mode": "arg", "files_flag": "-f", "output": "ndjson",
         "text_paths": ["part.text", "text", "content", "message.content", "result"],
         "usage_paths": {"input": ["usage.input_tokens", "tokens.input", "part.tokens.input"], "output": ["usage.output_tokens", "tokens.output", "part.tokens.output"]},
-        "model": "", "timeout_s": 300, "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
+        "model": "", "timeout_s": 300, "retries": 3, "retry_backoff_s": 5, "retry_on": ["timeout", "exec", "exit", "empty"],
+        "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
     },
     "claude": {
         "desc": "Claude Code CLI headless (claude -p --output-format json).",
@@ -45,7 +53,8 @@ DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
         "prompt_mode": "arg", "files_flag": "", "output": "json",
         "text_paths": ["result", "content", "text"],
         "usage_paths": {"input": ["usage.input_tokens"], "output": ["usage.output_tokens"]},
-        "model": "claude-sonnet-5", "timeout_s": 300, "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
+        "model": "claude-sonnet-5", "timeout_s": 300, "retries": 3, "retry_backoff_s": 5, "retry_on": ["timeout", "exec", "exit", "empty"],
+        "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
     },
     "codex": {
         "desc": "OpenAI Codex CLI (codex exec --json).",
@@ -53,7 +62,8 @@ DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
         "prompt_mode": "arg", "files_flag": "", "output": "ndjson",
         "text_paths": ["item.text", "text", "content", "message"],
         "usage_paths": {"input": ["usage.input_tokens"], "output": ["usage.output_tokens"]},
-        "model": "", "timeout_s": 300, "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
+        "model": "", "timeout_s": 300, "retries": 3, "retry_backoff_s": 5, "retry_on": ["timeout", "exec", "exit", "empty"],
+        "cwd": "{project_root}", "env": {}, "max_output_chars": 400000,
     },
     "mock": {
         "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트. {python} = 현재 인터프리터(이식성).",
@@ -61,9 +71,19 @@ DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
         "prompt_mode": "stdin", "files_flag": "--file", "output": "ndjson",
         "text_paths": ["part.text", "text"],
         "usage_paths": {"input": ["usage.input_tokens"], "output": ["usage.output_tokens"]},
-        "model": "mock", "timeout_s": 60, "cwd": "{project_root}", "env": {}, "max_output_chars": 100000,
+        "model": "mock", "timeout_s": 60, "retries": 1, "retry_backoff_s": 0, "retry_on": ["timeout", "exec", "exit", "empty"],
+        "cwd": "{project_root}", "env": {}, "max_output_chars": 100000,
     },
 }
+
+
+def with_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """agents.json 항목에 없는 재시도 키를 기본값으로 채운다 (구 파일 호환)."""
+    out = dict(cfg or {})
+    for k, v in RETRY_DEFAULTS.items():
+        if k not in out or out[k] in (None, ""):
+            out[k] = json.loads(json.dumps(v))
+    return out
 
 
 def agents_path() -> str:
@@ -77,7 +97,7 @@ def load_agents() -> Dict[str, Dict[str, Any]]:
         return json.loads(json.dumps(DEFAULT_AGENTS))
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
-    out = {k: v for k, v in data.items() if not k.startswith("_")}
+    out = {k: with_defaults(v) for k, v in data.items() if not k.startswith("_") and isinstance(v, dict)}
     if "mock" not in out:   # 테스트/배선 확인용은 항상 제공
         out["mock"] = json.loads(json.dumps(DEFAULT_AGENTS["mock"]))
     return out
@@ -87,7 +107,9 @@ def save_agents(data: Dict[str, Dict[str, Any]]) -> str:
     p = agents_path()
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     out = {"_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. "
-                       "command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다."}
+                       "command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다. "
+                       "재시도: timeout_s(1회 실행 제한, 기본 300=5분) · retries(재시도 횟수, 기본 3) · retry_backoff_s · retry_on[timeout|exec|exit|empty]. "
+                       "최종 실패는 질의 결과 llm_report / 빌드 alerts 에 보고되고 답변은 추출식으로 대체된다."}
     out.update(data)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
@@ -183,6 +205,27 @@ class HeadlessAgentLLM(BaseLLM):
         self.model = model or (self.cfg or {}).get("model") or ""
         self.available = self.cfg is not None and bool(self.cfg.get("command")) and self._exe_ok()
         self._files: List[str] = []
+        # 재시도/타임아웃은 agents.json 항목이 우선 (make_llm 이 config.json 값으로 덮어쓰지 않도록 고정 표식)
+        if self.cfg:
+            try:
+                self.retries = int(self.cfg.get("retries", 3))
+                self._retries_fixed = True
+            except (TypeError, ValueError):
+                pass
+            try:
+                self.retry_backoff_s = float(self.cfg.get("retry_backoff_s", 5) or 0)
+                self._backoff_fixed = True
+            except (TypeError, ValueError):
+                pass
+            try:
+                self._timeout_fixed = int(self.cfg.get("timeout_s") or 0) or None
+                if self._timeout_fixed:
+                    self.timeout = self._timeout_fixed
+            except (TypeError, ValueError):
+                self._timeout_fixed = None
+
+    def _retry_on(self) -> List[str]:
+        return [str(x) for x in ((self.cfg or {}).get("retry_on") or RETRY_DEFAULTS["retry_on"])]
 
     def _exe(self) -> str:
         """command[0] 을 실제 실행 파일 경로로 해석. {python} → 현재 인터프리터.
@@ -259,14 +302,17 @@ class HeadlessAgentLLM(BaseLLM):
         env = dict(os.environ)
         env.update({k: str(v) for k, v in (self.cfg.get("env") or {}).items()})
         cwd = (self.cfg.get("cwd") or "{project_root}").replace("{project_root}", ROOT)
+        timeout_s = int(self.cfg.get("timeout_s") or self.timeout or 300)
+        retry_on = self._retry_on()
         t0 = time.perf_counter()
         try:
             proc = subprocess.run(args, input=(prompt if mode == "stdin" else None), capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=int(self.cfg.get("timeout_s") or 300), cwd=cwd if os.path.isdir(cwd) else None, env=env)
+                                  errors="replace", timeout=timeout_s, cwd=cwd if os.path.isdir(cwd) else None, env=env)
         except subprocess.TimeoutExpired:
-            raise LLMError("headless agent timeout (%ss)" % self.cfg.get("timeout_s"))
+            # subprocess.run 은 타임아웃 시 자식을 kill 한 뒤 예외를 던진다. 재시도 여부는 retry_on 에 'timeout' 이 있을 때.
+            raise LLMError("headless agent timeout (%ss, %s)" % (timeout_s, self.agent), transient=("timeout" in retry_on), kind="timeout")
         except OSError as e:
-            raise LLMError("headless agent exec failed: %s" % e)
+            raise LLMError("headless agent exec failed: %s" % e, transient=("exec" in retry_on), kind="exec")
         finally:
             if tmp_prompt:
                 try:
@@ -278,9 +324,11 @@ class HeadlessAgentLLM(BaseLLM):
         events = parse_output(raw, self.cfg.get("output", "ndjson"))
         text = extract_text(events, self.cfg.get("text_paths") or ["text"]).strip()
         if not text and proc.returncode != 0:
-            raise LLMError("headless agent exit %s: %s" % (proc.returncode, (proc.stderr or raw)[:300]))
+            raise LLMError("headless agent exit %s: %s" % (proc.returncode, (proc.stderr or raw)[:300]), transient=("exit" in retry_on), kind="exit")
         if not text:
             text = raw.strip()   # 파서가 못 찾으면 원문 (text_paths 보정 필요)
+        if not text:
+            raise LLMError("headless agent returned empty output (exit %s): %s" % (proc.returncode, (proc.stderr or "")[:200]), transient=("empty" in retry_on), kind="empty")
         usage = extract_usage(events, self.cfg.get("usage_paths") or {})
         if not usage["input_tokens"]:
             usage = {"input_tokens": len(prompt) // 3, "output_tokens": len(text) // 3, "estimated": True}
@@ -294,13 +342,32 @@ class HeadlessAgentLLM(BaseLLM):
 
 
 def _mock_main() -> int:
-    """`python -m llmwiki.headless --mock` : 표준입력 프롬프트를 읽어 MockLLM 과 같은 규칙으로 ndjson 이벤트 출력."""
+    """`python -m llmwiki.headless --mock` : 표준입력 프롬프트를 읽어 MockLLM 과 같은 규칙으로 ndjson 이벤트 출력.
+    테스트 옵션: --sleep N (N초 멈춤 → 타임아웃 재현) · --fail-times N --state FILE (처음 N번은 종료 코드 3 으로 실패 → 재시도 재현) · --empty (빈 출력)"""
     prompt = sys.stdin.read()
     files = []
     argv = sys.argv[1:]
     for i, a in enumerate(argv):
         if a == "--file" and i + 1 < len(argv):
             files.append(argv[i + 1])
+    if "--sleep" in argv:
+        time.sleep(float(argv[argv.index("--sleep") + 1]))
+    if "--fail-times" in argv:
+        n = int(argv[argv.index("--fail-times") + 1])
+        state = argv[argv.index("--state") + 1] if "--state" in argv else os.path.join(tempfile.gettempdir(), "llmwiki_mock_fail_state")
+        cnt = 0
+        try:
+            with open(state, "r", encoding="utf-8") as f:
+                cnt = int(f.read().strip() or 0)
+        except Exception:
+            cnt = 0
+        with open(state, "w", encoding="utf-8") as f:
+            f.write(str(cnt + 1))
+        if cnt < n:
+            sys.stderr.write("mock failure %d/%d\n" % (cnt + 1, n))
+            return 3
+    if "--empty" in argv:
+        return 0
     from .providers import MockLLM
     sys_part, _, user_part = prompt.partition("\n\n")
     r = MockLLM()._complete(sys_part, user_part or prompt, 512, "low", "JSON" in prompt)

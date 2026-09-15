@@ -1,0 +1,57 @@
+{
+  "_comment": "MCP 클라이언트 쪽 설정 예시 (이 파일은 LLM Wiki 가 읽지 않는다 — 각 클라이언트의 설정 파일에 해당 블록을 붙여 넣는다). 자기 환경 값(python 절대 경로·프로젝트 루트·서버 URL)이 채워진 버전은  python -m llmwiki mcp --client-config [--url http://wiki-host:8765] [--token lwk_…]  이 출력한다. 설명: docs/MCP.md",
+  "_where": {
+    "claude_code": "claude mcp add-json llmwiki '<블록>'  또는  ~/.claude.json / 프로젝트 .mcp.json 의 mcpServers",
+    "claude_desktop": "Windows %APPDATA%\\Claude\\claude_desktop_config.json · macOS ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "cursor": "~/.cursor/mcp.json 또는 프로젝트 .cursor/mcp.json",
+    "opencode": "opencode.json 의 mcp 항목 (type local = stdio 명령, type remote = HTTP URL)",
+    "codex": "~/.codex/config.toml [mcp_servers.llmwiki] command/args 또는 url"
+  },
+  "stdio_same_pc": {
+    "_desc": "같은 PC. 클라이언트가 python 을 자식 프로세스로 띄운다. Windows 는 python.exe 절대 경로 권장, cwd 는 프로젝트 루트(설정 파일·data/ 를 찾는 기준)",
+    "mcpServers": {
+      "llmwiki": {
+        "command": "C:\\Python314\\python.exe",
+        "args": ["-m", "llmwiki", "mcp"],
+        "cwd": "C:\\path\\to\\llm-wiki-rag-selfevolving",
+        "env": {"PYTHONIOENCODING": "utf-8"}
+      }
+    }
+  },
+  "stdio_same_pc_linux": {
+    "mcpServers": {
+      "llmwiki": {
+        "command": "/usr/bin/python3",
+        "args": ["-m", "llmwiki", "mcp"],
+        "cwd": "/opt/llm-wiki-rag-selfevolving"
+      }
+    }
+  },
+  "http_remote": {
+    "_desc": "원격/다수 LLM. 서버는 python -m llmwiki serve --host 0.0.0.0 (Web UI 와 같은 포트의 POST /mcp) 또는 mcp --transport http (MCP 전용 포트, config.json mcp_port). 토큰은 서버에서 apikey add <이름> --role viewer",
+    "mcpServers": {
+      "llmwiki": {
+        "type": "http",
+        "url": "http://wiki-host:8765/mcp",
+        "headers": {"Authorization": "Bearer lwk_<id>_<secret>"}
+      }
+    }
+  },
+  "bridge_stdio_to_remote": {
+    "_desc": "stdio 만 지원하는 클라이언트가 원격 서버를 쓸 때. 로컬에는 이 프로젝트 폴더(설정 파일만)와 python 이 있으면 되고 색인 DB 는 필요 없다. URL/토큰은 플래그 대신 .env LLMWIKI_MCP_URL / LLMWIKI_MCP_TOKEN 또는 config.json mcp_url 로도 지정 가능",
+    "mcpServers": {
+      "llmwiki-remote": {
+        "command": "C:\\Python314\\python.exe",
+        "args": ["-m", "llmwiki", "mcp", "--connect", "http://wiki-host:8765/mcp", "--token", "lwk_<id>_<secret>"],
+        "cwd": "C:\\path\\to\\llm-wiki-rag-selfevolving"
+      }
+    }
+  },
+  "opencode_json": {
+    "_desc": "opencode.json 발췌",
+    "mcp": {
+      "llmwiki-local": {"type": "local", "command": ["python", "-m", "llmwiki", "mcp"], "enabled": true},
+      "llmwiki-remote": {"type": "remote", "url": "http://wiki-host:8765/mcp", "headers": {"Authorization": "Bearer lwk_<id>_<secret>"}, "enabled": true}
+    }
+  }
+}

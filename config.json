@@ -49,7 +49,11 @@
   "log_backups": 10,
   "log_console": false,
   "openai_base_url": "http://localhost:11434/v1",
+  "openai_api_key_header": "authorization",
+  "openai_extra_headers": {},
+  "openai_embed_base_url": "",
   "openai_embed_model": "",
+  "anthropic_base_url": "",
   "rerank_url": "",
   "rerank_api_model": "",
   "rerank_api_style": "cohere",
@@ -59,6 +63,16 @@
   "wal_checkpoint_mb": 64,
   "embed_store_dtype": "float32",
   "build_lock_timeout": 0,
+  "llm_timeout": 600,
+  "llm_retries": 3,
+  "llm_retry_backoff_s": 2.0,
+  "web_host": "127.0.0.1",
+  "web_port": 8765,
+  "mcp_transport": "stdio",
+  "mcp_host": "127.0.0.1",
+  "mcp_port": 8766,
+  "mcp_url": "",
+  "mcp_plugins_dir": "plugins/mcp_tools",
   "toggles": {
     "rule_graph": true,
     "llm_graph": false,
@@ -102,7 +116,7 @@
     "doc_vector": false,
     "feedback_boost": false,
     "forensic_auto": true,
-    "mcp_sources": false,
+    "mcp_sources": false, "external_rag": false, "mcp_federation": false,
     "embed_adaptive": true,
     "fts_trigram": false,
     "schema_lint": true,
@@ -114,6 +128,9 @@
     "auto_build": false,
     "health_check": true,
     "log_stages": true,
-    "profile_expansion": false
+    "profile_expansion": false,
+    "build_fts": true,
+    "doc_expand": true,
+    "llm_failure_report": true
   }
 }

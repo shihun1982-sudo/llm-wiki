@@ -18,6 +18,29 @@
     el.innerHTML = LW.renderForensic ? LW.renderForensic(f) : `<pre class="pre">${esc(JSON.stringify(f, null, 1))}</pre>`;
   };
 
+  // ---------------- 상세 분석 리포트 (analysis_mode) ----------------
+  const SEV = { error: '🔴', warn: '🟠', info: '🔵', ok: '🟢' };
+  $('#btn-q-analysis').onclick = async () => {
+    if (!STATE.lastRequestId) { toast('먼저 질의를 실행하세요'); return; }
+    const el = $('#q-analysis'); el.classList.remove('hidden'); el.innerHTML = '분석 리포트 생성 중…';
+    const focus = ($('#qa-focus') && $('#qa-focus').value) || 'all';
+    const j = await api('/api/analysis?request_id=' + STATE.lastRequestId + '&focus=' + focus);
+    if (!j || j.error) { el.innerHTML = `<div class="banner err">${esc((j || {}).error || '실패')}</div>`; return; }
+    const s = j.summary || {};
+    const mdUrl = '/api/analysis?request_id=' + s.request_id + '&format=md&focus=' + focus;
+    let html = `<div class="req-head"><b>📊 상세 분석 리포트</b> request #${s.request_id} · ${fmt(s.total_ms, 0)} ms (LLM ${fmt(s.llm_ms, 0)} ms) · 토큰 ${fmtK((s.tokens || {}).total_tokens || 0)} · 판정 <span class="pill">${esc(s.verdict || '-')}</span> · groundedness ${s.groundedness == null ? '-' : fmt(s.groundedness, 2)} · 상세도 ${s.detail_level}${s.detail_level >= 2 ? '' : ' <span class="muted">(사이드바 토글 analysis_mode 를 켜고 다시 질의하면 debug·프롬프트 샘플 포함)</span>'}</div>` +
+      `<div class="row"><label>초점 <select id="qa-focus"><option value="all"${focus === 'all' ? ' selected' : ''}>전체</option><option value="quality"${focus === 'quality' ? ' selected' : ''}>품질</option><option value="speed"${focus === 'speed' ? ' selected' : ''}>속도</option><option value="tokens"${focus === 'tokens' ? ' selected' : ''}>토큰</option></select></label> <a class="button mini secondary" href="${mdUrl}" target="_blank">md 열기</a> <a class="button mini secondary" href="${mdUrl}&download=1">다운로드</a> <button class="mini secondary" id="qa-copy">클립보드 복사 (LLM 에게 붙여넣기)</button> <span class="muted small">파일: ${esc((j.paths || {}).md || '')}</span></div>`;
+    for (const lens of ['quality', 'speed', 'tokens']) {
+      if (focus !== 'all' && focus !== lens) continue;
+      const rows = (s.top || {})[lens] || [];
+      html += `<div><b>${{ quality: '품질', speed: '속도', tokens: '토큰' }[lens]}</b> ` + rows.map((f) => `${SEV[f.severity] || '•'} ${esc(f.title)}${(f.knobs || []).length ? ' <span class="muted">→ ' + f.knobs.map(esc).join(', ') + '</span>' : ''}`).join(' &nbsp;·&nbsp; ') + '</div>';
+    }
+    html += `<details><summary>리포트 전문 (마크다운)</summary><pre class="pre" id="qa-md">${esc(j.markdown || '')}</pre></details>`;
+    el.innerHTML = html;
+    $('#qa-focus').onchange = () => $('#btn-q-analysis').click();
+    $('#qa-copy').onclick = async () => { try { await navigator.clipboard.writeText(j.markdown || ''); toast('복사됨'); } catch (e) { toast('복사 실패: ' + e); } };
+  };
+
   function verdictPill(v) { return `<span class="pill ${v === 'sufficient' ? 'ok' : v === 'weak' ? 'warn' : 'bad'}">${esc(v || '-')}</span>`; }
   function boostChips(b) { return Object.keys(b || {}).map((k) => `<span class="boost" title="${k}">${k} ×${fmt(b[k], 2)}</span>`).join(''); }
 
@@ -36,7 +59,8 @@
       if (!j.result) { LW.renderLive(liveEl, { status: 'error', detail: j.error || '응답 없음', elapsed_s: 0 }); return; }
       LW.renderLive(liveEl, null);
       const r = j.result; STATE.lastQueryId = r.query_id || null; STATE.lastRequestId = r.request_id || null; STATE.lastResult = r;
-      $('#query-out').classList.remove('hidden'); $('#q-forensic').classList.add('hidden');
+      $('#query-out').classList.remove('hidden'); $('#q-forensic').classList.add('hidden'); $('#q-analysis').classList.add('hidden');
+      if (r.analysis && r.analysis.md) { $('#q-analysis').classList.remove('hidden'); $('#q-analysis').innerHTML = `<div class="banner"><b>📊 analysis_mode</b> — 리포트 저장됨: <code>${esc(r.analysis.md)}</code> · ` + ['quality', 'speed', 'tokens'].map((l) => (((r.analysis.top || {})[l] || [])[0] ? `${{ quality: '품질', speed: '속도', tokens: '토큰' }[l]}: ${esc(((r.analysis.top || {})[l] || [])[0].title)}` : '')).filter(Boolean).join(' · ') + ' · <a href="#" id="qa-open">전문 보기</a></div>'; const o = $('#qa-open'); if (o) o.onclick = (e) => { e.preventDefault(); $('#btn-q-analysis').click(); }; }
       $('#answer-mode').textContent = r.answer_mode + (r.model ? ' · ' + r.model : '');
       $('#answer-ms').textContent = fmt(r.ms) + ' ms';
       $('#answer-cached').classList.toggle('hidden', !(r.cached || r.precomputed)); $('#answer-cached').textContent = r.precomputed ? 'precomputed' : 'cached';
@@ -50,6 +74,10 @@
       else if (r.forensic && r.forensic.id) { ban.className = 'banner warn'; ban.textContent = '포렌식 #' + r.forensic.id + ' 기록됨 (' + r.forensic.severity + ')'; ban.classList.remove('hidden'); }
       else ban.classList.add('hidden');
       const fxl = $('#q-fx-link'); if (fxl) fxl.onclick = (e) => { e.preventDefault(); $('#btn-q-forensic').click(); };
+      // LLM 실행 보고 (재시도 후 실패 → 대체 경로)
+      const lr = $('#q-llm-report');
+      if (r.llm_report && (r.llm_report.summary || []).length) { lr.classList.remove('hidden'); lr.innerHTML = '<b>⚠ LLM 실행 보고</b> — ' + r.llm_report.summary.map(esc).join('<br>') + '<div class="muted small">설정: agents.json timeout_s/retries · config.json llm_timeout/llm_retries · Settings › 모델 › 실제 호출 테스트</div>'; }
+      else lr.classList.add('hidden');
       $('#answer').innerHTML = esc(r.answer).replace(/\[C(\d+)\]/g, (m, n) => `<span class="cite" data-n="${n}">[C${n}]</span>`);
       $$('#answer .cite').forEach((c) => c.onclick = () => { const h = $(`#hit-${c.dataset.n}`); if (h) { h.classList.add('open'); h.scrollIntoView({ behavior: 'smooth', block: 'center' }); } });
       $('#fb-result').textContent = ''; $('#fb-note').value = '';
@@ -66,6 +94,7 @@
       if (plan.alt_llm && plan.alt_llm.length) lines.push('LLM 확장 질의: ' + plan.alt_llm.map(esc).join(' | '));
       if (plan.pins && plan.pins.length) lines.push('pin: ' + plan.pins.map((p) => esc(p.id + ' ' + (p.doc || p.chunk))).join(', '));
       if (r.boosts && Object.keys(r.boosts).length) lines.push('boosts: ' + esc(JSON.stringify(r.boosts)));
+      if (r.doc_expand && r.doc_expand.docs != null) lines.push(`문서 단위 확장(doc_expand): 문서 ${r.doc_expand.docs} · 후보 ${r.doc_expand.candidates} · 추가 ${r.doc_expand.added} (${esc(r.doc_expand.mode)}${r.doc_expand.vector ? '+vector' : ''}, min ${r.doc_expand.min_score})`);
       $('#q-evidence').innerHTML = lines.join('\n');
       const route = r.route || {};
       $('#route').textContent = `kind=${route.kind || '(router off)'}  weights=${JSON.stringify(r.config.weights)}\nkeywords=${JSON.stringify(route.keywords || [])}\ngraph seeds=${JSON.stringify((r.graph || {}).seeds || [])}  provenance=${JSON.stringify((r.graph || {}).provenance || {})}\nanswer llm=${r.config.llm}/${r.config.llm_model}  rerank=${r.config.rerank_llm}  embedder=${r.config.embedder}  round=${(r.config.round || {}).level || 'base'}${r.cached ? '\n(cached result)' : ''}`;
@@ -87,6 +116,36 @@
     $('#fb-result').textContent = '기록됨. 제안: ' + JSON.stringify(j.proposals || []) + (j.episode ? ' · 에피소드 #' + j.episode : '');
     loadStatus();
   });
+  // ---------------- 기대 결과 포렌식 (forensic expect) ----------------
+  function renderExpect(rep) {
+    if (!rep || (rep.error && !(rep.targets || []).length)) return `<div class="banner err">${esc((rep || {}).error || 'no data')}</div>`;
+    const stageMark = (s) => s === 'hit' ? '<span class="ok">✔</span>' : s === 'miss' ? '<span class="bad">✘</span>' : s === 'off' ? '<span class="muted">—</span>' : '<span class="muted">?</span>';
+    let html = `<div class="req-head"><b>기대 결과 포렌식</b> request #${rep.request_id} · 원 판정 <span class="pill">${esc(rep.verdict || '-')}</span> · 재실행 ${rep.rerun ? rep.rerun_rounds + ' 라운드 (' + esc(rep.rerun_verdict || '') + ')' : '없음'}${rep.forensic_id ? ' · forensics #' + rep.forensic_id : ''}</div>` +
+      `<div class="muted small">Q: ${esc(rep.query || '')} · 기대 docs=${esc(JSON.stringify((rep.expected || {}).docs ? Object.keys(rep.expected.docs) : []))} terms=${esc(JSON.stringify((rep.expected || {}).terms || []))}${((rep.expected || {}).unresolved || []).length ? ' · <span class="errtxt">미해결 ' + esc(rep.expected.unresolved.join(', ')) + '</span>' : ''}</div>` +
+      '<ul class="small" style="margin:6px 0 6px 16px">' + (rep.summary || []).map((s) => `<li>${esc(s)}</li>`).join('') + '</ul>';
+    (rep.targets || []).forEach((t) => {
+      html += `<details ${t.chunk_id === rep.best_target ? 'open' : ''}><summary><b>${esc(t.chunk_id)}</b> <span class="muted small">${esc((t.heading || '').slice(0, 60))} · ${esc(t.why || '')}</span> · 원 결과 <span class="pill ${t.original === 'cited' ? 'ok' : t.original === 'candidate' ? 'warn' : 'bad'}">${esc(t.original)}</span> → 탈락 <span class="pill ${t.lost_at === 'none' ? 'ok' : 'bad'}">${esc(t.lost_at)}</span></summary>` +
+        '<table class="small"><tr><th></th><th>단계</th><th>순위</th><th>상세</th></tr>' + (t.journey || []).map((j) => `<tr><td>${stageMark(j.status)}</td><td>${esc(j.stage)}</td><td class="num">${j.rank || ''}</td><td>${esc(j.detail || '')}</td></tr>`).join('') + '</table></details>';
+    });
+    html += '<h4 style="margin:8px 0 4px">수정안</h4>' + ((rep.suggestions || []).map((s) => `<div class="sugg"><span class="pill">${esc(s.kind)}</span> ${esc(s.detail)} <span class="muted">conf ${fmt(s.confidence, 2)}</span></div>`).join('') || '<div class="muted small">없음</div>');
+    if (rep.proposals && rep.proposals.length) html += `<div class="banner ok">제안 등록: #${rep.proposals.join(', #')} → Evolve 탭에서 승인</div>`;
+    return html;
+  }
+  LW.renderExpect = renderExpect;
+  async function runExpect(rid, docs, terms, note, propose, outEl) {
+    outEl.classList.remove('hidden'); outEl.innerHTML = '기대 결과 포렌식 실행 중… (같은 설정으로 검색을 다시 실행합니다)';
+    const rep = await api('/api/forensic/expect', { request_id: rid, docs, terms, note, propose });
+    outEl.innerHTML = renderExpect(rep);
+    return rep;
+  }
+  LW.runExpect = runExpect;
+  $('#btn-q-expect').onclick = () => { const p = $('#q-expect-form'); p.classList.toggle('hidden'); };
+  $('#btn-q-expect-run').onclick = async () => {
+    if (!STATE.lastRequestId) { toast('먼저 질의를 실행하세요'); return; }
+    const docs = $('#qe-docs').value.trim(), terms = $('#qe-terms').value.trim();
+    if (!docs && !terms) { toast('기대 문서(ID) 또는 용어를 하나 이상 입력하세요'); return; }
+    await runExpect(STATE.lastRequestId, docs, terms, $('#qe-note').value.trim(), $('#qe-propose').checked, $('#q-expect-out'));
+  };
 
   // ---------------- SEARCH DEBUG ----------------
   $('#btn-search').onclick = async () => {

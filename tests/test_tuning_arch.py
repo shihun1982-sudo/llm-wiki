@@ -213,7 +213,8 @@ class QualityOptionsTest(unittest.TestCase):
         self.assertEqual(init["result"]["serverInfo"]["name"], "llmwiki")
         self.assertIsNone(mcp.handle(self.p, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         tools = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-        self.assertEqual({t["name"] for t in tools}, {"wiki_query", "wiki_search", "wiki_entity", "wiki_status", "wiki_related", "wiki_doc", "wiki_propose"})
+        self.assertEqual({t["name"] for t in tools}, {"wiki_query", "wiki_search", "wiki_entity", "wiki_status", "wiki_related", "wiki_doc", "wiki_propose",
+                                                      "wiki_feedback", "wiki_forensic", "wiki_sources", "wiki_external_search", "wiki_analysis"})
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "wiki_query", "arguments": {"question": "캐파 확장 담당", "k": 3}}})
         self.assertIn("[C1]", r["result"]["content"][0]["text"])
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "wiki_entity", "arguments": {"name": "CFO"}}})

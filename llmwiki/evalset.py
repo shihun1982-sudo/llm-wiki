@@ -48,16 +48,29 @@ def load_questions(path: Optional[str] = None) -> List[Dict[str, Any]]:
     return qs
 
 
+AUX_WHY = ("doc_expand", "neighbor")
+
+
+def primary_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """검색 순위(hit@k·MRR)에 쓰는 '주 후보' — doc_expand/neighbor 로 덧붙은 보조 청크는 순위에서 뺀다(부모 뒤에 끼어들어 k 를 잠식하지 않도록)."""
+    return [h for h in hits if not any(w in AUX_WHY for w in (h.get("why") or []))]
+
+
 def score_result(question: Dict[str, Any], hits: List[Dict[str, Any]], chunks: Dict[str, Any], answer: str, k: int = 5
                  ) -> Dict[str, Any]:
+    """hit@k/MRR 은 주 후보 상위 k 로, term_recall 은 '주 후보 상위 k + 그 부모에 붙은 보조 청크(컨텍스트 포함)' 의 본문으로 계산한다."""
     exp_docs = question.get("expect_docs", [])
+    prim = primary_hits(hits)
     rank = None
-    for i, h in enumerate(hits[:k]):
+    for i, h in enumerate(prim[:k]):
         if any(e in h["chunk_id"] for e in exp_docs):
             rank = i + 1
             break
+    top_ids = {h["chunk_id"] for h in prim[:k]}
+    scope = list(prim[:k]) + [h for h in hits if any(w in AUX_WHY for w in (h.get("why") or [])) and h.get("in_context")
+                              and (h.get("parent") in top_ids or h.get("parent") is None)]
     ctx_text = " ".join((chunks.get(h["chunk_id"], {}) or {}).get("text", "") if isinstance(chunks.get(h["chunk_id"]), dict)
-                        else (chunks[h["chunk_id"]]["text"] if h["chunk_id"] in chunks else "") for h in hits[:k])
+                        else (chunks[h["chunk_id"]]["text"] if h["chunk_id"] in chunks else "") for h in scope)
     terms = question.get("expect_terms", [])
     term_hit = sum(1 for t in terms if t in ctx_text) / max(1, len(terms))
     ans_hit = sum(1 for t in terms if t in (answer or "")) / max(1, len(terms))

@@ -146,9 +146,15 @@ class ProvidersTest(unittest.TestCase):
         self.assertEqual(make_llm(s).name, "openai")
         self.assertEqual(make_llm(s, "rerank").model, "r-model")
         bad = OpenAICompatLLM("http://127.0.0.1:1/v1", "m")
+        bad.retries, bad.retry_backoff_s = 1, 0.0     # 연결 거부는 transient → 재시도 1회만 (테스트 시간)
         self.assertFalse(bad.ping()["ok"])
-        with self.assertRaises(LLMError):
+        with self.assertRaises(LLMError) as cm:
             bad.complete("s", "u")
+        self.assertTrue(cm.exception.transient)
+        self.assertIn("2회 시도", str(cm.exception))
+        from llmwiki.providers import drain_incidents
+        inc = drain_incidents()
+        self.assertTrue(inc and inc[-1]["attempts"] == 2 and inc[-1]["provider"] == "openai")
 
     def test_openai_compat_embedder_and_pipeline(self):
         emb = OpenAICompatEmbedder(self.base, "embed-model", batch=2)

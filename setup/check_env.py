@@ -62,6 +62,32 @@ def main() -> int:
     line(OK if os.path.exists(CONFIG_PATH) else WARN, "설정 파일 %s" % CONFIG_PATH)
     line(OK if os.path.exists(ENV_FILE) else WARN, ".env %s" % ("있음" if os.path.exists(ENV_FILE) else "없음"),
          "" if os.path.exists(ENV_FILE) else "copy setup\\.env.example .env 후 키 입력 (선택)")
+    # ---- 다중 사용자·MCP·재시도 설정 파일 (2026-09-15 기능) ----
+    try:
+        from llmwiki.config import path_for
+        sec_path = path_for("security")
+        if os.path.exists(sec_path):
+            with open(sec_path, "r", encoding="utf-8") as f:
+                sec = json.load(f)
+            admins = [u for u, r in (sec.get("users") or {}).items() if (r or {}).get("role") == "admin"]
+            line(OK if admins else WARN, "security.json mode=%s anonymous_role=%s admin 계정 %d개 API 키 %d개" % (
+                sec.get("mode"), sec.get("anonymous_role"), len(admins), len(sec.get("api_keys") or {})),
+                 "" if admins else "공개 전 admin 생성: python -m llmwiki users add <id> --role admin")
+            if "kh82.kim" in admins:
+                line(WARN, "기본 admin kh82.kim 이 남아 있음", "공개 전 비밀번호 변경: users passwd kh82.kim (또는 계정 삭제 후 새 admin)")
+        else:
+            line(WARN, "security.json 없음 (127.0.0.1 전용이면 무방)", "copy setup\\security.example.json security.json")
+        ag_path = path_for("agents")
+        if os.path.exists(ag_path):
+            with open(ag_path, "r", encoding="utf-8") as f:
+                ag = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+            line(OK, "agents.json 에이전트 %s (timeout_s/retries: %s)" % (list(ag), ", ".join("%s=%s/%s" % (k, v.get("timeout_s"), v.get("retries")) for k, v in ag.items())))
+        line(OK, "serve 기본 %s:%s · mcp 기본 %s (http %s:%s)%s" % (s.web_host, s.web_port, s.mcp_transport, s.mcp_host, s.mcp_port,
+             (" · 브리지 대상 " + (os.environ.get("LLMWIKI_MCP_URL") or s.mcp_url)) if (os.environ.get("LLMWIKI_MCP_URL") or s.mcp_url) else ""),
+             "config.json web_host/web_port/mcp_* 또는 serve --host/--port 로 변경")
+        line(OK, "LLM 재시도: llm_timeout=%ss llm_retries=%s backoff=%ss (headless 는 agents.json 우선)" % (s.llm_timeout, s.llm_retries, s.llm_retry_backoff_s))
+    except Exception as e:
+        line(WARN, "security/agents 점검 실패: %s" % str(e)[:120])
     for d in s.corpus_dirs:
         if os.path.isdir(d):
             n = sum(len([f for f in fs if f.lower().endswith((".md", ".txt", ".html", ".htm", ".pdf"))]) for _, _, fs in os.walk(d))

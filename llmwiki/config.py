@@ -135,6 +135,8 @@ class Toggles:
     feedback_boost: bool = False   # 긍정 피드백 청크 boost (decay)
     forensic_auto: bool = True     # 근거 부족/미지원 답변 시 포렌식 자동 기록
     mcp_sources: bool = False      # 외부 MCP 소스(mcp_sources.json) 사용 (빌드 ingest / 질의 enrich)
+    external_rag: bool = False     # 외부 RAG(mcp_sources.json retrieve 매핑) 결과를 검색 채널 ext_<source> 로 융합
+    mcp_federation: bool = False   # mcp_sources.json 에서 expose 한 외부 서버 tool 을 우리 MCP tools/list 에 <source>__<tool> 로 노출·중계
     # ---- 빌드 (v3) ----
     embed_adaptive: bool = True    # 임베딩 배치 크기 자동 조절 + WAL 체크포인트
     fts_trigram: bool = False      # 한글 trigram 폴백 테이블 생성/사용 (색인 크기↑, 0-hit 폴백에만 사용)
@@ -150,6 +152,11 @@ class Toggles:
     health_check: bool = True      # 빌드 시작 전 프로바이더/DB/디스크/코퍼스 health 검사 (실패 항목이 있으면 중단, --force 로 강행)
     log_stages: bool = True        # 프로파일 단계 종료를 logs/ 에 기록 (정상 동작 로그)
     profile_expansion: bool = False  # [디버그] 규칙/LLM 확장 전·후 검색을 모두 실행해 확장 효과를 프로파일에 기록 (지연↑)
+    # ---- 2026-09-14: 채널 빌드 · 문서 단위 확장 · LLM 실패 보고 ----
+    build_fts: bool = True         # 빌드에서 FTS 색인(chunks_fts) 을 쓴다. 끄면 FTS 채널이 stale (build fts 로 따로 만들 때)
+    doc_expand: bool = True        # 리랭크 후 상위 문서의 나머지 청크 중 질의 관련 청크를 컨텍스트에 추가 (문서 단위 확장)
+    llm_failure_report: bool = True  # LLM 호출이 재시도 후에도 실패하면 결과(llm_report)와 답변 상단에 상황·대체 경로를 보고
+    analysis_mode: bool = False    # 상세 분석 모드: 질의를 debug_level 2 로 실행하고 모든 단계 결과를 logs/analysis/req_<id>.md 리포트로 남김 (품질/속도/토큰 렌즈)
 
 
 @dataclass
@@ -224,7 +231,17 @@ class Settings:
     wal_checkpoint_mb: int = 64    # 빌드 중 WAL 이 이보다 크면 체크포인트
     embed_store_dtype: str = "float32"   # float32 | float16 (저장·행렬 메모리 절반, 유사도 오차 미미)
     build_lock_timeout: int = 0    # 다른 빌드가 락을 잡고 있을 때 기다릴 초 (0 = 즉시 실패)
-    llm_timeout: int = 600         # LLM 호출 1회의 HTTP 타임아웃(초). 응답이 없으면 이 시간 뒤 실패로 처리(재시도 포함)
+    llm_timeout: int = 600         # LLM 호출 1회의 HTTP 타임아웃(초). 응답이 없으면 이 시간 뒤 실패로 처리(재시도 포함). headless 는 agents.json timeout_s 우선
+    llm_retries: int = 3           # LLM 호출이 timeout/네트워크/실행 실패(transient)면 재시도할 횟수 (최대 1+llm_retries 회). headless 는 agents.json retries 우선
+    llm_retry_backoff_s: float = 2.0   # 재시도 사이 대기(초) × 시도 번호
+    # ---- 서버·MCP 기본값 (serve / mcp 명령의 플래그를 생략하면 여기 값; 플래그가 우선) ----
+    web_host: str = "127.0.0.1"    # serve 바인드 주소. 여러 사람에게 공개하면 0.0.0.0 (security.json 로그인 필요)
+    web_port: int = 8765           # serve 포트 (Web UI + POST /mcp)
+    mcp_transport: str = "stdio"   # mcp 명령 기본 전송: stdio(같은 PC 클라이언트가 자식 프로세스로) | http(단독 MCP HTTP 서버)
+    mcp_host: str = "127.0.0.1"    # mcp --transport http 바인드 주소
+    mcp_port: int = 8766           # mcp --transport http 포트
+    mcp_url: str = ""              # 브리지 대상 URL (예 http://wiki-host:8765/mcp). 비어 있지 않으면 `mcp` 는 stdio→원격 HTTP 브리지로 동작. 토큰은 .env LLMWIKI_MCP_TOKEN
+    mcp_plugins_dir: str = "plugins/mcp_tools"   # MCP 플러그인 도구 폴더 (*.py 의 register(add_tool)). 상대 경로는 프로젝트 루트 기준
     toggles: Toggles = field(default_factory=Toggles)
 
     LLM_ROLES = ("answer", "rerank", "extract", "summary", "review", "expand", "verify", "forensic")
@@ -460,6 +477,8 @@ TOGGLE_HELP: Dict[str, str] = {
     "feedback_boost": "[품질] 긍정 피드백을 받은 청크에 감쇠하는 소량 boost.",
     "forensic_auto": "[운영] 근거 부족·미지원 답변이 나오면 포렌식 진단을 자동 실행해 forensics 테이블에 누적.",
     "mcp_sources": "[데이터] mcp_sources.json 의 외부 MCP(예: Mango) 에서 raw data 를 가져와 색인(ingest)/질의 보강(enrich).",
+    "external_rag": "[품질/지연] mcp_sources.json 의 retrieve 매핑(다른 RAG·검색 API)을 질의마다 호출해 결과를 검색 채널 ext_<source> 로 융합(rrf). 가중치 channel_w_external × 소스 weight, 건수 external_rag_k. 외부 응답 지연이 질의 지연에 더해진다.",
+    "mcp_federation": "[MCP] mcp_sources.json 에서 expose 한 외부 서버의 tool 을 우리 MCP tools/list 에 <source>__<tool> 로 노출하고 호출을 중계 — 외부 LLM 은 /mcp 하나로 여러 RAG 를 쓴다.",
     "embed_adaptive": "[운영] 임베딩 배치 크기를 실패/지연에 따라 자동 조절하고 WAL 크기를 관리. 품질과 무관.",
     "fts_trigram": "[품질/크기] 한글 trigram 폴백 색인 (0-hit 시에만 사용). 색인 크기 2~3배.",
     "schema_lint": "[데이터] 빌드 시 front matter 스키마 검사 결과를 리포트 (필수 필드·enum·ID 형식).",
@@ -468,19 +487,23 @@ TOGGLE_HELP: Dict[str, str] = {
     "verify_after_build": "[운영] 빌드 후 색인 정합성(FTS↔청크·임베딩 coverage·댕글링) 요약 검증.",
     "memory_decay": "[진화] 제안·규칙·pin 의 strength 를 시간 감쇠/재사용 강화 (memory decay 잡).",
     "evolve_from_forensics": "[진화] 누적 포렌식 소견을 집계해 corpus_gap/query_rule/tuning 제안 생성.",
+    "build_fts": "[빌드] FTS 색인(chunks_fts) 쓰기. 끄면 이번 빌드에서 FTS 채널이 갱신되지 않음 (build verify 의 fts_missing 으로 확인, `build fts` 로 따로 재색인).",
+    "doc_expand": "[품질/토큰] 리랭크 후 상위 문서(doc_expand_top_docs)의 나머지 청크 중 질의 관련(키워드+벡터 hybrid ≥ doc_expand_min_score) 청크를 문서 순서로 컨텍스트에 추가. 인용 [C#] 가능, why=doc_expand.",
+    "llm_failure_report": "[운영] LLM 호출이 재시도(llm_retries / agents.json retries) 후에도 실패하면 결과 llm_report 와 답변 상단에 역할·시도 횟수·오류·대체 경로(추출식 등)를 보고.",
+    "analysis_mode": "[디버그] 상세 분석 모드. 질의를 debug_level 2(단계별 debug·프롬프트 샘플)로 실행하고 모든 단계 결과·설정 스냅샷·품질/속도/토큰 렌즈 소견과 조절점을 한 장의 마크다운(logs/analysis/req_<id>.md)으로 남긴다. LLM 에게 그대로 주어 튜닝을 물을 수 있다. 질의가 느려지고 requests 행이 커지므로 디버깅할 때만 켠다.",
 }
 
 # 토글 그룹 (Web UI 사이드바 자동 생성용). 이름은 Toggles 필드와 1:1.
 TOGGLE_GROUPS: List[Dict[str, Any]] = [
-    {"key": "build", "title": "Build", "toggles": ["rule_graph", "llm_graph", "embed", "communities", "community_summary", "wiki_pages", "incremental",
+    {"key": "build", "title": "Build", "toggles": ["build_fts", "embed", "rule_graph", "llm_graph", "communities", "community_summary", "wiki_pages", "incremental",
                                                    "explicit_relations", "schema_lint", "doc_vector", "fts_trigram", "mcp_sources"]},
     {"key": "build_perf", "title": "Build · 속도/안정성", "perf": True, "toggles": ["stat_skip", "idf_refit_incremental", "incremental_communities", "wiki_full_rewrite",
                                                                               "warm_cache", "fts_optimize", "embed_adaptive", "health_check", "verify_after_build", "precompute_after_build"]},
-    {"key": "query", "title": "Query · 검색", "toggles": ["fts", "vector", "graph", "router", "router_llm", "time_scope", "query_rules", "query_expand", "query_decompose", "pins", "rerank"]},
-    {"key": "answer", "title": "Query · 근거/답변", "toggles": ["evidence_check", "evidence_check_llm", "fallback_loop", "llm_answer", "evidence_compress", "claim_check",
-                                                          "claim_check_llm", "answer_refine", "forensic_auto"]},
+    {"key": "query", "title": "Query · 검색", "toggles": ["fts", "vector", "graph", "external_rag", "router", "router_llm", "time_scope", "query_rules", "query_expand", "query_decompose", "pins", "rerank"]},
+    {"key": "answer", "title": "Query · 근거/답변", "toggles": ["doc_expand", "evidence_check", "evidence_check_llm", "fallback_loop", "llm_answer", "evidence_compress", "claim_check",
+                                                          "claim_check_llm", "answer_refine", "forensic_auto", "llm_failure_report", "analysis_mode"]},
     {"key": "query_perf", "title": "Query · 토큰/지연", "perf": True, "toggles": ["rerank_llm", "query_cache", "precompute", "context_trim", "dedupe_hits", "feedback_boost"]},
-    {"key": "evolve", "title": "Evolve · System", "toggles": ["evolve_capture", "evolve_auto_apply", "evolve_from_forensics", "memory_decay", "auto_build", "log_stages", "profile_expansion"]},
+    {"key": "evolve", "title": "Evolve · System", "toggles": ["evolve_capture", "evolve_auto_apply", "evolve_from_forensics", "memory_decay", "auto_build", "log_stages", "profile_expansion", "mcp_federation"]},
 ]
 
 SETTING_HELP: Dict[str, str] = {
@@ -518,5 +541,14 @@ SETTING_HELP: Dict[str, str] = {
     "wal_checkpoint_mb": "빌드 중 WAL 파일이 이 크기(MB)를 넘으면 체크포인트.",
     "embed_store_dtype": "벡터 저장/행렬 dtype: float32 | float16 (메모리 절반).",
     "build_lock_timeout": "다른 프로세스가 빌드 중일 때 락을 기다릴 초 (0=즉시 실패).",
-    "llm_timeout": "LLM 호출 1회의 HTTP 타임아웃(초). 로컬 모델(Ollama)이 느리면 늘리고, 멈춘 서버를 빨리 감지하려면 줄인다 (예: 120).",
+    "llm_timeout": "LLM 호출 1회의 HTTP 타임아웃(초). 로컬 모델(Ollama)이 느리면 늘리고, 멈춘 서버를 빨리 감지하려면 줄인다 (예: 120). headless 는 agents.json timeout_s(기본 300) 가 우선.",
+    "llm_retries": "LLM 호출이 timeout/네트워크/headless 실행 실패(transient)면 재시도할 횟수 (최대 1+n 회). HTTP 4xx(인증·모델명) 는 재시도하지 않음. headless 는 agents.json retries 우선.",
+    "llm_retry_backoff_s": "재시도 사이 대기 초 (× 시도 번호).",
+    "web_host": "serve 기본 바인드 주소 (플래그 --host 가 우선). 사내 공개는 0.0.0.0 — security.json 의 로그인 설정이 있어야 허용.",
+    "web_port": "serve 기본 포트 (--port 가 우선). Web UI 와 MCP Streamable HTTP(POST /mcp) 가 같은 포트.",
+    "mcp_transport": "mcp 명령 기본 전송: stdio | http (--transport 가 우선).",
+    "mcp_host": "mcp --transport http 기본 바인드 주소.",
+    "mcp_port": "mcp --transport http 기본 포트 (serve 와 다른 포트로 MCP 만 열 때).",
+    "mcp_url": "비어 있지 않으면 `mcp` 명령이 stdio→이 URL 로 중계하는 브리지로 동작 (예 http://wiki-host:8765/mcp). 우선순위: --connect > LLMWIKI_MCP_URL > 이 값. 토큰은 --token > LLMWIKI_MCP_TOKEN.",
+    "mcp_plugins_dir": "MCP 플러그인 도구 폴더. 이 폴더의 *.py(밑줄로 시작하지 않는 파일) 가 register(add_tool) 로 도구를 등록하면 tools/list 에 나타난다. 예시: plugins/mcp_tools/_example_echo.py (밑줄을 지우면 활성).",
 }

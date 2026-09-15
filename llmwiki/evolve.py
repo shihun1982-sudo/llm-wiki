@@ -170,6 +170,11 @@ def apply_proposal(pipe, pid: int, auto: bool = False, evaluate: bool = True) ->
         return {"error": "no such proposal"}
     if p["status"] == "applied":
         return {"error": "already applied"}
+    if p["kind"] == "corpus_gap":
+        # 문서 추가로만 해결되는 제안 — 스냅샷/롤백 없이 실패 처리 (사람이 문서를 넣은 뒤 reject 또는 그대로 두기)
+        store.set_proposal_status(pid, "failed")
+        store.log_evolution(pid, "fail", {"kind": "corpus_gap", "payload": p["payload"], "error": "corpus_gap 은 자동 적용 불가 (문서 추가 필요)"}, "")
+        return {"status": "failed", "error": "corpus_gap 은 문서 추가로 해결하는 제안입니다 (자동 적용 불가). 주제: %s" % (p["payload"] or {}).get("topic")}
     before = None
     if evaluate:
         before = pipe.evaluate(log=False)[0]["summary"]
@@ -210,6 +215,32 @@ def apply_proposal(pipe, pid: int, auto: bool = False, evaluate: bool = True) ->
                     setattr(s, key, int(pl[key]))
             save_settings(s)
             need_rebuild = True
+        elif k == "pin":       # forensic expect 제안: 문서/청크 고정 근거
+            from . import pins as _pins
+            _pins.add_pin(doc=pl.get("doc"), chunk=pl.get("chunk"), query=pl.get("query") if not pl.get("keywords") else None, keywords_=pl.get("keywords") or None,
+                          always=bool(pl.get("always")), doc_types=pl.get("doc_types"), weight=float(pl.get("weight") or 1.0), note=pl.get("note", "evolve"), source="evolve:%d" % pid)
+        elif k == "query_rule":   # forensic 제안: query_rules.json 사전 항목
+            from . import query_rules as _qr
+            _qr.add_rule(pl.get("type", "synonym"), pl["term"], list(pl.get("values") or ([pl["value"]] if pl.get("value") else [])), "evolve:%d" % pid)
+            pipe.reload_tuning()
+        elif k == "tuning":       # forensic 제안: 튜닝 값 (config 항목이면 config.json)
+            from . import tuning as _tn
+            from .config import apply_overrides
+            key, val = pl.get("key"), pl.get("value")
+            if val is None:
+                raise ValueError("tuning 제안에 value 가 없음 (수동 적용: tuning set %s=…)" % key)
+            spec = _tn._INDEX.get(key)
+            if not spec:
+                raise ValueError("unknown tunable %s" % key)
+            if spec["source"] == "config":
+                apply_overrides(s, {key: val})
+                save_settings(s)
+            else:
+                _tn.T.set(key, val)
+                _tn.save_tuning(_tn.T)
+            pipe.reload_tuning()
+        elif k == "corpus_gap":
+            raise ValueError("corpus_gap 은 문서 추가로 해결하는 제안입니다 (자동 적용 불가). 주제: %s" % pl.get("topic"))
         else:
             raise ValueError("unknown kind " + k)
         if need_rebuild:
@@ -226,10 +257,10 @@ def apply_proposal(pipe, pid: int, auto: bool = False, evaluate: bool = True) ->
         store.set_proposal_status(pid, "applied", before, after)
         store.log_evolution(pid, "apply", detail, sha1(json.dumps(detail, ensure_ascii=False)))
         return {"status": "applied", "before": before, "after": after, "rebuilt": need_rebuild}
-    except Exception as e:  # 적용 실패 → 롤백
+    except Exception as e:  # 적용 실패 → 롤백 (복원 후에는 pipe.store 가 새 연결이므로 그것을 쓴다)
         _restore(pipe, snap)
-        store.set_proposal_status(pid, "failed")
-        store.log_evolution(pid, "fail", dict(detail, error=str(e)), "")
+        pipe.store.set_proposal_status(pid, "failed")
+        pipe.store.log_evolution(pid, "fail", dict(detail, error=str(e)), "")
         return {"status": "failed", "error": str(e)}
 
 

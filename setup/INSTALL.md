@@ -4,8 +4,8 @@
 
 | 파일 | 용도 |
 |---|---|
-| `install.bat` / `install.sh` | 원클릭 설치: 패키지 설치 → config.json/.env 생성 → 환경 진단 |
-| `check_env.py` | 환경 진단 (Python 버전, 패키지, SQLite FTS5, 설정, 키, Ollama, 코퍼스) — 더 자세한 점검은 `python -m llmwiki health` |
+| `install.bat` / `install.sh` | 원클릭 설치: 패키지 설치 → config.json/.env/security.json/agents.json 생성(없을 때만) → 환경 진단 |
+| `check_env.py` | 환경 진단 (Python 버전, 패키지, SQLite FTS5, 설정, 키, Ollama, 코퍼스, **security.json admin/익명/API 키 · agents.json 재시도 · serve/mcp 기본 포트 · LLM 재시도**) — 더 자세한 점검은 `python -m llmwiki health` |
 | `config.example.json` | 사용자 설정 원본 — 코퍼스 경로, LLM/임베딩 모델, 역할별 모델, 토글, 운영 수치 |
 | `.env.example` | API 키와 `LLMWIKI_*` 환경변수 오버라이드 원본 |
 | `requirements-optional.txt` | 선택 패키지 (anthropic, sentence-transformers, kiwipiepy, pyyaml) |
@@ -14,7 +14,14 @@
 | `schedule_build.ps1` / `.sh` | OS 스케줄러(작업 스케줄러/cron)에 증분 빌드 등록 |
 | (루트) `tuning.json` `presets.json` `query_rules.json` `pins.json` `agents.json` `mcp_sources.json` `schemas/` `prompts/` | 첫 실행 시 기본값으로 자동 생성되는 설정/규칙/프롬프트 파일 |
 | `config.example.pat-gateway.json` / `config.example.headless.json` | 사내 LLM 게이트웨이(URL+PAT) / opencode headless 설정 예시 — BRINGUP_GUIDE §4.1~4.3 |
-| (루트) `security.json` | 서버를 여러 사람이 쓸 때의 로그인(로컬 ID/비밀번호 + SSO)·역할·파괴적 작업 정책. `python -m llmwiki security init` 으로 생성 — [docs/SECURITY.md](../docs/SECURITY.md) |
+| (루트) `security.json` | 서버를 여러 사람이 쓸 때의 로그인(로컬 ID/비밀번호 + SSO + API 키)·역할 6단계·권한 표(permissions)·익명 접속·CLI 게이트·파괴적 작업 정책. 저장소에는 admin `kh82.kim/1234qwer` 가 들어 있으니 **공개 전 비밀번호 변경** — [docs/SECURITY.md](../docs/SECURITY.md) |
+| (루트) `agents.json` | headless 에이전트(opencode 등) 명령 템플릿 + **재시도**(`timeout_s` 300 · `retries` 3 · `retry_backoff_s` · `retry_on`) — BRINGUP_GUIDE §4.3 |
+| `security.example.json` | `security.json` 원본 — users 비어 있음, 키마다 `_how` 설명. `install.*` 가 없을 때 복사. 첫 admin: `python -m llmwiki users add <id> --role admin` |
+| `agents.example.json` | `agents.json` 원본(재시도 정책 포함). `install.*` 가 없을 때 복사 |
+| `mcp_clients.example.json` | 외부 LLM 클라이언트(Claude Code/Desktop · Cursor · opencode · Codex)에 붙여 넣는 MCP 설정 블록 4종. 환경 값이 채워진 버전: `python -m llmwiki mcp --client-config` — docs/MCP.md |
+| `mcp_sources.example.json` | `mcp_sources.json` 원본 — **다른 RAG · MCP 서버 · REST 검색 API** 를 붙이는 소스 4종 예시(peer_wiki http · kb_rest rest · mango stdio · mock). 토글 `external_rag`(검색 채널)·`mcp_federation`(도구 노출) — docs/RAG_FEDERATION.md |
+| (루트) `plugins/mcp_tools/` | MCP 플러그인 도구 폴더(`_example_echo.py` 예시; 밑줄을 지우면 활성) — docs/RAG_FEDERATION.md §3 |
+| (루트) `tools/verify/` | 전 기능 검증 하네스(CLI 184 · Web 210 · UI 배선 · 브라우저) — docs/VERIFICATION_0915.md |
 
 ## 1. 요구사항
 
@@ -55,8 +62,11 @@ bash setup/install.sh            # 또는  bash setup/install.sh venv
 run.bat build --full --trace        :: 색인
 run.bat query "질문" --trace         :: 질의 (--preset quality|speed|token|deep_research)
 run.bat eval                        :: 회귀 평가 (eval/questions.json)
-run.bat serve                       :: Web UI http://127.0.0.1:8765/
-run.bat test                        :: 단위 테스트 (63개)
+run.bat serve                       :: Web UI http://127.0.0.1:8765/  (+ MCP: POST /mcp — docs/MCP.md)
+run.bat build fts                   :: 채널만 다시 만들기 (fts | vector | graph) — BRINGUP_GUIDE §6.1
+run.bat forensic expect last --doc ISSUE-2003 --term 1.5dB   :: 기대 결과 포렌식 — docs/FORENSIC.md
+run.bat query "질문" --analyze --focus speed                :: 상세 분석 리포트 logs\analysis\req_<id>.md — docs/ANALYSIS_MODE.md
+run.bat test                        :: 단위 테스트 (87개)
 ```
 
 ## 5. 자기 코퍼스에 맞추기
@@ -75,7 +85,8 @@ run.bat test                        :: 단위 테스트 (63개)
 | LLM 답변 대신 `(추출식 답변)` | `models test` — 키/모델/엔드포인트, Ollama 는 `ollama pull` |
 | `no embeddings for provider` / dim mismatch | 임베더·차원 변경 후 `build --full` |
 | 근거 부족(insufficient) 답변 | `forensic last` → 문서 추가 / `rules add` / `fallback_loop` 토글 |
-| 포트 사용 중 | `serve --port 8899` |
+| 포트 사용 중 | `serve --port 8899` 또는 `config.json web_port` (mcp 단독 서버는 `mcp_port`) |
+| 옮긴 뒤 전부 정상인지 | `python tools/verify/verify_cli.py` · `verify_web.py` · `verify_ui_wiring.py` · `verify_browser.py` — docs/VERIFICATION_0915.md §6 |
 
 ## 7. 폴더 이식
 

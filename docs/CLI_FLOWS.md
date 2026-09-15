@@ -79,9 +79,11 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 |---|---|---|---|
 | `health [--quick] [--for-build]` | 환경·프로바이더·DB·디스크·코퍼스 점검 | 토글 플래그 | 읽기만 (db quick_check, 임베더 ping 1건) |
 | `build [run] [--full [--no-reset]] [--purge-logs] [--force] [--yes] [--no-snapshot]` | 코퍼스 색인 (FTS/Vector/Graph/Wiki). `--full/--reset/--purge-logs` 는 **파괴적** — 확인 문구(`DELETE INDEX`) 입력 또는 `--yes`, 초기화 전 자동 스냅샷 | 토글 플래그, `--trace` | docs, chunks, chunks_fts, embeddings, entities, relations, mentions, communities, doc_meta, kv, embed_runs, requests, `wiki/*.md`, `data/build.lock`, `data/snapshots/` |
+| `build fts|vector|graph [--full] [--yes]` | **채널 리빌드** — 한 채널의 산출물만 다시 (chunks·다른 채널 불변, 끝에 verify). `rebuild` 등급(builder, 확인 문구 또는 `--yes`) — §3.33 | `--trace --json` | fts: chunks_fts(+chunks_tri) · vector: embeddings(+embedding_cache, doc_vectors) · graph: entities/relations/mentions/communities, `wiki/*.md` |
+| `build --channels fts,vector,graph` | 일반 빌드에서 지정 채널 단계만 (나머지 skipped) — §3.33 | | 위와 동일 |
 | `build status` | 락/마지막 빌드/임베딩 진행률 | `--json` | kv(last_build, embed_progress), build.lock |
 | `build verify [--fix]` | 색인 정합성 검사 | `--fix` | 읽기 (fix 시 댕글링·고아·n_chunks·stale 위키 정리) |
-| `query "질문" [--k N] [--no-log]` | 하이브리드 검색 + 답변 | 토글, `--trace`, `--json`, `--preset`, `--debug` | query_log, requests, episodes, forensics, proposals, answer_cache(precompute 시) |
+| `query "질문" [--k N] [--no-log] [--no-doc-expand]` | 하이브리드 검색 + 답변 (리랭크 후 `doc_expand` 단계가 같은 문서의 관련 청크를 추가; LLM 실패 시 `llm_report`) | 토글, `--trace`, `--json`, `--preset`, `--debug` | query_log, requests(hits_brief 포함), episodes, forensics, proposals, answer_cache(precompute 시) |
 | `search fts|vector|graph "질문" [--k]` | 단일 채널 디버그 | `--json` | 읽기, logs 만 |
 | `eval [--k 5] [--matrix] [--questions F]` | 회귀 평가 hit@k/MRR | 토글 | requests |
 | `trial run|list|compare|report|show` | 설정 전후 회귀 비교 | `--name --preset --set k=v --questions --note --md` | trials, requests |
@@ -93,6 +95,8 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `pin list|add|remove|test` | 고정 근거 | `--doc --chunk --query --keywords --always --doc-types --weight --note` | pins.json |
 | `precompute run|status|clear|doc-vectors` | 답변 사전 계산 캐시 | `--from-log --stale` | answer_cache, doc_vectors, requests |
 | `forensic last|list|summary|<request_id> [--llm]` | 질의 포렌식 진단 | `--limit` | forensics |
+| `forensic expect <request_id|last> --doc … --term … [--chunk …] [--note …] [--propose]` | **기대 결과 포렌식** — 기대 문서/용어가 어느 단계에서 탈락했는지 + 수정안 (FORENSIC.md) — §3.34 | `--json` | forensics(origin=expectation), episodes, (--propose) proposals |
+| `analyze <request_id|last> [--focus quality|speed|tokens] [--print] [--out 파일]` · `query … --analyze [--focus] [--print-analysis]` | **상세 분석 리포트** — 설정 스냅샷·단계 타임라인·검색 상세·답변 판정·세 렌즈 소견과 조절점을 `logs/analysis/req_<id>.md` 로 (ANALYSIS_MODE.md) — §3.38 | `--json` | logs/analysis/req_<id>.md/.json |
 | `time "표현"` | 한국어 시간 표현 파싱 | | 없음 |
 | `fusion show|compare` | 융합 방식 비교 | `--methods --k --questions` | requests |
 | `memory status|decay|consolidate|episodes` | 자가진화 메모리 | `--limit` | episodes, proposals, pins.json(decay) |
@@ -102,8 +106,10 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `requests list|last|show <id>` | 요청별 프로파일 trace | `--kind --limit` | requests |
 | `config show [--effective]|paths|set k=v|reset [--yes]` | 설정 (`reset` 은 확인 문구) | | config.json |
 | `models show|test [--live]|set` | 역할별 LLM/임베더 (`--live` = 실제 완성 호출 1회) | | config.json(llm_roles) |
-| `users add|list|remove|set-role|passwd` | Web 로그인 사용자·역할 (SECURITY.md) | `--role --password --display` | security.json |
-| `security show|init|audit` | 로그인/역할/파괴적 작업 정책 · 감사 로그 | `--n` | security.json, logs/audit.jsonl |
+| `users add|list|remove|set-role|passwd` | Web 로그인 사용자·역할 6단계 viewer/class3/class2/class1/builder/admin (SECURITY.md) | `--role --password --display` | security.json |
+| `security show|init|audit|perms [show|set <level|op>=<role> …|reset]` | 로그인/역할/**권한 표**/파괴적 작업 정책 · 감사 로그 — §3.35 | `--n` | security.json, logs/audit.jsonl |
+| `apikey add <name> --role r|list|remove <id|name>` | MCP HTTP/스크립트용 Bearer 키 (역할 부여, 해시 저장) — §3.35 | `--note` | security.json |
+| (전역) `--user <id> [--password …]` | CLI 실행자 로그인 — `cli.default_role` 이 낮은 공용 서버에서 승격. 거부 = 종료 코드 5 | `LLMWIKI_USER/LLMWIKI_PASSWORD/LLMWIKI_API_KEY` | logs/audit.jsonl |
 | `snapshot list|create|restore|prune` | 색인 스냅샷 (초기화 전 자동 생성, `restore` 는 확인 문구) | `--tag --keep --yes` | data/snapshots/, DB·wiki·rules·config(restore) |
 | `tuning show|set|reset|doc` | 단계별 튜닝 파라미터 | `--stage` | tuning.json, (doc) docs/TUNING.md |
 | `arch [--flow query|build|evolve|watch]` | 구조·흐름 도식 | `--json` | 없음 |
@@ -113,10 +119,10 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `stats` | 인덱스 통계/프로바이더/토글 | `--json` | 읽기 |
 | `system [--target-docs --daily-new --horizon-days]` | 확장성 추정/지연 통계 | `--json` | 읽기 |
 | `maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|purge_requests [--yes]` | DB 유지보수 (`purge_requests` 는 확인 문구) | | DB 파일, requests |
-| `mcp-source list|test|ingest|enrich|fetch` | 외부 MCP 소스 | `--since --dry-run` | mcp_sources.json, `data/mcp_cache/*`(ingest) |
+| `mcp-source list|test|tools|retrieve|federated|ingest|enrich|fetch` | 외부 소스 = 다른 RAG · MCP 서버 · REST 검색 API (전송 stdio/http/rest). `tools <src>`(원격 tool 스키마) · `retrieve "질의" [--source] [--k]`(검색 채널 매핑 확인) · `federated`(페더레이션 도구·플러그인 상태) — §3.37, RAG_FEDERATION.md | `--since --dry-run --source --k` | mcp_sources.json, `data/mcp_cache/*`(ingest) |
 | `watch [--interval] [--once]` | 코퍼스 변경 감시 → 증분 빌드 | 토글 | build 와 동일 |
-| `mcp` | MCP stdio 서버 (블로킹) | | query 와 동일 |
-| `serve [--port 8765] [--host] [--insecure]` | Web UI (블로킹). `--host 0.0.0.0` 등 외부 공개는 security.json 의 사용자/SSO 가 있어야 기동 | | 전부 |
+| `mcp [--transport stdio|http --host --port] [--connect URL --token …] [--client-config [--url]]` | MCP 서버: stdio(기본) / Streamable HTTP 단독 포트 / stdio→원격 HTTP 브리지 (MCP.md) — §3.36. 플래그 생략 시 `config.json mcp_transport/mcp_host/mcp_port/mcp_url`. `--client-config` 는 실행하지 않고 클라이언트 설정 JSON 4종을 출력 | `--insecure` | query 와 동일 |
+| `serve [--port] [--host] [--insecure]` | Web UI + `POST /mcp` (블로킹). 기본 `config.json web_host/web_port`(127.0.0.1:8765). `--host 0.0.0.0` 등 외부 공개는 security.json 의 사용자/API 키/SSO 또는 익명 역할이 있어야 기동 | | 전부 |
 
 ---
 
@@ -1057,6 +1063,99 @@ watching ['<tmp>\\corpus'] every 300s (Ctrl+C to stop)
 - `python -m llmwiki serve --port 8765 --host 127.0.0.1` : `web.server.serve(pipe, host, port)`. Web UI(Query/Requests/Architecture/콘솔 탭)와 `auto_build` 워처 스레드가 이 프로세스 안에서 돌며, 질의 캐시·warm_cache 가 실제로 효과를 낸다.
 
 ---
+
+### 3.33 build fts | vector | graph / build --channels (채널별 빌드, 2026-09-14)
+
+```bat
+python -m llmwiki build fts --yes                 :: FTS 행만 전부 다시 (토크나이저·복합어·메타 토큰 변경 후)
+python -m llmwiki build vector --yes              :: 임베딩 없는 청크만 임베딩 (coverage 보충). --full 이면 전부 (hash 는 IDF 재적합)
+python -m llmwiki build graph --yes --trace       :: 그래프를 비우고 전체 청크에서 재추출 + 커뮤니티 + 위키
+python -m llmwiki build --channels fts,vector     :: 일반(증분) 빌드에서 두 채널 단계만; graph 단계는 skipped
+```
+**내부**: `Pipeline.build_channel(channel, full)` — 빌드 파일 락 → `build_channel` 단계 → fts: `Store.reindex_fts`(chunks 를 읽어 chunks_fts/chunks_tri 재작성, 메타 토큰 포함) + fts_optimize · vector: `missing_embeddings`(또는 전부) → `EmbedRunner` → 다른 프로바이더 벡터 prune → (doc_vector 토글) 문서 카드 재생성 · graph: `clear_graph` → `build_graph_for_chunks(전체)` → `finalize_graph`(degree·doc_refs·커뮤니티) → 위키 → 고아 정리 → 공통: commit·WAL checkpoint·`counts_before/after` 비교(다른 채널 행 수가 바뀌면 `channel_isolation` 경고)·`verify`·`build_version` 증가·캐시 무효화·warm_cache·requests 기록(kind=build). `--channels` 는 `Pipeline.build(channels=[…])` 가 토글(`build_fts`/`embed`/`doc_vector`/`rule_graph`/`llm_graph`/`wiki_pages`/`communities`)을 이번 빌드 동안만 바꾼다.
+
+**출력 (실측, 샘플 코퍼스)**:
+```
+  ⏳ 채널 빌드 › FTS 재색인 · 0s
+  · fts reindexed: 190 chunks in 38 docs
+build fts done: before={"fts": 190, "embeddings": 190, "entities": 58, "relations": 169} after={"fts": 190, "embeddings": 190, "entities": 58, "relations": 169} verify=True build_version=32
+  · graph rebuilt: entities touched=58 explicit=52 id_links=92
+build graph done: before={…} after={"fts": 190, "embeddings": 190, "entities": 58, "relations": 169} verify=True build_version=34
+```
+**등급**: `rebuild`(builder) — 비대화형이면 `--yes`, Web 콘솔은 문구 모달 후 자동 `--yes`. **오류**: `chunks 가 없습니다`(exit 3, 먼저 전체 빌드) · `unknown channel`(exit 1) · 락 충돌(exit 2). 관련 토글: `build_fts`, `embed`, `rule_graph`, `llm_graph`, `fts_trigram`, `doc_vector`, `wiki_pages`, `verify_after_build`. 문서: BRINGUP_GUIDE §6.1.
+
+### 3.34 forensic expect (기대 결과 포렌식, 2026-09-14)
+
+```bat
+python -m llmwiki forensic expect last --doc ISSUE-2003 --term 1.5dB --note "TX 전력 문서를 기대"
+python -m llmwiki forensic expect 526 --doc HWD-PHY-TIMING-B1 --term 8ns --propose --json
+python -m llmwiki forensic expect 526 --chunk "sample_corpus_modem/hw_design/HWD-PHY-TIMING-B1.md#3"
+```
+**내부**: `forensic.trace_expectation` — (1) `requests.result` 에서 원 요청(캐시/프리컴퓨트 적중이면 원 요청으로 따라감)과 `hits_brief`(청크별 인용 여부) 읽기 (2) `resolve_expected`: 기대 문서(ext_id/doc_id 부분 문자열)·용어·청크 → 목표 청크 (3) 원 요청과 같은 토글·튜닝으로 `QueryEngine` 재실행(LLM 답변·claim·캐시·로그·자동 포렌식 off, `record_request=False`) → 라운드 캡처(채널 리스트·융합/부스트 순서·리랭크 후보·최종·doc_expand·컨텍스트) (4) 목표 청크마다 fts/vector/graph/fusion/boost/rerank/final/doc_expand/context/answer 여정과 첫 탈락 단계 (5) 가장 멀리 간 청크 기준 수정안(query_rule/alias/tuning/pin/corpus_gap) (6) `forensics`(origin=expectation)·`episodes`(feedback −1)·(--propose) `proposals` 기록.
+
+**출력 (실측)**: FORENSIC.md §2.3. 기대 문서가 실제로 인용됐으면 모든 단계 ✔ + `정상 인용됨 · 기대 용어 […] 답변 포함`, 아니면 첫 ✘ 단계와 원인(예: `질의 키워드 … 없는 것 ['hw','rev'] · OR 검색 전체 순위 23 (top_k_fts=20 밖)`).
+**등급**: `read`(viewer/게스트/MCP 가능). **오류**: 기대 문서/용어를 하나도 못 찾으면 exit 1 + `미해결` 목록(용어가 코퍼스에 없으면 corpus_gap 제안). Web: Ask 결과 🎯 / Quality › 포렌식, API `POST /api/forensic/expect`, MCP `wiki_forensic`.
+
+### 3.35 security perms / apikey / --user (권한 표·API 키·CLI 게이트, 2026-09-14)
+
+```bat
+python -m llmwiki security perms                                   :: 역할 6단계 설명 + 등급별 최소 역할 + 오버라이드 + 익명/CLI 기본 역할
+python -m llmwiki security perms set run=viewer "/api/eval=class2" "cli:trial run=class2"
+python -m llmwiki security perms set "/api/eval="                  :: 오버라이드 제거
+python -m llmwiki security perms reset
+python -m llmwiki apikey add claude-desktop-kim --role viewer      :: 토큰 lwk_… 1회 표시
+python -m llmwiki apikey list | remove claude-desktop-kim
+python -m llmwiki --user bob build                                 :: 실행자 로그인 (비밀번호 프롬프트 / LLMWIKI_PASSWORD)
+```
+**내부**: `auth.load_security` 가 역할 이름을 정규화(operator→class1)하고 `permissions.levels/ops` 를 채운다 · `Auth.set_permission/set_permissions` 가 저장 · `Auth.min_role(level, op)` = ops(정확→`*` 접두) → levels → 기본값 · CLI 는 `cli._cli_gate`: `classify_cli(argv)` → `cli_actor`(--user/LLMWIKI_USER 로컬 계정 인증 → LLMWIKI_API_KEY → cli.default_role) → `cli_min_role` 비교 → 거부 시 exit 5 + audit DENY. **출력 (실측)**:
+```
+역할 (낮→높): viewer < class3 < class2 < class1 < builder < admin
+등급별 최소 역할 (permissions.levels):
+  read         viewer   읽기
+  run          class3   실행(토큰·시간 소모)
+  edit         class2   지식 편집(복구 가능)
+  index        class1   색인 갱신(복구 가능)
+  rebuild      builder  리빌드 — 색인 채널/전체를 다시 만듦
+  admin        admin    관리자 설정 변경
+  destructive  admin    파괴적 — 로그·이력·설정 삭제
+익명 접속 역할: viewer · CLI 기본 역할: admin (require_login=False)
+```
+**등급**: `security perms show`/`apikey list` 는 read, 변경은 admin. 문서: SECURITY.md §2.3, §4.4, §5.
+
+### 3.36 mcp --transport http / --connect (MCP HTTP·브리지, 2026-09-14)
+
+```bat
+python -m llmwiki serve --host 0.0.0.0 --port 8765             :: Web UI + POST /mcp
+python -m llmwiki mcp --transport http --host 0.0.0.0 --port 8766   :: MCP 만 단독 포트 (/mcp, /api/auth/me)
+python -m llmwiki mcp --connect http://wiki-host:8765/mcp --token lwk_…   :: stdio 브리지 (클라이언트 설정에 이 명령을 stdio 서버로 등록)
+python -m llmwiki mcp                                          :: stdio (종전)
+python -m llmwiki mcp --client-config --url http://wiki-host:8765 --token lwk_…   :: 실행 대신 클라이언트 설정 JSON 4종 출력 (2026-09-15)
+```
+플래그를 생략하면 `config.json` 의 `web_host/web_port`(serve) · `mcp_transport/mcp_host/mcp_port`(mcp) · `mcp_url`(브리지 대상, `LLMWIKI_MCP_URL` 다음 순위) 이 기본값이다(2026-09-15). 원본 예시 `setup/mcp_clients.example.json`.
+**내부**: `mcp.handle_http`(JSON-RPC 단건/배열 → JSON, `Mcp-Session-Id`, 알림만이면 202, GET 405, DELETE 200) · 서버 `Handler._mcp` 가 `identify`(Bearer API 키/쿠키/익명) + `authorize(read)` + 감사 · `mcp.bridge_stdio_to_http` 가 stdin 줄 단위 JSON-RPC 를 `http_post_mcp` 로 중계. **확인**: `curl -s http://host:8765/mcp -H "Authorization: Bearer lwk_…" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` → 도구 9개. 문서: MCP.md.
+
+### 3.37 mcp-source tools / retrieve / federated · query --external-rag (다른 RAG 연동, 2026-09-15)
+
+```bat
+python -m llmwiki mcp-source list                                  :: 소스별 transport·target·retrieve(when,w)·expose + 토글 3개 상태
+python -m llmwiki mcp-source tools mock                            :: 원격 tool 스키마 (enabled 무관, 이름 지정)
+python -m llmwiki mcp-source retrieve "TX 전력 제어 PA gain" --source mock --json   :: 검색 채널 매핑 결과 [{source,id,chunk_id:ext:mock:…,title,text,score,url,weight}]
+python -m llmwiki query "TX 전력 제어 PA gain 테이블 인덱스 오류" --external-rag --trace   :: external_rag(건수·소스별) → rrf_fuse.sources 의 ext_mock → external_inject → rerank
+python -m llmwiki mcp-source federated                             :: {"mcp_federation": …, "tools": ["mock__search", …], "errors": {}, "plugins": {dir, tools, errors}}
+```
+**출력 예 (실측, mock 소스 enabled)**: `retrieve` → `- [mock] ISSUE-9001   0.900 TX 전력 제어 오동작 | TX power control 루프에서 PA gain 테이블 인덱스 오류. CL-7001 로 수정.`; `query --json` 의 hits 에 `{"chunk_id": "ext:mock:ISSUE-9001", "why": ["ext_mock#1", "ext_inject"], "external": {"source": "mock", "id": "ISSUE-9001", "url": "mock://issues/ISSUE-9001", "score": 0.9}}`.
+**내부**: `mcp_client.retrieve`(소스별 클라이언트 풀 → tool 호출 → `result_path`/`*_field` 매핑 → 가상 청크) → `query_engine._retrieve` 의 `external_rag` 단계(`lists["ext_<src>"]`, 가중 `channel_w_external × weight`) → 융합 후 `external_inject`(소스별 상위 `external_rag_inject` 개를 리랭크 후보로) → 리랭크(로컬은 consensus=1/순위) → 컨텍스트. `federated` 는 `mcp.federated_tools`(소스별 tools/list 300초 캐시) + `load_plugins`. **종료 코드**: `tools` 에 없는 소스 1, retrieve 는 소스 오류가 있어도 0(항목에 `error`). 문서: RAG_FEDERATION.md.
+
+### 3.38 analyze / query --analyze (상세 분석 모드, 2026-09-15)
+
+```bat
+python -m llmwiki query "CL-55302 는 어떤 이슈를 수정했나?" --analyze --focus tokens   :: analysis_mode 로 실행 → 답변 + "📊 분석 리포트: logs\analysis\req_812.md" + 토큰 렌즈 상위 소견
+python -m llmwiki analyze last                                    :: 마지막 요청의 리포트(요약 수준 또는 토글로 실행됐다면 상세) 생성 → 경로·요약·렌즈 소견
+python -m llmwiki analyze 812 --print --focus speed               :: 마크다운 전문(속도 렌즈만) stdout
+python -m llmwiki analyze 812 --out C:\tmp\req812.md --json       :: 파일 저장 + JSON(summary/paths/report)
+```
+**출력 예 (실측)**: `분석 리포트: …\logs\analysis\req_812.md  (json: …\req_812.json)` / `request #812 · 262 ms (LLM 3 ms) · 토큰 1290 · 판정 sufficient · groundedness 0.83 · 상세도 2` / `[info] speed   총 262 ms · LLM 대기 3 ms (1%) · 검색/조립 259 ms` / `[warn] tokens  answer_llm 가 토큰의 61% (786)  → context_max_chars, context_chunk_chars, top_k_final, …`.
+**내부**: `analysis.build_report`(requests 의 trace/result → 메타·설정 스냅샷·타임라인·LLM 호출·검색 상세(채널/융합/부스트/리랭크/doc_expand/컨텍스트/fallback/최종 근거)·답변·포렌식·렌즈) → `render_markdown` → `save_report`. `query --analyze` 는 토글 `analysis_mode` 를 켜 debug_level 2 로 실행하므로 부록 A(프롬프트/응답 샘플)까지 남는다. **종료 코드**: 없는 request_id → 1. 등급 read(게스트 가능). 문서: ANALYSIS_MODE.md.
 
 ## 4. End-to-end 시나리오
 

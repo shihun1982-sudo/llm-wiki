@@ -15,6 +15,8 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install anthropic 2>/dev/null || echo "(anthropic SDK 설치 생략 — raw HTTP 로 동작)"
 [ -f config.json ] || { cp setup/config.example.json config.json; echo "config.json 생성됨 - 기본 corpus_dirs 는 샘플 setup/sample_corpus_modem 입니다. 실제 문서는 corpus/ 에 넣고 corpus_dirs 를 수정하세요"; }
 [ -f .env ] || { cp setup/.env.example .env; echo ".env 생성됨 - API 키를 입력하세요 (선택)"; }
+[ -f security.json ] || { cp setup/security.example.json security.json; echo "security.json 생성됨 - 공개(serve --host 0.0.0.0) 전에 admin 계정을 만드세요: python3 -m llmwiki users add <id> --role admin"; }
+[ -f agents.json ] || { cp setup/agents.example.json agents.json; echo "agents.json 생성됨 - headless 에이전트(opencode 등) 명령·재시도 정책"; }
 mkdir -p corpus
 echo
 python3 setup/check_env.py

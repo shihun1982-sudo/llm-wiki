@@ -2,6 +2,7 @@
 
 > 대상: 이 시스템(LLM Wiki v3)을 다른 PC/서버/조직 환경에 옮겨 세우는 엔지니어. 설치 → 설정 파일 채우기 → 프로바이더 연결 → 코퍼스 계약 적용 → 첫 빌드 → 검증 → 스케줄 등록 → 운영까지 순서대로 따라 하면 된다.
 > CLI 명령의 단계별 동작과 실제 출력 예는 [CLI_FLOWS.md](CLI_FLOWS.md), 전체 구조는 [ARCHITECTURE_V3.md](ARCHITECTURE_V3.md), 문서 형식은 [CORPUS_CONTRACT.md](CORPUS_CONTRACT.md), 인터랙티브 가이드는 `docs/llmwiki_guide.html` 을 브라우저로 여세요.
+> 2026-09-14 추가(다중 사용자 권한 표·MCP 원격/다수 LLM·채널별 빌드·문서 단위 확장·LLM 재시도/실패 보고·기대 결과 포렌식)의 설계와 근거는 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md), 운영 상세는 [SECURITY.md](SECURITY.md) · [MCP.md](MCP.md) · [FORENSIC.md](FORENSIC.md). 이 가이드의 §0 체크리스트 10~14, **§3.2 설정 위치 총람**, §4.3~4.6, §6.1, §7.1, §9, §10 에 반영되어 있다. 2026-09-15 전 기능 검증 결과와 재실행 방법은 [VERIFICATION_0915.md](VERIFICATION_0915.md). **다른 RAG·검색 API·MCP 서버를 붙이고 외부 LLM 에 한 곳으로 내주는 방법**은 [RAG_FEDERATION.md](RAG_FEDERATION.md)(§4.6 요약), **품질·속도·토큰 디버깅용 상세 분석 모드**는 [ANALYSIS_MODE.md](ANALYSIS_MODE.md)(§9 운영 표).
 
 ## 0. 체크리스트 (요약)
 
@@ -16,7 +17,12 @@
 | 7 | `python -m llmwiki health` → `build --full --trace` → `build verify` | alerts 0, coverage 100% |
 | 8 | 평가셋 `eval/questions.json` 교체 → `eval` → `trial run --name baseline` | hit@k, groundedness 기준선 기록 |
 | 9 | 스케줄 등록 `setup/schedule_build.ps1 -Register` (또는 cron) | `build status`, `logs tail --file build` |
-| 10 | `security init` → `users add <id> --role admin` (+ SSO 설정) → `serve --host 0.0.0.0`, `claude mcp add llmwiki -- python -m llmwiki mcp` — §4.4 | 로그인 화면, viewer 로 전체 리빌드가 403 인지, `security audit` |
+| 10 | `security.json` 확인(기본 admin `kh82.kim` 비밀번호 변경) → `users add <id> --role <viewer|class3|class2|class1|builder|admin>` → `security perms`(권한 표) → `serve --host 0.0.0.0` — §4.4 | 게스트로 질의 가능, viewer 로 리빌드가 로그인 안내/403, builder 는 채널 리빌드 문구 모달, `security audit` |
+| 11 | 외부 LLM 연결: `apikey add <이름> --role viewer` → 클라이언트에 `{"type":"http","url":"http://host:8765/mcp","headers":{"Authorization":"Bearer lwk_…"}}` (같은 PC 는 stdio) — §4.5, [MCP.md](MCP.md) | `curl …/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` |
+| 12 | 채널별 빌드·문서 단위 확장·LLM 재시도·기대 결과 포렌식 확인 — §6.1, §7.1, §4.3, §9 | `build fts|vector|graph`, `query … --trace` 의 `doc_expand` 단계, `forensic expect last --doc …` |
+| 13 | 전 기능 재검증 — `tools/verify/` 4개 스크립트 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §6) | `verify_cli.py`, `verify_web.py` 전부 OK, `verify_ui_wiring.py` OK, `verify_browser.py` OK |
+| 15 | 품질/속도/토큰 디버깅 준비 — `query "대표 질의" --analyze` 로 `logs/analysis/req_<id>.md` 가 생기는지, 렌즈 소견에 조절점이 붙는지 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) | `analyze last --print` 에 §0~§9 |
+| 14 | (선택) 다른 RAG / 검색 API / MCP 서버 연결 — `mcp_sources.json`(`setup/mcp_sources.example.json`), 토글 `external_rag`·`mcp_federation` — §4.6, [RAG_FEDERATION.md](RAG_FEDERATION.md) | `mcp-source test <src>`, `mcp-source retrieve "…"`, `query … --external-rag --trace` 에 `external_rag` 단계, `/mcp tools/list` 에 `<src>__<tool>` |
 
 ## 1. 환경
 
@@ -45,18 +51,20 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 
 | 파일 | 역할 | 언제 바꾸나 | 반영 |
 |---|---|---|---|
-| `config.json` | 코퍼스 경로, 프로바이더/역할별 모델, 토글, 운영 수치(배치·WAL·로그·timezone) | 새 환경 필수 | 즉시(서버 reload) |
+| `config.json` | 코퍼스 경로, 프로바이더/역할별 모델, 토글, 운영 수치(배치·WAL·로그·timezone), **LLM 재시도**(`llm_timeout`·`llm_retries`·`llm_retry_backoff_s`), **서버/MCP 기본값**(`web_host`·`web_port`·`mcp_transport`·`mcp_host`·`mcp_port`·`mcp_url`) — 원본 `setup/config.example.json` | 새 환경 필수 | 즉시(서버 reload); 서버/MCP 키는 다음 기동 |
 | `.env` | API 키/PAT(`OPENAI_API_KEY`·`LLM_API_KEY`, `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`, `VOYAGE_API_KEY`, `RERANK_API_KEY`, MCP 토큰) + **모든 설정의 env 오버라이드** `LLMWIKI_<KEY>` / `LLMWIKI_TOGGLE_<NAME>` / `LLMWIKI_<ROLE>_MODEL` | 키 발급 후 | 프로세스 시작 |
-| `security.json` | 로그인 방식(로컬 ID/비밀번호 · SSO), 역할, 파괴적 작업 정책 — [SECURITY.md](SECURITY.md) | 서버 공개 전 | 즉시(서버 reload) |
-| `tuning.json` | 알고리즘 상수(FTS·라우터·그래프·융합·근거 판정·claim·메모리…) 오버라이드만 | 품질 튜닝 | 즉시 |
+| `security.json` | 로그인 방식(로컬 ID/비밀번호 · SSO · API 키), **역할 6단계 · 권한 표(permissions) · 익명 접속(anonymous_role) · CLI 게이트(cli)**, 파괴적 작업 정책 — [SECURITY.md](SECURITY.md). 원본 `setup/security.example.json`(users 비어 있음 + 각 키 설명 `_how`) | 서버 공개 전 | 즉시(서버 reload) |
+| `tuning.json` | 알고리즘 상수(FTS·라우터·그래프·융합·근거 판정·claim·메모리…) 오버라이드만. 문서 단위 확장 `doc_expand_*`, 기대 결과 포렌식 `forensic_near_miss_mult`·`forensic_term_candidates`·`forensic_term_targets`·`forensic_pin_confidence` 포함 — [TUNING.md](TUNING.md) | 품질 튜닝 | 즉시 |
 | `presets.json` | quality / speed / token / offline / deep_research 묶음 | 조직 정책 | `--preset`, `preset apply` |
 | `query_rules.json` | acronym / synonym / alias / related / exclude / compound 사전 | 도메인 용어 | 즉시 |
 | `data/rules.json` | 그래프 엔티티 사전, 관계 정규식, **ID 패턴(id_patterns)**, **결정적 링크 규칙(link_rules)**, front matter 관계 매핑 | 문서 ID 체계 | 재빌드 |
 | `schemas/*.json` | 문서 유형별 스키마 + 추론 규칙 + 마이그레이션 | 새 문서 유형 | lint/빌드 |
 | `prompts/*.md` | 역할별 LLM 프롬프트/답변 가이드 | 답변 스타일 | 즉시(mtime) |
 | `pins.json` | 고정 근거 | 운영 중 | 즉시 |
-| `agents.json` | headless 에이전트 명령 템플릿 (opencode/claude/codex/mock) | 에이전트 도입 | 즉시 |
-| `mcp_sources.json` | 외부 MCP 소스(Mango 등) 명령·tool 매핑 | MCP 연결 | 즉시 |
+| `agents.json` | headless 에이전트 명령 템플릿 (opencode/claude/codex/mock) + **재시도 정책**(`timeout_s` 300=5분 · `retries` 3 · `retry_backoff_s` · `retry_on`) — §4.3. 원본 `setup/agents.example.json` | 에이전트 도입 | 즉시 |
+| `mcp_sources.json` | **외부 소스 = 다른 RAG · MCP 서버 · REST 검색 API** (전송 stdio/http/rest): `retrieve`(검색 채널, 토글 `external_rag`) · `expose`(도구 페더레이션, 토글 `mcp_federation`) · `ingest`(문서로 색인, 토글 `mcp_sources`) — [RAG_FEDERATION.md](RAG_FEDERATION.md). 원본 `setup/mcp_sources.example.json` | 다른 RAG 연결 | 즉시 |
+| `plugins/mcp_tools/*.py` | MCP 플러그인 도구(`register(add_tool)`) — 코드 수정 없이 도구 추가. 위치 `config.json mcp_plugins_dir` | 도구 추가 | 다음 tools/list |
+| (클라이언트 쪽) `setup/mcp_clients.example.json` | 외부 LLM 클라이언트(Claude Code/Desktop, Cursor, opencode, Codex)에 붙여 넣는 MCP 설정 블록 4종(stdio·HTTP·브리지·opencode). 자기 환경 값이 채워진 버전은 `python -m llmwiki mcp --client-config` — §4.5 | 외부 LLM 연결 | 클라이언트 재시작 |
 | `eval/questions.json` | 회귀 평가셋 | 자기 코퍼스 질문으로 교체 | – |
 
 우선순위: **환경변수 > config.json > 코드 기본값**. 현재 유효값과 출처는 `config show --effective`.
@@ -75,6 +83,30 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 - `llm_provider`: `auto`(Anthropic 키 → Ollama(모델이 받아져 있을 때) → none) | `anthropic` | `openai` | `ollama` | `headless:<agent>` | `mock` | `none`.
 - `embed_provider`: `auto`(Voyage 키 → Ollama bge-m3/nomic → hash) | `hash` | `voyage` | `openai` | `ollama` | `st`. 임베더/차원/dtype 을 바꾸면 `build --full`. 내용 해시 캐시(`embedding_cache`) 덕분에 같은 모델·차원으로 되돌리면 재임베딩이 없다.
 
+### 3.2 2026-09-14/15 기능의 설정 위치 총람 (코드 수정 없이 파일만으로 이식)
+
+각 기능의 값은 아래 파일·키에 있고, 원본 예시는 `setup/` 에 있다. 새 환경에서는 예시를 복사해 값을 채우고(§0 체크리스트 3·4·10·11), `python setup/check_env.py` 가 security/agents/서버/재시도 설정을 한 줄씩 보고한다. 우선순위는 항상 **CLI 플래그 > 환경변수(`LLMWIKI_<KEY>`) > 파일 > 코드 기본값**.
+
+| 기능 | 파일 | 키 (기본값) | 원본 예시 | 확인 명령 |
+|---|---|---|---|---|
+| 다중 사용자 권한 | `security.json` | `mode`(auto) · `anonymous_role`(viewer) · `permissions.levels`(read=viewer, run=class3, edit=class2, index=class1, rebuild=builder, admin/destructive=admin) · `permissions.ops`({}) · `cli.default_role`(admin) · `cli.require_login`(false) · `users` · `api_keys` · `sso` · `destructive` | `setup/security.example.json` | `security show`, `security perms`, `users list`, `apikey list` |
+| CLI 실행자 로그인 | `.env` | `LLMWIKI_USER`/`LLMWIKI_PASSWORD` 또는 `LLMWIKI_API_KEY` (전역 `--user` 가 우선) | `setup/.env.example` §D | `--user <id> stats` |
+| MCP 서버(같은 PC/원격/다수) | `config.json` | `web_host`(127.0.0.1) · `web_port`(8765) — `serve` 기본값; `mcp_transport`(stdio) · `mcp_host`(127.0.0.1) · `mcp_port`(8766) — `mcp` 기본값 | `setup/config.example.json` | `serve`, `mcp --transport http`, `curl …/mcp` |
+| MCP 브리지(stdio 클라이언트 → 원격) | `config.json` + `.env` | `mcp_url`("") 또는 `LLMWIKI_MCP_URL`; 토큰 `LLMWIKI_MCP_TOKEN` (플래그 `--connect/--token` 우선) | `.env.example` §D | `mcp --client-config` 의 `bridge_json` |
+| MCP 클라이언트 설정 | 클라이언트 파일 | `mcpServers.llmwiki.{command,args,cwd}` (stdio) / `{type:http,url,headers.Authorization}` (HTTP) | `setup/mcp_clients.example.json`, `mcp --client-config [--url] [--token]` | 클라이언트에서 `tools/list` |
+| 채널별 빌드 | `config.json toggles` | `build_fts`(on) · `embed`(on) · `rule_graph`(on) · `llm_graph`(off) · `communities`(on) · `wiki_pages`(on) | `config.example.json` | `build fts|vector|graph`, `build verify` |
+| 문서 단위 확장 | `config.json toggles` + `tuning.json` + `presets.json` | `doc_expand`(on); `doc_expand_top_docs`(3) · `doc_expand_max_chunks`(3) · `doc_expand_min_score`(0.2) · `doc_expand_mode`(hybrid) · `doc_expand_w`(0.5); 프리셋 speed/token 은 off | `tuning show --stage context`, `preset show quality` | `query … --trace` 의 `doc_expand`, `--no-doc-expand` |
+| LLM 재시도(HTTP 프로바이더) | `config.json` | `llm_timeout`(600) · `llm_retries`(3) · `llm_retry_backoff_s`(2.0) · 토글 `llm_failure_report`(on) | `config.example.json` | `models test --live`, 답변 상단 `⚠ LLM 실행 보고` |
+| headless 재시도(5분×3) | `agents.json` (에이전트별) | `timeout_s`(300) · `retries`(3) · `retry_backoff_s`(5) · `retry_on`([timeout, exec, exit, empty]) · `command`/`cwd`/`env` | `setup/agents.example.json`, `setup/config.example.headless.json` | `models test --live`, mock: `python -m llmwiki.headless --mock --sleep 400` |
+| 기대 결과 포렌식 | `tuning.json` | `forensic_near_miss_mult`(3) · `forensic_term_candidates`(6) · `forensic_term_targets`(20) · `forensic_pin_confidence`(0.6) · (기존) `forensic_min_events`(3) · 토글 `forensic_auto`(on) | `tuning show --stage forensic` | `forensic expect last --doc …` |
+| 다른 RAG 연동(검색 채널) | `mcp_sources.json` + `config.json toggles` + `tuning.json` | 소스 `transport`(stdio/http/rest) · `retrieve`(tool/args/result_path/*_field/weight/when); 토글 `external_rag`(off); `channel_w_external`(1.0) · `external_rag_k`(5) · `external_rag_inject`(2) | `setup/mcp_sources.example.json` | `mcp-source test|retrieve`, `query … --external-rag --trace` |
+| 도구 페더레이션(외부 LLM 에 한 곳으로) | `mcp_sources.json` + `config.json toggles` | 소스 `expose`(true/목록); 토글 `mcp_federation`(off) | 같은 예시 | `mcp-source federated`, `/mcp tools/list` 의 `<source>__<tool>` |
+| MCP 플러그인 도구 | `config.json` + `plugins/mcp_tools/*.py` | `mcp_plugins_dir`(plugins/mcp_tools) | `plugins/mcp_tools/_example_echo.py` | `mcp-source federated` 의 plugins |
+| 상세 분석 모드 | `config.json toggles` | `analysis_mode`(off); 관련 `debug_level`(1) · `keep_requests`(2000) · 리포트 위치 `LLMWIKI_LOGS_DIR_PATH/analysis` | — | `query "…" --analyze`, `analyze last --print` — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) |
+| 검증 하네스 | `tools/verify/*.py` 상단 `PORT` | 8792(web) · 8793(browser); 브라우저 실행 파일 `LLMWIKI_BROWSER` | [tools/verify/README.md](../tools/verify/README.md) | [VERIFICATION_0915.md](VERIFICATION_0915.md) §6 |
+
+`install.bat`/`install.sh` 는 `config.json`·`.env` 에 더해 `security.json`·`agents.json` 도 예시에서 생성한다(없을 때만).
+
 ## 4. 프로바이더 연결
 
 | 방식 | 설정 | 확인 |
@@ -87,7 +119,8 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 | **Headless 에이전트 (opencode 등)** | `agents.json` 의 command 템플릿, `llm_roles.<role>.provider = "headless:opencode"`, 실행 파일 PATH — §4.3 | `models test --live` (실제로 프로세스를 띄워 응답 확인), `headless:mock` 으로 배선 확인 |
 | rerank API | `rerank_url`, `rerank_api_model`, `rerank_api_style`, `.env RERANK_API_KEY`; 튜닝 `rerank_method=auto|api` | `models test` (`rerank_api` 항목) |
 | 임베딩 API | Voyage(`VOYAGE_API_KEY`), OpenAI-compat(`openai_embed_model`, 필요 시 `openai_embed_base_url`·`OPENAI_EMBED_API_KEY`), Ollama(`embed_model=bge-m3`) | `models test` (`embedder`) |
-| 외부 MCP | `mcp_sources.json` (command/env/tool 매핑), 토글 `mcp_sources` | `mcp-source test`, `mcp-source ingest --dry-run` |
+| 외부 MCP (ingest) | `mcp_sources.json` (command/env/tool 매핑), 토글 `mcp_sources` | `mcp-source test`, `mcp-source ingest --dry-run` |
+| 다른 RAG / 검색 API (검색 채널·페더레이션) | `mcp_sources.json` (`transport` stdio/http/rest, `retrieve`, `expose`), 토글 `external_rag`·`mcp_federation` — §4.6 | `mcp-source retrieve "…"`, `mcp-source federated` |
 
 전부 없어도 동작한다: 추출식 답변 + 규칙 그래프 + hash 임베딩 + 로컬 리랭크 (`preset apply offline`).
 
@@ -95,6 +128,8 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 - `llm_provider=auto` 는 Anthropic 키 → Ollama 순으로만 고르며 **openai / headless 는 절대 고르지 않는다**. 게이트웨이나 opencode 를 쓰려면 `llm_provider` 또는 `llm_roles.<role>.provider` 에 명시한다.
 - `models test` 는 토큰을 쓰지 않는 ping(모델 목록 조회)만 한다. 게이트웨이가 `/models` 를 막아 두었거나 PAT 권한·헤더 이름·모델 id 가 틀린 경우는 **`models test --live`** (역할별 provider/model 당 실제 완성 호출 1회, "OK" 한 단어 응답)로만 드러난다. Web 은 Settings › 모델 › "실제 호출 테스트 (--live)".
 - LLM 호출 1회의 HTTP 타임아웃은 `llm_timeout`(기본 600초). 게이트웨이가 멈춰도 빨리 실패하게 하려면 120~180 으로 줄인다. 진행 중인 호출은 CLI 의 `⏳ … LLM 응답 대기 <provider>/<model> Ns` 줄과 Web 의 진행 패널에서 보인다.
+- **재시도**: timeout·네트워크·headless 실행 실패(transient)는 `llm_retries`(기본 3) 회 재시도한다(`llm_retry_backoff_s` × 시도 번호 대기; HTTP 401/404 같은 설정 오류는 재시도하지 않음). headless 는 `agents.json` 의 `timeout_s`/`retries` 가 우선. 진행 패널에 `LLM 재시도 2/4 (…)` 로 보인다.
+- **최종 실패 보고**: 재시도 후에도 실패하면 답변 상단에 `⚠ LLM 실행 보고: answer(…) 4회 시도 후 실패(timeout 300s) → 추출식 답변으로 대체` 가 붙고, 결과 JSON 의 `llm_report`(역할·시도 횟수·오류·대체 경로), 빌드는 `alerts[llm_failures]` 에 남는다. 즉 LLM 이 죽어도 지금까지의 검색 결과로 답변은 나오며 무엇이 실패했는지가 적힌다. 토글 `llm_failure_report` 로 배너를 끌 수 있다(보고서는 남음).
 - 설정 후 순서: `python setup/check_env.py`(키·URL·실행 파일 존재) → `models test --live` → `health` → `build`.
 
 ### 4.1 OpenAI-compatible 게이트웨이 + PAT
@@ -159,24 +194,68 @@ opencode(또는 claude / codex CLI)를 비대화형 subprocess 로 실행해 LLM
    }
    ```
    전역 `llm_provider` 를 `headless:opencode` 로 두면 빌드 역할(extract/summary)까지 모두 프로세스 실행이 되어 매우 느리므로, **질의 역할에만** 두는 것을 권장한다(`llm_graph` 는 청크당 프로세스 1개).
-3. `agents.json` 의 `opencode` 항목이 명령 템플릿이다: `["opencode", "run", "--format", "json", "-m", "{model}", "{prompt}"]`, 출력 `ndjson`, `timeout_s` 300. 설치된 opencode 버전이 다른 플래그/출력을 쓰면 여기만 고친다(출력이 일반 텍스트면 `"output": "text"`).
+3. `agents.json` 의 `opencode` 항목이 명령 템플릿이다: `["opencode", "run", "--format", "json", "-m", "{model}", "{prompt}"]`, 출력 `ndjson`. 설치된 opencode 버전이 다른 플래그/출력을 쓰면 여기만 고친다(출력이 일반 텍스트면 `"output": "text"`).
+   **재시도 정책**(같은 항목): `"timeout_s": 300`(1회 실행 5분 제한 — 넘으면 프로세스를 죽임), `"retries": 3`(최대 4회 실행), `"retry_backoff_s": 5`(대기 5s·10s·15s), `"retry_on": ["timeout", "exec", "exit", "empty"]`(타임아웃 / 실행 파일 오류 / 종료 코드≠0 / 빈 출력). 4회 모두 실패하면 그 역할은 대체 경로(answer→추출식, rerank→로컬, expand/verify→생략)를 타고 결과의 `llm_report` 와 답변 상단 `⚠ LLM 실행 보고` 에 적힌다. 배선만 확인하려면 `headless:mock` (`python -m llmwiki.headless --mock --sleep 400` 같은 인자로 타임아웃 재현 가능).
 4. **Windows**: npm/bun 으로 설치한 opencode 는 `opencode.cmd` 셸 스크립트다. `command[0]` 은 PATH 에서 `.cmd/.bat` 까지 찾아 절대 경로로 실행하므로 그대로 두면 되고, 안 찾히면 `"C:\\Users\\<me>\\AppData\\Roaming\\npm\\opencode.cmd"` 처럼 절대 경로를 적는다. (예전 버전은 ping 은 통과하는데 실제 호출이 `WinError 2` 로 실패했다 — 수정됨.)
 5. 확인: `python -m llmwiki models test --live` → `answer headless:opencode/… live: OK reply='OK'`. 배선만 먼저 보려면 `headless:mock`.
 
 `agents.json` 은 `{python}`(현재 인터프리터)·`{project_root}` 치환을 쓰므로 다른 PC 로 복사해도 그대로 동작한다. opencode 의 로컬 HTTP 서버(`opencode serve`) 는 OpenAI-compatible 이 아니라 현재 지원하지 않는다 — 필요하면 앞에 OpenAI 호환 shim 을 두거나 §11 의 방법으로 30줄짜리 프로바이더를 추가한다.
 
-### 4.4 서버를 여러 사람에게 공개하기 전: 로그인·역할·파괴적 작업 보호
+### 4.4 서버를 여러 사람에게 공개하기 전: 로그인·역할·권한 표·파괴적 작업 보호
 
 상세 설계와 `security.json` 전체 항목은 [SECURITY.md](SECURITY.md). 최소 절차:
 ```bat
-python -m llmwiki security init                         :: security.json 생성 (mode auto: 127.0.0.1 은 로그인 없음, 그 외 바인드는 로그인 필수)
-python -m llmwiki users add alice --role admin          :: 관리자 1명 이상 (비밀번호 프롬프트)
-python -m llmwiki users add bob --role operator         :: 증분 빌드·제안 적용 등 복구 가능한 변경까지
-python -m llmwiki serve --host 0.0.0.0 --port 8765      :: 사용자/SSO 가 없으면 기동 거부
+python -m llmwiki security show                          :: 저장소의 security.json 에는 admin kh82.kim/1234qwer 가 있다 → 공개 전 반드시 변경
+python -m llmwiki users passwd kh82.kim                  :: 비밀번호 변경 (프롬프트)
+python -m llmwiki users add bob --role class1            :: 역할: viewer < class3 < class2 < class1 < builder < admin (누적)
+python -m llmwiki users add carol --role builder         :: 전체/채널 리빌드·복원까지
+python -m llmwiki security perms                         :: 등급별 최소 역할 표 (read=viewer, run=class3, edit=class2, index=class1, rebuild=builder, admin/destructive=admin)
+python -m llmwiki security perms set run=viewer          :: (예) eval/trial 을 viewer 에게도 → Web 보안 탭에서도 편집
+python -m llmwiki serve --host 0.0.0.0 --port 8765       :: 사용자·API 키·SSO 가 없고 익명도 꺼져 있으면 기동 거부
 ```
-- 사내 SSO 병행: `security.json` 의 `sso` 에 OIDC(issuer/client_id/redirect_uri, 비밀은 `.env LLMWIKI_OIDC_CLIENT_SECRET`) 또는 리버스 프록시 헤더 방식을 적고 `role_map` 으로 IdP 그룹 → 역할. 로그인 화면에 ID/비밀번호 폼과 SSO 버튼이 함께 뜬다.
-- 정책: 증분 빌드 등 복구 가능한 변경은 확인 대화상자, **전체 초기화·로그 삭제·스냅샷 복원·config reset 은 admin + 확인 문구(`DELETE INDEX`) + 비밀번호 재입력**, 실행 직전 자동 스냅샷(`snapshot list|restore`), 전부 `logs/audit.jsonl` 에 기록.
-- HTTPS 와 IP 제한은 리버스 프록시에서(SECURITY.md §7).
+- **기본 접속자 = 게스트(viewer)**: `anonymous_role: "viewer"` 라 로그인 없이도 질의·검색·조회·피드백·기대 결과 포렌식이 된다(DB 무영향). 상위 작업을 누르면 "로그인 필요(class1 이상)" 안내. 로그인을 강제하려면 `""`.
+- 역할 의미(기본값): viewer 조회 · class3 +실행(eval·trial·models test) · class2 +지식 편집(규칙·pin·프롬프트·제안 승인) · class1 +색인 갱신(증분 빌드·verify --fix·유지보수) · builder +전체/채널 리빌드·복원 · admin +설정·사용자·권한. 경계는 `permissions.levels/ops` 로 조직에 맞게 옮긴다(코드 변경 없음).
+- 사내 SSO 병행: `security.json` 의 `sso` 에 OIDC(issuer/client_id/redirect_uri, 비밀은 `.env LLMWIKI_OIDC_CLIENT_SECRET`) 또는 리버스 프록시 헤더 방식을 적고 `role_map` 으로 IdP 그룹 → 역할(6단계 이름). 로그인 화면에 ID/비밀번호 폼·SSO 버튼·"게스트로 계속" 이 함께 뜬다.
+- CLI 도 같은 표: 공용 서버면 `"cli": {"default_role": "viewer"}` 로 낮추고 `--user <id>`(또는 `LLMWIKI_USER`/`LLMWIKI_PASSWORD`, `LLMWIKI_API_KEY`)로 승격. 거부는 종료 코드 5, 감사 로그 DENY.
+- 정책: edit/index/admin 등급은 확인 대화상자, **rebuild(전체/채널 리빌드·스냅샷 복원)와 destructive(로그 삭제·config reset·사용자 삭제)는 확인 문구(`DELETE INDEX`) + 로컬 계정 비밀번호 재입력**, 실행 직전 자동 스냅샷(`snapshot list|restore`), 전부 `logs/audit.jsonl` 에 기록.
+- HTTPS 와 IP 제한은 리버스 프록시에서(SECURITY.md §8).
+
+### 4.5 외부 LLM 을 MCP 로 붙이기 (같은 PC · 원격 · 다수)
+
+상세는 [MCP.md](MCP.md). 요약:
+```bat
+:: 같은 PC (stdio): 클라이언트가 자식 프로세스로 실행 — cwd 는 프로젝트 루트, Windows 는 python.exe 절대 경로 권장
+claude mcp add llmwiki -- python -m llmwiki mcp
+:: 원격 / 여러 LLM (Streamable HTTP): serve 가 같은 포트에 POST /mcp 를 연다. API 키로 인증
+python -m llmwiki apikey add claude-desktop-kim --role viewer          :: 토큰 lwk_… 은 이때 한 번만 표시
+:: 클라이언트 설정: {"type":"http","url":"http://wiki-host:8765/mcp","headers":{"Authorization":"Bearer lwk_…"}}
+:: stdio 전용 클라이언트가 원격을 쓸 때 (브리지)
+claude mcp add llmwiki-remote -- python -m llmwiki mcp --connect http://wiki-host:8765/mcp --token lwk_…
+:: MCP 만 단독 포트로
+python -m llmwiki mcp --transport http --host 0.0.0.0 --port 8766
+:: 이 환경 값(python 절대 경로·프로젝트 루트·서버 URL)이 채워진 클라이언트 설정 4종(stdio/HTTP/브리지/claude 한 줄 명령) 출력
+python -m llmwiki mcp --client-config --url http://wiki-host:8765 --token lwk_…
+```
+플래그를 생략하면 `config.json` 의 `web_host/web_port`(serve), `mcp_transport/mcp_host/mcp_port`(mcp), `mcp_url`(브리지 대상) 이 기본값이다 — 서버마다 다른 포트/바인드는 파일에 적어 두고 명령은 `serve` / `mcp` 만 치면 된다. 클라이언트 쪽 설정 원본은 `setup/mcp_clients.example.json`.
+확인: `curl -s http://wiki-host:8765/mcp -H "Authorization: Bearer lwk_…" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`. 잘못되거나 폐기된 `lwk_` 키는 게스트로 강등되지 않고 **401** 이므로 클라이언트 로그에서 바로 드러난다.
+
+### 4.6 다른 RAG · 검색 API · MCP 서버를 붙이기 (외부 LLM 은 우리 /mcp 하나만)
+
+상세는 [RAG_FEDERATION.md](RAG_FEDERATION.md). 요약: `mcp_sources.json` 에 소스를 적고(원본 `setup/mcp_sources.example.json` — `peer_wiki`(다른 llmwiki, http) · `kb_rest`(REST 검색 API) · `mango`(stdio) · `mock`(테스트)), 토글 두 개를 켠다.
+```bat
+:: (1) 연결 확인 — enabled 와 무관하게 이름을 주면 실행
+python -m llmwiki mcp-source test peer_wiki                          :: ok, tools=[…]
+python -m llmwiki mcp-source fetch kb_rest /search "{\"query\":\"AGC\",\"k\":2}"   :: REST 원 응답 → retrieve 매핑의 result_path/필드 결정
+:: (2) 검색 채널: 질의마다 외부 결과를 ext_<source> 채널로 융합 (인용 [C#], hits.external 에 출처)
+python -m llmwiki mcp-source retrieve "RX AGC 수렴" --source kb_rest    :: 매핑 확인
+python -m llmwiki config set external_rag=true                        :: 또는 --external-rag / 사이드바 토글
+python -m llmwiki query "RX AGC 수렴 지연 원인" --trace                :: external_rag → rrf_fuse.sources 의 ext_kb_rest → external_inject → rerank
+:: (3) 페더레이션: 외부 서버의 tool 을 우리 /mcp 에 <source>__<tool> 로 노출 (클라이언트 설정 변경 없음)
+python -m llmwiki config set mcp_federation=true
+python -m llmwiki mcp-source federated                                :: tools=[peer_wiki__wiki_query, kb_rest__search, …], plugins
+:: (4) 코드 수정 없이 도구 추가: plugins/mcp_tools/<이름>.py 의 register(add_tool)  (예시 _example_echo.py)
+```
+리허설용 목업: `python -m llmwiki.mcp_client --mock-rest 8799`(REST) · `mcp_sources.json` 의 `mock`(stdio). 튜닝 `channel_w_external`·`external_rag_k`·`external_rag_inject`, 소스별 `weight`·`when(always|fallback)`·`timeout_s`. 외부 소스 오류는 trace `external_rag.errors` 에만 남고 질의는 계속된다. 서로 expose 한 두 서버도 재귀 방지 헤더로 안전하다. 도구: `wiki_query`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`, `wiki_feedback`, `wiki_forensic`(기대 결과 포렌식), `wiki_status` — 모두 read 등급(색인을 바꾸지 않음). 여러 LLM 이 동시에 붙으면 서버 락으로 직렬화되어 큐잉된다(실패 없음).
 
 ## 5. 코퍼스 계약 적용
 
@@ -198,6 +277,20 @@ python -m llmwiki graph --provenance explicit --limit 20   :: CL→Issue 관계�
 ```
 빌드가 중단되면(네트워크·API 장애) 그냥 다시 `build` 하면 된다. 남은 청크만 임베딩하고(`resume_missing`), 진행률은 `build status` / Web › Corpus › 임베딩.
 
+### 6.1 채널별 빌드 (fts / vector / graph 를 따로)
+
+세 채널의 산출물(`chunks_fts` · `embeddings` · `entities/relations/mentions`)은 모두 **`chunks` 테이블만 읽고 서로의 테이블은 읽지도 지우지도 않는다**. 그래서 한 채널만 다시 만들 수 있고, 다른 채널은 그대로 남는다.
+```bat
+python -m llmwiki build fts               :: 토크나이저·복합어(query_rules compound)·메타 토큰을 바꾼 뒤: FTS 행만 전부 다시 (임베딩·그래프 불변)
+python -m llmwiki build vector            :: 임베딩 없는 청크만 임베딩 (coverage 보충). --full 이면 전부 다시 (hash 는 IDF 재적합; API 임베더는 캐시 적중이면 비용 0)
+python -m llmwiki build graph             :: data/rules.json·스키마 관계 규칙을 바꾼 뒤: 그래프를 비우고 전체 청크에서 재추출 + 커뮤니티 + 위키 (FTS·임베딩 불변)
+python -m llmwiki build --channels fts,vector   :: 일반(증분/전체) 빌드에서 지정 채널 단계만 (나머지는 skipped 로 기록)
+python -m llmwiki build --no-embed / --no-build-fts / --no-rule-graph   :: 토글로 채널 단계 끄기 (config.json toggles 에도 같은 이름)
+```
+- 채널 리빌드는 `rebuild` 등급(builder, 확인 문구 또는 `--yes`) — chunks 를 지우지 않으므로 스냅샷은 만들지 않는다. Web: Corpus › 빌드 탭의 채널 체크박스와 "FTS 재색인 / 벡터 재임베딩 / 그래프 재구축" 버튼.
+- **서로 영향을 주지 않는 이유와 예외**: 세 채널의 공통 상위 의존은 청크 ID(`doc_id#n`)다. 문서가 바뀌거나 `chunk_max_chars`/`chunk_overlap_chars` 가 바뀌면 청크가 다시 나뉘고, 그때는 증분/전체 빌드가 세 채널을 함께 처리한다(채널 빌드는 "청크는 그대로, 산출물만 다시" 인 경우용). 채널 빌드가 끝나면 `verify` 가 자동 실행되어 `fts_missing`(fts) / `embedding_coverage`(vector) / `mention_dangling·entity_orphans·wiki_stale_pages`(graph) 로 결손을 알려주고, 결과의 `counts_before/after` 로 다른 채널 행 수가 그대로임을 보여준다(달라지면 `channel_isolation` 경고). `build_version` 이 올라가 질의 캐시·벡터 행렬·엔티티 인덱스가 무효화된다.
+- 토글을 끈 채 빌드하면(예 `build_fts: false`) 그 채널은 stale 이 되고 `build verify` 가 `fts_missing` 을 보고한다 → `build fts` 로 보충.
+
 ## 7. 평가 기준선과 튜닝
 
 1. `eval/questions.json` 을 자기 코퍼스 질문(기대 문서 id 부분 문자열 + 기대 용어) 25~50개로 교체.
@@ -206,6 +299,17 @@ python -m llmwiki graph --provenance explicit --limit 20   :: CL→Issue 관계�
 3. 프리셋 비교: `trial run --name q --preset quality`, `trial run --name s --preset speed`.
 4. 융합 방식: `fusion compare`. 채널 가중: 튜닝 `channel_w_*`, 문서 유형 부스트 `doc_type_boost`, 시간 `time_mode/time_boost_w`, provenance `provenance_w`.
 5. Web › Quality › Trial 비교에서 질문별 승/패, 설정 diff, 추천을 본다.
+
+### 7.1 문서 단위 확장 (doc_expand)
+
+리랭크로 뽑힌 청크가 속한 문서의 **나머지 청크 중 질의와 관련 있는 것**을 컨텍스트에 추가한다(표·목록·후속 절이 청크 경계에서 잘리는 문제 완화). 토글 `doc_expand`(기본 on; `speed`/`token` 프리셋은 off), 튜닝(stage `context`): `doc_expand_top_docs`(3 문서) · `doc_expand_max_chunks`(문서당 3) · `doc_expand_min_score`(0.2) · `doc_expand_mode`(hybrid = 키워드 커버리지 + 벡터 유사도 가중합, keyword | vector) · `doc_expand_w`(0.5).
+```bat
+python -m llmwiki query "ISSUE-2001 의 원인과 수정 CL 은?" --trace       :: doc_expand 단계: docs=3 candidates=7 added=5 …, 근거 목록의 why=doc_expand
+python -m llmwiki query "…" --no-doc-expand                            :: 끄고 비교
+python -m llmwiki trial run --name de-on  && python -m llmwiki trial run --name de-off --set doc_expand=false && python -m llmwiki trial compare de-on de-off
+python -m llmwiki tuning set doc_expand_max_chunks=6 doc_expand_min_score=0.1   :: 문서를 더 넓게
+```
+추가 청크는 부모 청크 바로 뒤에 문서 순서로 들어가며 `[C#]` 로 인용된다. 컨텍스트 상한(`context_max_chars`)은 그대로 적용되므로 토큰이 무한히 늘지 않는다. 확장이 왜 안 됐는지는 `forensic expect … ` 의 `doc_expand` 행에서 확인한다. 실측(샘플 코퍼스 25문항): 주 후보 순위 지표(hit@5·MRR)는 동일, 컨텍스트 청크 10.2→13.5개(+4.4), 글자 1,609→2,085(+30%), 지연 +0.8ms — [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §7.2. 평가 지표는 보조 청크를 순위에서 제외하고 계산한다(`evalset.primary_hits`).
 
 ## 8. 스케줄 (매일 증분)
 
@@ -228,6 +332,11 @@ python -m llmwiki graph --provenance explicit --limit 20   :: CL→Issue 관계�
 | 로그 | `logs/` (llmwiki.log · error.log · build.log · query.log, JSON Lines, 로테이션). `logs grep --request <id>` 로 프로파일과 연결 |
 | 프로파일 | `requests last`, Web › Observability › 요청 프로파일 (run_id → 로그) |
 | 근거 부족/품질 문제 | `forensic last`, `forensic summary`, Web › Quality › 포렌식. 누적 소견은 `memory consolidate` 로 제안(corpus_gap/query_rule/tuning) 생성 |
+| 품질·지연·토큰이 마음에 안 든다 (어느 설정을 만질지 모르겠다) | **상세 분석 모드** — 사이드바 토글 `analysis_mode` 또는 `query "…" --analyze [--focus quality|speed|tokens]` → `logs/analysis/req_<id>.md` (설정 스냅샷·단계 타임라인·채널/융합/리랭크/컨텍스트 상세·세 렌즈 소견과 조절점·프롬프트 샘플) → LLM 에게 첨부해 튜닝 제안을 받는다. 지난 요청은 `analyze <id|last> --print`, Web Ask 📊, MCP `wiki_analysis` — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) |
+| "이 문서/수치가 답에 있어야 했다" (사용자 피드백) | **기대 결과 포렌식** `forensic expect <request_id|last> --doc ISSUE-2003 --term 1.5dB [--propose]` — 같은 설정으로 검색을 재실행해 기대 근거가 fts/vector/graph → 융합 → 리랭크 → 컨텍스트 → 답변 중 어디서 탈락했는지 + 수정안(규칙/pin/튜닝/코퍼스). Web › Ask 결과의 🎯, Quality › 포렌식, MCP `wiki_forensic` — [FORENSIC.md](FORENSIC.md) |
+| LLM 이 느리거나 죽음 | 답변 상단 `⚠ LLM 실행 보고` / 결과 `llm_report` / 빌드 alerts `llm_failures` 를 본다. `agents.json timeout_s·retries`, `config.json llm_timeout·llm_retries`, `models test --live` |
+| 외부 LLM(MCP) 관리 | `apikey add|list|remove`, Web 보안 탭 "API 키", `security audit`(op=mcp 거부 기록) — [MCP.md](MCP.md) |
+| 권한 조정 | `security perms [set …]`, Web 보안 탭 "권한 표" — [SECURITY.md](SECURITY.md) §2.3 |
 | 자가진화 | `evolve status/apply/reject`, Web › Evolve. `evolve_auto_apply` 는 기본 OFF(HITL). tuning 제안은 자동 적용 대상 아님 |
 | 메모리 decay | `memory decay` (반감기 `memory_half_life_days`) — 스케줄에 주 1회 넣어도 됨 |
 | 캐시 | `precompute run` (평가셋+빈번 질의 사전 계산), 재빌드 시 자동 무효화 |
@@ -250,9 +359,19 @@ python -m llmwiki graph --provenance explicit --limit 20   :: CL→Issue 관계�
 | `dim mismatch` / `embedding_dim` warn | 임베더/차원 변경 → `build --full` |
 | 시간 질의가 안 맞음 | `timezone`, `week_start` 확인, `time "지난주"` 로 파싱 확인. 문서 `date` 가 없으면 파일명/mtime 추론 |
 | 그래프에 CL→Issue 가 없음 | CL 문서 `related.issues` 누락(lint error) 또는 `id_patterns` 불일치 |
-| 한글 검색 recall 낮음 | `query_rules.json` compound/synonym 추가, `tuning set tokenizer=kiwi`(+`pip install kiwipiepy`) 후 `build --full`, `fts_trigram` 토글 |
+| 한글 검색 recall 낮음 | `query_rules.json` compound/synonym 추가, `tuning set tokenizer=kiwi`(+`pip install kiwipiepy`) 후 `build fts`(FTS 만 재색인; 임베딩·그래프 불변), `fts_trigram` 토글 |
+| 질의가 느리다 / 토큰을 많이 쓴다 / 품질이 들쭉날쭉한데 원인을 모르겠다 | `query "…" --analyze --focus speed|tokens|quality` → 리포트 §6/§7/§5 의 소견과 조절점(현재값 포함) → `tuning set`/`config set` 후 재실행 비교, `trial run` 으로 회귀 확인 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) |
+| 기대한 문서가 답에 없다 | `forensic expect last --doc <ID> --term <용어>` → 탈락 단계별 원인과 수정안. retrieval 탈락+키워드 없음 = 어휘 불일치(`rules add synonym`), 순위가 top_k 바로 밖 = `top_k_*`/pin, rerank/context 탈락 = `rerank_candidates`/`context_max_chars`, answer 탈락 = `answer_length_target=long` — [FORENSIC.md](FORENSIC.md) §2.4 |
+| `⚠ LLM 실행 보고: … N회 시도 후 실패` | LLM 호출이 재시도 후에도 실패해 대체 경로(추출식 등)로 답변. headless: `agents.json timeout_s`(5분)·`retries`(3), 실행 파일·인증(`models test --live`); HTTP: `llm_timeout`, 게이트웨이 상태. 배너만 끄려면 토글 `llm_failure_report` |
+| `!! 권한 부족: 'cli:build' …` (종료 코드 5) | `security.json cli.default_role` 이 낮음. `--user <id>` / `LLMWIKI_USER`+`LLMWIKI_PASSWORD` / `LLMWIKI_API_KEY` 로 승격, 또는 `security perms set index=viewer` 처럼 표를 조정 |
+| Web 에서 버튼이 "로그인 필요" | 게스트(anonymous_role=viewer)는 DB 무영향 기능만. 계정을 받아 로그인(헤더 "로그인 →") |
+| MCP 401 | `lwk_` 키 오타/폐기(`apikey list`; 잘못된 키는 게스트로 강등되지 않고 항상 401) 또는 `anonymous_role=""` 인데 토큰 없음 — [MCP.md](MCP.md) §4 |
+| 서버가 엉뚱한 포트/주소로 뜸 | `config.json web_host/web_port`(serve) · `mcp_host/mcp_port`(mcp --transport http) 가 기본값. 플래그 `--host/--port` 가 우선. `setup/check_env.py` 가 현재 기본값을 출력 |
+| 외부 RAG 결과가 답변에 안 나옴 / `mcp-source test` 401·599 | [RAG_FEDERATION.md](RAG_FEDERATION.md) §7: 토큰(`token_env`)·url·`result_path` 매핑, trace `external_rag`→`rrf_fuse.sources`→`external_inject`→`rerank_*` 순으로 탈락 지점 확인, `external_rag_inject`/`weight` 조정 |
+| `/mcp tools/list` 에 `<source>__<tool>` 이 없음 | 토글 `mcp_federation` + 소스 `enabled`/`expose`. `mcp-source federated` 의 `errors`. 페더레이션 하위 호출(깊이 헤더)에서는 의도적으로 숨김 |
+| 채널 빌드 후 `channel_isolation` 경고 | 다른 채널 행 수가 바뀜(비정상). `build verify --fix` 후 해당 채널 재빌드, 지속되면 `build --full` |
 | Web UI 가 옛 화면 | 브라우저 캐시 — 새로고침(Ctrl+F5). 정적 파일은 `Cache-Control: no-store` |
 
 ## 11. 포팅 시 코드 변경이 필요한 곳 (없어야 정상)
 
-설정·규칙·프롬프트·스키마는 모두 파일로 외부화되어 있으므로 코드를 고치지 않아도 된다. 새 프로바이더(예: 사내 전용 API)를 붙일 때만 `llmwiki/providers.py` 에 `BaseLLM`/`BaseEmbedder` 서브클래스를 추가하고 `_make_llm`/`make_embedder` 에 이름을 등록한다(30줄 내외). 새 검색 채널은 `query_engine._retrieve` 의 `lists[...]` 에 리스트를 추가하면 융합·부스트·프로파일에 자동으로 포함된다.
+설정·규칙·프롬프트·스키마·권한 표·재시도 정책·서버 포트·포렌식 임계는 모두 파일로 외부화되어 있으므로 코드를 고치지 않아도 된다. 2026-09-14/15 추가 기능의 설정 위치는 §3.2 표 한 장에 모아 두었다: 권한/익명/CLI 게이트/API 키 → `security.json`(SECURITY.md), 서버·MCP 바인드/포트/전송/브리지 → `config.json web_*/mcp_*`, MCP 클라이언트 설정 → `setup/mcp_clients.example.json` 또는 `mcp --client-config`(MCP.md), 채널 빌드 토글 → `config.json toggles.build_fts/embed/rule_graph`, 문서 단위 확장 → `toggles.doc_expand` + `tuning.json doc_expand_*`, 재시도 → `config.json llm_timeout/llm_retries/llm_retry_backoff_s` + `agents.json timeout_s/retries/retry_backoff_s/retry_on`, 실패 보고 → `toggles.llm_failure_report`, 기대 결과 포렌식 임계 → `tuning.json forensic_*`, 다른 RAG/검색 API/MCP 서버 연결 → `mcp_sources.json`(transport·retrieve·expose) + `toggles.external_rag/mcp_federation` + `tuning.json channel_w_external/external_rag_*`, MCP 도구 추가 → `plugins/mcp_tools/*.py`. 새 종류의 외부 시스템이 MCP 도 REST/JSON 도 아니라면(예: gRPC) `llmwiki/mcp_client.py` 에 `call_tool(name, args)` 를 가진 클라이언트 클래스를 추가하고 `open_source` 에 transport 이름을 등록한다(50줄 내외). 새 프로바이더(예: 사내 전용 API)를 붙일 때만 `llmwiki/providers.py` 에 `BaseLLM`/`BaseEmbedder` 서브클래스를 추가하고 `_make_llm`/`make_embedder` 에 이름을 등록한다(30줄 내외). 새 검색 채널은 `query_engine._retrieve` 의 `lists[...]` 에 리스트를 추가하면 융합·부스트·프로파일에 자동으로 포함된다.
