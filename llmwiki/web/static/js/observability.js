@@ -1,4 +1,4 @@
-/* Observability — 요청 프로파일, 로그 뷰어, 구조·흐름, 시스템·규모, 질의 로그, 콘솔. */
+﻿/* Observability — 요청 프로파일, 로그 뷰어, 구조·흐름, 시스템·규모, 질의 로그, 콘솔. */
 (function (LW) {
   'use strict';
   const { $, $$, esc, fmt, fmtK, ts, dt, api, toast, STATE, overrides, renderTrace, renderStageTable, flatten, loadStatus, loaders, switchTab, switchGroup } = LW;
@@ -100,7 +100,7 @@
     const gr = $('#arch-go-req'); if (gr) gr.onclick = () => { switchTab('requests'); setTimeout(() => openRequest(li.id), 300); };
   }
   $('#btn-arch-refresh').onclick = loadArch; $('#arch-flow').onchange = renderArch; $('#arch-last').onchange = renderArch; $('#arch-live').onchange = renderArch;
-  loaders._toggleChanged = () => { if ($('#tab-arch').classList.contains('active')) renderArch(); };
+  loaders._toggleChanged = () => { if (LW.tabVisible('arch')) renderArch(); };
   loaders.arch = loadArch;
 
   // ---------------- SYSTEM ----------------
@@ -131,11 +131,220 @@
   $('#btn-perf-save').onclick = async () => { const st = {}; $$('[data-perf]').forEach((i) => { st[i.dataset.perf] = parseInt(i.value, 10); }); await api('/api/config', { settings: st }); toast('설정 저장됨'); loadStatus(); };
   loaders.system = loadSystem;
 
+  // ---------------- ACTIVITY (진행 중 작업 — viewer 도 조회 가능) ----------------
+  function actRow(r, canCancel) {
+    const pct = r.pct == null ? '' : `<div class="progress mini"><i style="width:${Math.max(0, Math.min(100, r.pct))}%"></i><span>${fmt(r.pct, 0)}%${r.eta_s ? ' · ≈' + LW.fmtS(r.eta_s) : ''}</span></div>`;
+    const llm = r.llm && r.llm.active ? `<span class="pill warn">LLM ${esc(r.llm.provider || '')}/${esc(r.llm.model || '')} ${LW.fmtS(r.llm.elapsed_s)}</span>` : '';
+    const q = r.queue ? `<span class="pill">대기열 ${r.queue.position}</span>` : '';
+    const btn = canCancel && r.status === 'running' && !r.cancel_requested ? `<button class="mini danger" data-cancel="${esc(r.token)}">■ 중지</button>` : (r.cancel_requested ? '<span class="pill warn">중지 중</span>' : '');
+    return `<tr><td class="mono small">${esc(r.token || '')}</td><td>${esc(r.kind || '')}${r.external ? ' <span class="pill">외부</span>' : ''}${r.weight === 'exclusive' ? ' <span class="pill bad">배타</span>' : r.weight === 'soft' ? ' <span class="pill">쓰기</span>' : ''}</td>` +
+      `<td>${esc((r.label || '').slice(0, 70))}</td><td>${esc(r.user || '-')}${r.role ? ' <small class="muted">' + esc(r.role) + '</small>' : ''}</td><td class="small">${esc(r.origin || '')}${r.ip ? '<br><span class="muted">' + esc(r.ip) + '</span>' : ''}</td>` +
+      `<td class="num">${LW.fmtDur(r.elapsed_s)}</td><td class="small">${esc(r.stage || r.status || '')}${r.note ? ' <span class="pill ok">' + esc(r.note) + '</span>' : ''}${pct}${llm}${q}</td><td>${btn}</td></tr>`;
+  }
+  // ---- 보드(압축 목록) ----
+  // 한 줄에 종류·작업·사용자·경과·진행을 담아 쭉 나열한다. 30명이 동시에 써도 스크롤 한 번으로 훑을 수 있게.
+  const KIND_ICON = { query: '💬', search: '🔎', build: '🔨', job: '🔨', cli: '⌨', mcp: '🔌', schedule: '⏰', snapshot: '💾', login: '🔑', read: '📄', watch: '👁' };
+  function actCard(r, canCancel, kind) {
+    const pctN = r.pct == null ? null : Math.max(0, Math.min(100, r.pct));
+    const bar = kind === 'queued'
+      ? '<div class="act-bar wait"><i style="width:100%"></i></div>'
+      : `<div class="act-bar${pctN == null ? ' indet' : ''}"><i style="width:${pctN == null ? 100 : pctN}%"></i></div>`;
+    const tags = [
+      r.external ? '<span class="pill">외부</span>' : '',
+      r.weight === 'exclusive' ? '<span class="pill bad">배타</span>' : r.weight === 'soft' ? '<span class="pill">쓰기</span>' : '',
+      r.llm && r.llm.active ? `<span class="pill warn">LLM ${LW.fmtS(r.llm.elapsed_s)}</span>` : '',
+      r.cancel_requested ? '<span class="pill warn">중지 중</span>' : '',
+      r.note ? `<span class="pill ok">${esc(r.note)}</span>` : '',
+    ].filter(Boolean).join('');
+    const where = [r.stage, pctN == null ? '' : fmt(pctN, 0) + '%', r.eta_s ? '≈' + LW.fmtS(r.eta_s) : ''].filter(Boolean).join(' · ');
+    const pos = kind === 'queued' && r.queue ? `<span class="act-pos">${r.queue.position}</span>` : '';
+    const btn = canCancel && !r.cancel_requested ? `<button class="act-x" data-cancel="${esc(r.token)}" title="중지">■</button>` : '';
+    return `<div class="act-item ${esc(kind)} k-${esc(r.kind || 'etc')}${r.mine ? ' mine' : ''}" title="${esc(r.label || '')}">
+      ${pos}<span class="act-ico">${KIND_ICON[r.kind] || '•'}</span>
+      <span class="act-main"><span class="act-label">${esc((r.label || r.kind || '-').slice(0, 90))}</span>
+        <span class="act-sub">${esc(r.kind || '')}${r.user ? ' · ' + esc(r.user) : ''}${r.origin ? ' · ' + esc(r.origin) : ''}${where ? ' · ' + esc(where) : ''}</span></span>
+      <span class="act-tags">${tags}</span><span class="act-t">${LW.fmtDur(r.elapsed_s)}</span>${bar}${btn}</div>`;
+  }
+  function recentCard(r) {
+    const cls = r.status === 'done' ? 'ok' : r.status === 'cancelled' ? 'warn' : 'bad';
+    return `<div class="act-item done ${cls}" title="${esc(r.error || r.label || '')}">
+      <span class="act-ico">${KIND_ICON[r.kind] || '•'}</span>
+      <span class="act-main"><span class="act-label">${esc((r.label || r.kind || '-').slice(0, 90))}</span>
+        <span class="act-sub">${esc(r.kind || '')}${r.user ? ' · ' + esc(r.user) : ''}${r.error ? ' · ' + esc(String(r.error).slice(0, 50)) : ''}</span></span>
+      <span class="act-tags">${r.note ? `<span class="pill ok">${esc(r.note)}</span>` : ''}<span class="pill ${cls}">${esc(r.status || '')}</span></span>
+      <span class="act-t">${LW.fmtDur(r.elapsed_s)}</span></div>`;
+  }
+  // 용량 게이지: 동시 실행 슬롯을 칸으로 그려 '지금 얼마나 찼는지'를 숫자 대신 눈으로 보게 한다.
+  function actGauge(j, run, qd, ext) {
+    const lim = (j.limits || {}), max = Math.max(1, Number(lim.max_parallel_reads || 8));
+    const used = (j.running || []).length, qn = (j.queued || []).length, qmax = Number(lim.queue_max || 64);
+    const pips = Array.from({ length: Math.min(max, 24) }, (_, i) => `<i class="${i < used ? 'on' : ''}"></i>`).join('');
+    const lock = j.lock || {};
+    const lockTxt = lock.writer ? `<span class="pill bad">쓰기 중 ${esc(lock.writer_label || lock.writer)}</span>`
+      : (lock.writers_waiting ? `<span class="pill warn">쓰기 대기 ${lock.writers_waiting}</span>` : '<span class="pill ok">여유</span>');
+    const qbar = `<span class="act-qbar" title="대기열 ${qn}/${qmax}"><i style="width:${Math.min(100, qmax ? qn / qmax * 100 : 0)}%"></i></span>`;
+    return `<div class="ag-slots" title="동시 실행 슬롯 ${used}/${max}"><span class="ag-cap">슬롯</span>${pips}<b>${used}/${max}</b></div>
+      <div class="ag-item"><span class="ag-cap">대기</span>${qbar}<b>${qn}</b></div>
+      <div class="ag-item"><span class="ag-cap">외부</span><b>${(j.external || []).length}</b><small class="muted">CLI·MCP</small></div>
+      <div class="ag-item"><span class="ag-cap">락</span>${lockTxt}</div>
+      <div class="ag-item grow"></div>
+      <div class="ag-item"><small class="muted">보이는 항목 ${run.length + qd.length + ext.length}건</small></div>`;
+  }
+  // 공용 활동 피드가 주는 데이터로 그린다 (탭마다 따로 폴링하지 않는다 — 브라우저 연결 6개 제한)
+  function renderActivity(j) {
+    if (!LW.tabVisible('activity')) return;
+    if (!j || j.error) { $('#act-board').innerHTML = `<div class="muted">${esc((j && j.error) || '조회 실패')}</div>`; return; }
+    const mine = $('#act-mine').checked, me = j.me;
+    const filt = (rows) => (mine ? (rows || []).filter((r) => r.user === me) : (rows || []));
+    const mark = (rows) => (rows || []).map((r) => Object.assign({ mine: !!(me && r.user === me) }, r));
+    const run = mark(filt(j.running)), qd = mark(filt(j.queued)), ext = mark(filt(j.external)), rec = filt(j.recent);
+    const canCancel = (r) => j.admin || (me && r.user === me);
+    $('#act-gauge').innerHTML = actGauge(j, run, qd, ext);
+    $('#act-summary').innerHTML = `<div class="stat"><b>${(j.running || []).length}</b>실행 중</div><div class="stat"><b>${(j.queued || []).length}</b>대기</div><div class="stat"><b>${(j.external || []).length}</b>외부(CLI/MCP)</div>` +
+      `<div class="stat"><b>${(j.lock || {}).readers || 0}</b>읽기 락</div><div class="stat"><b>${esc((j.lock || {}).writer || '-')}</b>쓰기 락</div><div class="stat"><b>${(j.limits || {}).max_parallel_reads}</b>동시 실행 상한</div>`;
+    const sect = (title, rows, kind) => rows.length ? `<div class="act-sect">${title} <b>${rows.length}</b></div>` + rows.map((r) => actCard(r, kind !== 'queued' && canCancel(r), kind)).join('') : '';
+    $('#act-board').innerHTML = (run.length + qd.length + ext.length)
+      ? sect('실행 중', run, 'running') + sect('대기', qd, 'queued') + sect('외부 (CLI · MCP · 스케줄러)', ext, 'running')
+      : '<div class="act-empty">지금 실행 중인 작업이 없습니다.</div>';
+    $('#act-recent-board').innerHTML = rec.length ? rec.map(recentCard).join('') : '<div class="act-empty">-</div>';
+    const head = '<table><tr><th>토큰</th><th>종류</th><th>작업</th><th>사용자</th><th>출처</th><th>경과</th><th>진행</th><th></th></tr>';
+    $('#act-running').innerHTML = (run.length + qd.length + ext.length)
+      ? head + run.concat(qd, ext).map((r) => actRow(r, canCancel(r))).join('') + '</table>'
+      : '<div class="muted">실행 중인 작업이 없습니다.</div>';
+    $('#act-recent').innerHTML = rec.length ? head.replace('<th></th>', '<th>결과</th>') + rec.map((r) => actRow(r, false).replace(/<td><\/td>$/, `<td class="small">${esc(r.status || '')}${r.error ? ' ' + esc(String(r.error).slice(0, 60)) : ''}</td>`)).join('') + '</table>' : '<div class="muted">-</div>';
+    $$('#tab-activity [data-cancel]').forEach((b) => b.onclick = async () => { b.disabled = true; await LW.cancelToken(b.dataset.cancel, 'activity'); setTimeout(LW.refreshActivity, 600); });
+  }
+  function actView(v) {
+    const board = v !== 'table';
+    ['#act-gauge', '#act-board', '#act-recent-board'].forEach((s) => $(s).classList.toggle('hidden', !board));
+    ['#act-summary', '#act-running', '#act-recent'].forEach((s) => $(s).classList.toggle('hidden', board));
+    $$('#act-view button').forEach((b) => b.classList.toggle('active', (b.dataset.v === 'board') === board));
+    try { localStorage.setItem('llmwiki.actview', board ? 'board' : 'table'); } catch (e) { /* ignore */ }
+  }
+  // 자동 갱신은 공용 피드가 맡는다. 체크를 끄면 그리지만 않는다 (요청 수는 어차피 늘지 않는다).
+  let ACT_AUTO = true;
+  LW.onActivity((j) => { if (ACT_AUTO) renderActivity(j); });
+  $('#btn-act-refresh').onclick = () => LW.refreshActivity();
+  $('#act-auto').onchange = () => { ACT_AUTO = $('#act-auto').checked; if (ACT_AUTO) LW.refreshActivity(); };
+  $('#act-mine').onchange = () => LW.refreshActivity();
+  $$('#act-view button').forEach((b) => b.onclick = () => actView(b.dataset.v));
+  let av = 'board'; try { av = localStorage.getItem('llmwiki.actview') || 'board'; } catch (e) { /* ignore */ }
+  actView(av);
+  loaders.activity = () => { LW.refreshActivity(); };
+
+  // ---------------- SERVER MONITOR (admin) ----------------
+  let SRV_TIMER = null, SRV = null;
+  const LIMIT_HELP = {
+    'concurrency.max_parallel_reads': '동시에 실행할 질의/검색/MCP 도구 호출 수. LLM 대기가 대부분이라 코어 수보다 크게 잡아도 된다 (30명 동시 접속이면 8~16).',
+    'concurrency.max_parallel_per_user': '한 사용자가 동시에 돌릴 수 있는 요청 수 (초과 → 429).',
+    'concurrency.max_parallel_per_ip': '한 IP 의 동시 요청 수. 리버스 프록시 뒤면 크게.',
+    'concurrency.queue_max': '슬롯을 기다리는 요청 상한 (초과 → 503).',
+    'concurrency.queue_timeout_s': '대기 최대 시간 (초과 → 503).',
+    'concurrency.reads_during_build': 'never | incremental | always — 빌드 중 질의 허용 범위.',
+    'concurrency.write_wait_timeout_s': '쓰기 작업이 진행 중인 읽기를 기다리는 최대 시간.',
+    'concurrency.read_wait_timeout_s': '읽기가 배타 작업(전체 빌드)을 기다리는 최대 시간.',
+    'rate_limit.per_user_per_min': '사용자별 분당 요청 수 (0 = 무제한).',
+    'rate_limit.per_ip_per_min': 'IP 별 분당 요청 수.',
+    'rate_limit.query_per_user_per_min': '사용자별 분당 질의 수 (LLM 비용 보호).',
+    'timeouts.query_s': '질의 1건의 시간 제한(초). 넘으면 자동 중지. 0 = 없음.',
+    'timeouts.job_s': '빌드/평가 등 백그라운드 작업의 시간 제한(초). 0 = 없음.',
+    'timeouts.mcp_s': 'MCP 도구 호출 시간 제한(초).',
+    'sessions.enforce': '켜면 서버가 세션을 기억하고 강제 로그아웃·동시 세션 수 제한이 동작합니다.',
+    'sessions.max_per_user': '사용자당 동시 로그인 세션 수 (초과 시 가장 오래된 세션 만료).',
+    'monitor.viewer_can_see_activity': 'viewer 도 진행 중 작업 목록을 볼 수 있게 합니다.',
+  };
+  const EDIT_KEYS = ['concurrency.max_parallel_reads', 'concurrency.max_parallel_per_user', 'concurrency.max_parallel_per_ip', 'concurrency.queue_max', 'concurrency.queue_timeout_s',
+    'concurrency.reads_during_build', 'concurrency.write_wait_timeout_s', 'concurrency.read_wait_timeout_s',
+    'rate_limit.enabled', 'rate_limit.per_user_per_min', 'rate_limit.per_ip_per_min', 'rate_limit.query_per_user_per_min',
+    'timeouts.query_s', 'timeouts.search_s', 'timeouts.job_s', 'timeouts.mcp_s',
+    'sessions.enforce', 'sessions.max_per_user', 'sessions.idle_timeout_min',
+    'monitor.viewer_can_see_activity', 'monitor.show_user_to_viewer', 'monitor.slow_request_ms'];
+  function srvInput(key, val) {
+    const id = 'srv-' + key.replace(/\./g, '-');
+    if (typeof val === 'boolean') return `<select id="${id}" data-lk="${key}"><option value="true"${val ? ' selected' : ''}>true</option><option value="false"${!val ? ' selected' : ''}>false</option></select>`;
+    if (key === 'concurrency.reads_during_build') return `<select id="${id}" data-lk="${key}">${['never', 'incremental', 'always'].map((o) => `<option${o === val ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+    return `<input id="${id}" data-lk="${key}" type="number" value="${esc(val)}" style="width:100px">`;
+  }
+  let SRV_BUSY = false;
+  async function loadServer() {
+    if (SRV_BUSY) return;                 // 응답이 늦어도 요청이 쌓이지 않게
+    SRV_BUSY = true;
+    let j = null;
+    try { j = await api('/api/admin/server?history=30'); } finally { SRV_BUSY = false; }
+    if (!j || j.error) {
+      $('#srv-overview').innerHTML = '';
+      $('#srv-msg').innerHTML = `<span class="warntxt">${esc((j && j.error) || '조회 실패')}</span> — 서버 모니터는 admin 전용입니다. 진행 중 작업만 보려면 '진행 중 작업' 탭을 쓰세요.`;
+      return;
+    }
+    SRV = j; $('#srv-msg').textContent = ''; $('#srv-path').textContent = j.config_path || '';
+    const lim = j.limits || {};
+    $('#srv-overview').innerHTML = `<div class="stat"><b>${j.running}</b>실행 중</div><div class="stat"><b>${j.queued}</b>대기</div><div class="stat"><b>${fmt(j.throughput_per_min, 1)}</b>요청/분</div>` +
+      `<div class="stat"><b>${j.errors_in_window}</b>오류(${fmt(j.window_min, 0)}분)</div><div class="stat"><b>${LW.fmtS(j.uptime_s)}</b>uptime</div><div class="stat"><b>${esc((j.lock || {}).writer || '-')}</b>쓰기 락</div>` +
+      `<div class="stat"><b>${(j.lock || {}).readers || 0}</b>읽기</div><div class="stat"><b>${(lim.access || {}).maintenance_mode ? 'ON' : 'off'}</b>점검 모드</div><div class="stat"><b>${(j.counters || {}).rejected_rate || 0}</b>속도 제한 거부</div>` +
+      `<div class="stat"><b>${(j.counters || {}).rejected_queue || 0}</b>대기열 거부</div><div class="stat"><b>${(j.counters || {}).timeouts || 0}</b>시간 초과</div><div class="stat"><b>${(j.counters || {}).slow || 0}</b>느린 요청</div>`;
+    $('#srv-limits').innerHTML = EDIT_KEYS.map((k) => {
+      const [a, b] = k.split('.'); const v = (lim[a] || {})[b];
+      if (v === undefined) return '';
+      return `<label title="${esc(LIMIT_HELP[k] || '')}">${k} ${srvInput(k, v)}<small class="muted">${esc((LIMIT_HELP[k] || '').slice(0, 60))}</small></label>`;
+    }).join('');
+    const lat = j.latency || {};
+    $('#srv-latency').innerHTML = Object.keys(lat).length
+      ? '<table><tr><th>종류</th><th>n</th><th>avg</th><th>p50</th><th>p95</th><th>max</th></tr>' + Object.keys(lat).map((k) => { const v = lat[k]; return `<tr><td>${esc(k)}</td><td class="num">${v.n}</td><td class="num">${fmt(v.avg_ms, 0)}</td><td class="num">${fmt(v.p50_ms, 0)}</td><td class="num">${fmt(v.p95_ms, 0)}</td><td class="num">${fmt(v.max_ms, 0)}</td></tr>`; }).join('') + '</table>'
+      : '<div class="muted">(최근 요청 없음)</div>';
+    const cir = j.circuits || {};
+    $('#srv-circuits').innerHTML = Object.keys(cir).length
+      ? '<table><tr><th>provider/model</th><th>연속 실패</th><th>상태</th><th>마지막 오류</th></tr>' + Object.keys(cir).map((k) => { const v = cir[k]; return `<tr><td class="mono small">${esc(k)}</td><td class="num">${v.failures}</td><td>${v.open ? '<span class="bad">차단 중 (' + fmt(v.open_until - (Date.now() / 1000), 0) + 's)</span>' : '<span class="ok">정상</span>'}</td><td class="small muted">${esc((v.last_error || '').slice(0, 80))}</td></tr>`; }).join('') + '</table>'
+      : '<div class="muted">기록 없음 (모든 LLM 호출 정상)</div>';
+    $('#srv-clients').innerHTML = '<table><tr><th>대상</th><th>실행</th><th>누적</th><th>거부</th><th>오류</th><th>마지막</th><th>클라이언트</th></tr>' +
+      (j.clients || []).slice(0, 30).map((c) => `<tr><td class="mono small">${esc(c.key)}</td><td class="num">${c.active}</td><td class="num">${c.total}</td><td class="num">${c.rejected || 0}</td><td class="num">${c.errors || 0}</td><td class="small">${ts(c.last_seen)}</td><td class="small muted">${esc((c.agent || '').slice(0, 40))}</td></tr>`).join('') + '</table>';
+    const acc = lim.access || {};
+    $('#srv-blocks').textContent = `block_ips=${JSON.stringify(acc.block_ips || [])}\nblock_users=${JSON.stringify(acc.block_users || [])}\nallow_ips=${JSON.stringify(acc.allow_ips || [])}`;
+    $('#srv-sessions').innerHTML = (j.sessions || []).length
+      ? '<table><tr><th>sid</th><th>사용자</th><th>역할</th><th>IP</th><th>로그인</th><th>최근</th><th></th></tr>' + j.sessions.map((s) => `<tr><td class="mono small">${esc(s.sid)}</td><td>${esc(s.user)}</td><td>${esc(s.role)}</td><td class="small">${esc(s.ip || '')}</td><td class="small">${dt(s.created)}</td><td class="small">${ts(s.last_seen)}</td><td><button class="mini secondary" data-rev="${esc(s.sid)}">로그아웃</button></td></tr>`).join('') + '</table>' + ((lim.sessions || {}).enforce ? '' : '<div class="muted small">sessions.enforce=false — 목록만 기록되고 강제 로그아웃은 적용되지 않습니다.</div>')
+      : '<div class="muted">기록된 세션 없음</div>';
+    $$('#srv-sessions [data-rev]').forEach((b) => b.onclick = async () => { await api('/api/admin/server', { action: 'sessions', sub: 'revoke', sid: b.dataset.rev }); loadServer(); });
+    const sel = $('#srv-loglevel'); if (sel && STATE.settings) sel.value = STATE.settings.log_level || 'INFO';
+  }
+  function srvAuto() {
+    if (SRV_TIMER) { clearInterval(SRV_TIMER); SRV_TIMER = null; }
+    if ($('#srv-auto').checked && LW.tabVisible('server')) SRV_TIMER = setInterval(() => { if (LW.tabVisible('server')) loadServer(); }, 3000);
+  }
+  $('#btn-srv-refresh').onclick = loadServer;
+  $('#srv-auto').onchange = srvAuto;
+  $('#btn-srv-save').onclick = async () => {
+    const vals = {};
+    $$('#srv-limits [data-lk]').forEach((i) => { vals[i.dataset.lk] = i.value; });
+    const j = await api('/api/admin/server', { action: 'set_limits', values: vals, save: true });
+    toast(j && j.ok ? '서버 제한 저장됨 (server.json)' : '저장 실패'); loadServer(); loadStatus();
+  };
+  $('#btn-srv-reload').onclick = async () => { await api('/api/admin/server', { action: 'reload' }); toast('server.json 다시 읽음'); loadServer(); };
+  $('#btn-srv-maint').onclick = async () => {
+    const on = !((((SRV || {}).limits || {}).access || {}).maintenance_mode);
+    if (on && !confirm('점검 모드를 켜면 admin 외의 모든 요청이 503 으로 거부됩니다. 진행할까요?')) return;
+    await api('/api/admin/server', { action: 'maintenance', enabled: on }); toast('점검 모드 ' + (on ? 'ON' : 'off')); loadServer(); loadStatus();
+  };
+  $('#btn-srv-block').onclick = async () => {
+    const v = $('#srv-block-value').value.trim(); if (!v) return;
+    await api('/api/admin/server', { action: 'block', kind: $('#srv-block-kind').value, value: v, add: true });
+    $('#srv-block-value').value = ''; loadServer();
+  };
+  $('#btn-srv-circuit-reset').onclick = async () => { await api('/api/admin/server', { action: 'circuit_reset' }); toast('회로 초기화'); loadServer(); };
+  $('#btn-srv-loglevel').onclick = async () => { const j = await api('/api/admin/server', { action: 'log_level', level: $('#srv-loglevel').value, save: false }); toast('log_level=' + ((j && j.log_level) || '?')); };
+  loaders.server = () => { loadServer(); srvAuto(); };
+
   // ---------------- QUERY LOG ----------------
   async function loadQLog() {
     const q = await api('/api/queries?limit=60');
     $('#logs').innerHTML = '<table><tr><th>id</th><th>time</th><th>query</th><th>fb</th><th>판정</th><th>g</th><th>answer</th><th></th></tr>' + q.map((x) => { const sc = JSON.parse(x.scores || '{}'); return `<tr><td>${x.id}</td><td>${ts(x.ts)}</td><td>${esc(x.query)}</td><td>${x.feedback == null ? '' : x.feedback > 0 ? '👍' : '👎'}</td><td class="small">${esc(sc.verdict || '')}</td><td class="num">${sc.groundedness == null ? '' : fmt(sc.groundedness, 2)}</td><td class="muted small">${esc((x.answer || '').slice(0, 80))}</td><td><button class="secondary mini" data-tr="${x.id}">trace</button></td></tr>`; }).join('') + '</table>';
-    $$('#logs [data-tr]').forEach((b) => b.onclick = async () => renderTrace($('#logs-trace'), await api('/api/query_trace?id=' + b.dataset.tr)));
+    // trace 결과는 60행짜리 표 아래에 그려져 화면 밖에 있기 쉽다 → 그린 뒤 그 자리로 스크롤한다
+    // (누르면 아무 일도 안 일어나는 것처럼 보이던 문제)
+    $$('#logs [data-tr]').forEach((b) => b.onclick = async () => {
+      const box = $('#logs-trace');
+      box.innerHTML = '<div class="muted small">trace 불러오는 중…</div>';
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      renderTrace(box, await api('/api/query_trace?id=' + b.dataset.tr));
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
   $('#btn-logs').onclick = loadQLog;
   loaders.qlog = loadQLog;

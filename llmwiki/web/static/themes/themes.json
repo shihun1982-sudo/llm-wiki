@@ -1,9 +1,9 @@
 {
   "_comment": "테마 레지스트리. 새 테마 = themes/<key>.css 에 :root[data-theme=\"<key>\"]{ --변수 } 만 재정의하고 여기와 index.html <link> 에 추가. default = 사용자가 고른 적 없을 때 쓰는 테마(auto = 시스템 설정).",
-  "default": "dark",
+  "default": "light",
   "themes": [
-    {"key": "light", "title": "Light", "css": null},
-    {"key": "dark", "title": "Dark (기본)", "css": "dark.css"},
+    {"key": "light", "title": "Light (기본)", "css": null},
+    {"key": "dark", "title": "Dark", "css": "dark.css"},
     {"key": "high-contrast", "title": "High contrast", "css": "high-contrast.css"},
     {"key": "solarized", "title": "Solarized", "css": "solarized.css"}
   ],

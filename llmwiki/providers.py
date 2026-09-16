@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import socket
 import threading
@@ -61,6 +62,60 @@ def drain_incidents() -> List[Dict[str, Any]]:
     return items
 
 
+# ---- 회로 차단기(circuit breaker): provider/model 별 연속 최종 실패 수 — 프로세스 전체(모든 스레드) 공유 ----
+# 죽은 게이트웨이에 30명이 각각 (1+retries)×timeout 을 기다리는 대신, 연속 N회 실패하면 cooldown 동안 즉시 실패시켜 대체 경로로 보낸다.
+_CIRCUIT_LOCK = threading.Lock()
+_CIRCUIT: Dict[str, Dict[str, Any]] = {}
+
+
+def circuit_state(key: str) -> Dict[str, Any]:
+    with _CIRCUIT_LOCK:
+        return dict(_CIRCUIT.get(key) or {"failures": 0, "open_until": 0.0, "opened": 0, "last_error": ""})
+
+
+def circuit_all() -> Dict[str, Dict[str, Any]]:
+    with _CIRCUIT_LOCK:
+        now = time.time()
+        return {k: dict(v, open=bool(v.get("open_until", 0) > now)) for k, v in _CIRCUIT.items()}
+
+
+def circuit_reset(key: Optional[str] = None) -> None:
+    with _CIRCUIT_LOCK:
+        if key:
+            _CIRCUIT.pop(key, None)
+        else:
+            _CIRCUIT.clear()
+
+
+def _circuit_check(key: str) -> Optional[float]:
+    """열려 있으면 남은 초, 아니면 None."""
+    with _CIRCUIT_LOCK:
+        st = _CIRCUIT.get(key)
+        if st and st.get("open_until", 0) > time.time():
+            return st["open_until"] - time.time()
+    return None
+
+
+def _circuit_record(key: str, ok: bool, threshold: int, cooldown_s: float, error: str = "") -> bool:
+    """호출 결과를 기록. 회로가 새로 열리면 True."""
+    if threshold <= 0:
+        return False
+    with _CIRCUIT_LOCK:
+        st = _CIRCUIT.setdefault(key, {"failures": 0, "open_until": 0.0, "opened": 0, "last_error": ""})
+        if ok:
+            st["failures"] = 0
+            st["open_until"] = 0.0
+            return False
+        st["failures"] += 1
+        st["last_error"] = error[:200]
+        if st["failures"] >= threshold:
+            st["open_until"] = time.time() + max(1.0, float(cooldown_s))
+            st["opened"] += 1
+            st["failures"] = 0
+            return True
+    return False
+
+
 def _is_transient_exc(e: BaseException) -> bool:
     if isinstance(e, LLMError):
         return e.transient
@@ -85,57 +140,117 @@ class BaseLLM:
     timeout: int = DEFAULT_LLM_TIMEOUT
     retries: int = DEFAULT_LLM_RETRIES
     retry_backoff_s: float = DEFAULT_RETRY_BACKOFF_S
+    retry_backoff: str = "exponential"      # linear | exponential
+    retry_backoff_max_s: float = 60.0
+    budget_s: int = 0                       # 재시도 포함 총 시간 예산 (0 = 없음)
+    http_retries: int = 2                   # 프로바이더 내부 429/5xx 재시도
+    circuit_failures: int = 3               # 0 = 회로 차단 끔
+    circuit_cooldown_s: int = 60
 
     def __init__(self) -> None:
-        self.stats: Dict[str, float] = {"calls": 0, "errors": 0, "retries": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0.0}
+        self.stats: Dict[str, float] = {"calls": 0, "errors": 0, "retries": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0.0, "circuit_rejects": 0}
+
+    def circuit_key(self) -> str:
+        return "%s/%s" % (self.name, self.model or "")
+
+    def policy(self) -> Dict[str, Any]:
+        """유효 재시도 정책 (describe / models show 용)."""
+        return {"timeout_s": getattr(self, "timeout", None), "retries": getattr(self, "retries", 0), "backoff_s": getattr(self, "retry_backoff_s", 0),
+                "backoff": getattr(self, "retry_backoff", "exponential"), "backoff_max_s": getattr(self, "retry_backoff_max_s", 0),
+                "budget_s": getattr(self, "budget_s", 0), "http_retries": getattr(self, "http_retries", 0),
+                "circuit_failures": getattr(self, "circuit_failures", 0), "circuit_cooldown_s": getattr(self, "circuit_cooldown_s", 0)}
+
+    def _backoff_wait(self, attempt: int) -> float:
+        base = float(getattr(self, "retry_backoff_s", DEFAULT_RETRY_BACKOFF_S) or 0)
+        if base <= 0:
+            return 0.0
+        if str(getattr(self, "retry_backoff", "exponential")).lower().startswith("lin"):
+            wait = base * attempt
+        else:
+            wait = base * (2 ** (attempt - 1))
+        cap = float(getattr(self, "retry_backoff_max_s", 60.0) or 0)
+        if cap > 0:
+            wait = min(wait, cap)
+        return wait * (1.0 + random.random() * 0.2)   # 지터: 동시에 실패한 여러 요청이 같은 순간에 재시도하지 않도록
 
     def complete(self, system: str, user: str, max_tokens: int = 2048, effort: str = "low",
                  json_mode: bool = False, files: Optional[List[str]] = None) -> Dict[str, Any]:
         """returns {'text': str, 'usage': {...}, 'ms': float, 'model': str, 'attempts': int}
-        files: (headless agent 전용) 프롬프트에 첨부할 파일 경로 — 다른 프로바이더는 무시."""
+        files: (headless agent 전용) 프롬프트에 첨부할 파일 경로 — 다른 프로바이더는 무시.
+        재시도 정책(역할별): retries · backoff(linear|exponential, 상한·지터) · budget_s(총 시간 예산) · 회로 차단(circuit_failures/cooldown).
+        취소: 진행 레지스트리에 취소 요청이 있으면 다음 시도 전에 progress.Cancelled 를 던진다."""
         if not hasattr(self, "stats"):
             BaseLLM.__init__(self)
         _count("llm_calls", 1)
         self.stats["calls"] += 1
         self._files = list(files or [])
         t_start = time.perf_counter()
+        ckey = self.circuit_key()
+        cf = int(getattr(self, "circuit_failures", 0) or 0)
+        remaining = _circuit_check(ckey) if cf > 0 else None
+        if remaining is not None:
+            self.stats["circuit_rejects"] = self.stats.get("circuit_rejects", 0) + 1
+            msg = "circuit open for %s (%.0fs 남음): 최근 연속 실패로 호출을 건너뜀" % (ckey, remaining)
+            record_incident({"role": self.role, "provider": self.name, "model": str(self.model or ""), "attempts": 0, "max_attempts": 0,
+                             "elapsed_ms": 0.0, "errors": [msg], "transient": True, "timeout_s": getattr(self, "timeout", None),
+                             "prompt_chars": len(system) + len(user), "ts": time.time(), "circuit": True})
+            _pg.note("LLM 회로 차단 중 (%s) — 대체 경로 사용" % ckey)
+            raise LLMError(msg, transient=True, kind="circuit_open")
+        _pg.check_cancel()
         _pg.llm_start(self.name, str(self.model or ""), self.role)
         max_attempts = 1 + max(0, int(getattr(self, "retries", 0) or 0))
+        budget = float(getattr(self, "budget_s", 0) or 0)
         errors: List[str] = []
         r: Dict[str, Any] = {}
         for attempt in range(1, max_attempts + 1):
             try:
                 r = self._complete(system, user, max_tokens, effort, json_mode)
                 break
+            except _pg.Cancelled:
+                _pg.llm_end((time.perf_counter() - t_start) * 1000, "cancelled")
+                raise
             except Exception as e:
                 msg = "%s: %s" % (type(e).__name__, str(e)[:300]) if not isinstance(e, LLMError) else str(e)[:300]
                 errors.append(msg)
                 transient = _is_transient_exc(e)
+                elapsed_s = time.perf_counter() - t_start
+                over_budget = budget > 0 and elapsed_s >= budget
                 try:
                     from . import logging_setup as _ls
-                    _ls.log("warning", "llm call failed (attempt %d/%d%s): %s" % (attempt, max_attempts, ", retrying" if transient and attempt < max_attempts else ""),
-                            "llm", provider=self.name, model=self.model, role=self.role, ms=round((time.perf_counter() - t_start) * 1000, 1),
+                    _ls.log("warning", "llm call failed (attempt %d/%d%s): %s" % (attempt, max_attempts, ", retrying" if (transient and attempt < max_attempts and not over_budget) else
+                                                                                   (", budget exhausted" if over_budget else "")),
+                            "llm", provider=self.name, model=self.model, role=self.role, ms=round(elapsed_s * 1000, 1),
                             prompt_chars=len(system) + len(user), transient=transient)
                 except Exception:
                     pass
-                if transient and attempt < max_attempts:
+                if transient and attempt < max_attempts and not over_budget and _pg.cancel_requested() is None:
                     self.stats["retries"] += 1
-                    wait = float(getattr(self, "retry_backoff_s", DEFAULT_RETRY_BACKOFF_S) or 0) * attempt
-                    _pg.note("LLM 재시도 %d/%d (%s/%s, %s): %s" % (attempt + 1, max_attempts, self.name, self.model, self.role, msg[:100]))
+                    wait = self._backoff_wait(attempt)
+                    if budget > 0:
+                        wait = min(wait, max(0.0, budget - elapsed_s))
+                    _pg.note("LLM 재시도 %d/%d (%s/%s, %s) %.1fs 후: %s" % (attempt + 1, max_attempts, self.name, self.model, self.role, wait, msg[:100]))
                     if wait > 0:
-                        time.sleep(wait)
+                        _pg.sleep_cancellable(wait)
                     continue
                 self.stats["errors"] += 1
                 elapsed = (time.perf_counter() - t_start) * 1000
                 _pg.llm_end(elapsed, msg[:200])
+                opened = _circuit_record(ckey, False, cf, float(getattr(self, "circuit_cooldown_s", 60) or 60), msg)
+                if opened:
+                    try:
+                        from . import logging_setup as _ls
+                        _ls.log("error", "llm circuit opened: %s (cooldown %ss)" % (ckey, getattr(self, "circuit_cooldown_s", 60)), "llm", provider=self.name, model=self.model)
+                    except Exception:
+                        pass
                 record_incident({"role": self.role, "provider": self.name, "model": str(self.model or ""), "attempts": attempt, "max_attempts": max_attempts,
                                  "elapsed_ms": round(elapsed, 1), "errors": errors, "transient": transient, "timeout_s": getattr(self, "timeout", None),
-                                 "prompt_chars": len(system) + len(user), "ts": time.time()})
+                                 "prompt_chars": len(system) + len(user), "ts": time.time(), "budget_exhausted": over_budget, "circuit_opened": opened})
                 if isinstance(e, LLMError):
                     if attempt > 1:
-                        raise LLMError("%s (%d회 시도 모두 실패)" % (str(e), attempt), transient=e.transient, kind=e.kind)
+                        raise LLMError("%s (%d회 시도 모두 실패%s)" % (str(e), attempt, ", 시간 예산 초과" if over_budget else ""), transient=e.transient, kind=e.kind)
                     raise
                 raise LLMError(msg, transient=transient)
+        _circuit_record(ckey, True, cf, 0)
         r["attempts"] = len(errors) + 1
         if errors:
             r["retry_errors"] = errors
@@ -195,7 +310,8 @@ class BaseLLM:
 
     def describe(self) -> Dict[str, Any]:
         return {"name": self.name, "model": self.model, "available": self.available, "role": self.role,
-                "reason": "" if self.available else (getattr(self, "reason", "") or ""), "stats": dict(getattr(self, "stats", {}))}
+                "reason": "" if self.available else (getattr(self, "reason", "") or ""), "stats": dict(getattr(self, "stats", {})),
+                "policy": self.policy(), "circuit": circuit_state(self.circuit_key())}
 
 
 class NoneLLM(BaseLLM):
@@ -336,10 +452,11 @@ class AnthropicHTTPLLM(BaseLLM):
         return {"text": text, "usage": data.get("usage", {}), "ms": (time.perf_counter() - t0) * 1000,
                 "model": data.get("model", self.model)}
 
-    def _post(self, body: Dict[str, Any], headers: Dict[str, str], retries: int = 3) -> Dict[str, Any]:
-        """HTTP 429/5xx 는 여기서 짧게 재시도(backoff). 타임아웃·네트워크 오류는 transient LLMError 로 올려 BaseLLM.complete 가 llm_retries 만큼 재시도한다."""
+    def _post(self, body: Dict[str, Any], headers: Dict[str, str], retries: Optional[int] = None) -> Dict[str, Any]:
+        """HTTP 429/5xx 는 여기서 짧게 재시도(backoff, 횟수 = llm_http_retries). 타임아웃·네트워크 오류는 transient LLMError 로 올려 BaseLLM.complete 가 역할별 retries 만큼 재시도한다."""
         raw = json.dumps(body).encode("utf-8")
         last: Optional[Exception] = None
+        retries = (1 + int(getattr(self, "http_retries", 2) or 0)) if retries is None else retries
         for attempt in range(retries):
             req = urllib.request.Request(self.API, data=raw, headers=headers, method="POST")
             try:
@@ -466,8 +583,10 @@ class OllamaLLM(BaseLLM):
             return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "ollama unreachable at %s: %s" % (self.url, e)}
 
     def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
-        body = {"model": self.model, "system": system, "prompt": user, "stream": False,
-                "options": {"num_predict": max_tokens}}
+        opts: Dict[str, Any] = {"num_predict": max_tokens}
+        if float(getattr(self, "repeat_penalty", 0) or 0) > 0:
+            opts["repeat_penalty"] = float(self.repeat_penalty)     # 같은 구절 반복 억제
+        body = {"model": self.model, "system": system, "prompt": user, "stream": False, "options": opts}
         if json_mode:
             body["format"] = "json"
         t0 = time.perf_counter()
@@ -548,6 +667,12 @@ class OpenAICompatLLM(BaseLLM):
     def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
         body: Dict[str, Any] = {"model": self.model, "max_tokens": max_tokens, "temperature": 0.0 if json_mode else 0.2,
                                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        # 반복 억제 (작은 모델이 같은 구절을 되풀이하는 고장을 줄인다). 0 이면 보내지 않는다 —
+        # 일부 게이트웨이는 모르는 필드에 400 을 내므로 기본값일 때는 건드리지 않기 위함.
+        if getattr(self, "frequency_penalty", 0):
+            body["frequency_penalty"] = float(self.frequency_penalty)
+        if getattr(self, "presence_penalty", 0):
+            body["presence_penalty"] = float(self.presence_penalty)
         if json_mode and self._json_mode_ok is not False:
             body["response_format"] = {"type": "json_object"}
         t0 = time.perf_counter()
@@ -573,9 +698,10 @@ class OpenAICompatLLM(BaseLLM):
         return {"text": text, "usage": {"input_tokens": int(u.get("prompt_tokens", 0) or 0), "output_tokens": int(u.get("completion_tokens", 0) or 0)},
                 "ms": (time.perf_counter() - t0) * 1000, "model": data.get("model", self.model)}
 
-    def _post(self, path: str, body: Dict[str, Any], retries: int = 3) -> Dict[str, Any]:
+    def _post(self, path: str, body: Dict[str, Any], retries: Optional[int] = None) -> Dict[str, Any]:
         raw = json.dumps(body).encode("utf-8")
         last: Optional[Exception] = None
+        retries = (1 + int(getattr(self, "http_retries", 2) or 0)) if retries is None else retries
         for attempt in range(retries):
             req = urllib.request.Request(self.base_url + path, data=raw, headers=self._headers(), method="POST")
             try:
@@ -631,23 +757,60 @@ def make_llm(settings, role: Optional[str] = None) -> BaseLLM:
         provider, model = settings.llm_provider, settings.llm_model
     llm = _make_llm(provider, model, settings)
     llm.role = role or "default"
+    apply_policy(llm, settings, role)
+    return llm
+
+
+def apply_policy(llm: BaseLLM, settings, role: Optional[str] = None) -> BaseLLM:
+    """역할별 재시도 정책을 인스턴스에 적용. 우선순위: llm_roles.<role>.* > config 전역(llm_timeout/llm_retries/…) > 코드 기본값.
+    headless 는 agents.json 의 timeout_s/retries/retry_backoff_s 가 있으면 그 값이 우선(_*_fixed 표식) — 단, 역할 설정에 명시된 값은 그것도 덮어쓴다."""
     try:
-        llm.timeout = int(getattr(settings, "llm_timeout", DEFAULT_LLM_TIMEOUT) or DEFAULT_LLM_TIMEOUT)
-    except (TypeError, ValueError):
-        llm.timeout = DEFAULT_LLM_TIMEOUT
-    # 재시도 정책: config.json llm_retries / llm_retry_backoff_s. headless 는 agents.json 의 retries/timeout_s 가 있으면 그 값이 우선.
-    if not getattr(llm, "_retries_fixed", False):
+        pol = settings.role_llm(role) if (role and role != "default" and hasattr(settings, "role_llm")) else None
+    except Exception:
+        pol = None
+    explicit = dict(((getattr(settings, "llm_roles", None) or {}).get(role) or {})) if role else {}
+
+    def pick(attr: str, global_key: str, default: Any, typ, fixed_flag: str = "") -> Any:
+        if pol is not None and attr in explicit and explicit.get(attr) not in (None, ""):
+            try:
+                return typ(explicit[attr])          # 역할에 명시 → 최우선 (headless 고정값보다도)
+            except (TypeError, ValueError):
+                pass
+        if fixed_flag and getattr(llm, fixed_flag, None):
+            return None                              # headless agents.json 값 유지
         try:
-            llm.retries = int(getattr(settings, "llm_retries", DEFAULT_LLM_RETRIES))
+            # 역할 정책(pol)에 그 키가 없으면 전역 설정으로 떨어진다 — 정책 dict 에 없는 새 키도 안전하게 동작
+            v = pol.get(attr) if pol is not None else None
+            if v in (None, ""):
+                v = getattr(settings, global_key, default)
+            return typ(v if v not in (None, "") else default)
         except (TypeError, ValueError):
-            llm.retries = DEFAULT_LLM_RETRIES
-    if not getattr(llm, "_backoff_fixed", False):
-        try:
-            llm.retry_backoff_s = float(getattr(settings, "llm_retry_backoff_s", DEFAULT_RETRY_BACKOFF_S))
-        except (TypeError, ValueError):
-            llm.retry_backoff_s = DEFAULT_RETRY_BACKOFF_S
-    if getattr(llm, "_timeout_fixed", None):
+            return typ(default)
+
+    v = pick("timeout_s", "llm_timeout", DEFAULT_LLM_TIMEOUT, int, "_timeout_fixed")
+    if v is not None:
+        llm.timeout = int(v or DEFAULT_LLM_TIMEOUT)
+    elif getattr(llm, "_timeout_fixed", None):
         llm.timeout = int(llm._timeout_fixed)
+    v = pick("retries", "llm_retries", DEFAULT_LLM_RETRIES, int, "_retries_fixed")
+    if v is not None:
+        llm.retries = max(0, int(v))
+    v = pick("backoff_s", "llm_retry_backoff_s", DEFAULT_RETRY_BACKOFF_S, float, "_backoff_fixed")
+    if v is not None:
+        llm.retry_backoff_s = max(0.0, float(v))
+    llm.retry_backoff = str(pick("backoff", "llm_retry_backoff", "exponential", str) or "exponential")
+    llm.retry_backoff_max_s = float(pick("backoff_max_s", "llm_retry_backoff_max_s", 60.0, float) or 0)
+    llm.budget_s = int(pick("budget_s", "llm_budget_s", 0, int) or 0)
+    llm.circuit_failures = int(pick("circuit_failures", "llm_circuit_failures", 3, int) or 0)
+    llm.circuit_cooldown_s = int(pick("circuit_cooldown_s", "llm_circuit_cooldown_s", 60, int) or 60)
+    try:
+        llm.http_retries = max(0, int(getattr(settings, "llm_http_retries", 2)))
+    except (TypeError, ValueError):
+        llm.http_retries = 2
+    # 반복 억제 (역할별로도 지정 가능: llm_roles.<role>.frequency_penalty 등)
+    llm.frequency_penalty = float(pick("frequency_penalty", "llm_frequency_penalty", 0.0, float) or 0.0)
+    llm.presence_penalty = float(pick("presence_penalty", "llm_presence_penalty", 0.0, float) or 0.0)
+    llm.repeat_penalty = float(pick("repeat_penalty", "llm_repeat_penalty", 0.0, float) or 0.0)
     return llm
 
 

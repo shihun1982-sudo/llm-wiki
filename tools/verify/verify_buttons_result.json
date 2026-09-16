@@ -1,0 +1,118 @@
+[
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-agents-save",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 2,
+   "toasts": [
+    "agents.json 저장됨"
+   ],
+   "len": 30335
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-cat-add",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 1,
+   "toasts": [
+    "모델 id 를 입력하세요"
+   ],
+   "len": 30335
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-cat-refresh",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [
+    "카탈로그 새로고침"
+   ],
+   "len": 30335
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-models-reload",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "len": 30335
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-models-save",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 5,
+   "toasts": [],
+   "len": 30370
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "models",
+  "button": "btn-models-test",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 2,
+   "toasts": [],
+   "len": 31927
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "tuning",
+  "button": "btn-tuning-reload",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 2,
+   "toasts": [],
+   "len": 65068
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "tuning",
+  "button": "btn-tuning-reset",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 1,
+   "toasts": [],
+   "len": 65068
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "tuning",
+  "button": "btn-tuning-save",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 1,
+   "toasts": [
+    "변경된 값이 없습니다"
+   ],
+   "len": 65068
+  }
+ }
+]

@@ -149,7 +149,8 @@ def llm_review(pipe, limit: int = 30) -> Dict[str, Any]:
     ents = ", ".join(e["name"] for e in pipe.store.entities(80))
     user = "## 기존 엔티티(일부)\n%s\n\n## 질의 로그\n%s" % (ents, "\n".join(lines))
     try:
-        r = llm.complete(REVIEW_SYSTEM(), user, max_tokens=3000, effort=pipe.s.role_llm("review")["effort"], json_mode=True)
+        r = llm.complete(REVIEW_SYSTEM(), user, max_tokens=pipe.s.role_max_tokens("review", 3000),
+                         effort=pipe.s.role_llm("review")["effort"], json_mode=True)
     except LLMError as e:
         return {"error": str(e), "proposals": []}
     data = parse_json(r["text"]) or {}
@@ -317,14 +318,20 @@ def _snapshot(pipe, pid: int) -> Dict[str, str]:
 
 
 def _restore(pipe, snap: Dict[str, str]) -> None:
+    """스냅샷으로 되돌린다 (DB 파일 교체 + rules/wiki/config 복원).
+
+    DB 파일 교체는 Store.reopen(before=…) 안에서 한다: 모든 연결을 닫고 → 파일 교체(Windows 잠금 때문에 짧게 재시도) → 다시 연다.
+    Store 인스턴스를 갈아끼우지 않으므로, 교체가 실패하더라도 서버는 원래 DB 로 계속 동작한다(예전에는 여기서 실패하면 모든 요청이 죽었다)."""
     s = pipe.s
     d = snap["dir"]
-    pipe.store.close()
-    shutil.copy2(os.path.join(d, "db.sqlite3"), s.db_path)
-    for suffix in ("-wal", "-shm"):
-        p = s.db_path + suffix
-        if os.path.exists(p):
-            os.remove(p)
+
+    def swap() -> None:
+        shutil.copy2(os.path.join(d, "db.sqlite3"), s.db_path)
+        for suffix in ("-wal", "-shm"):
+            p = s.db_path + suffix
+            if os.path.exists(p):
+                os.remove(p)
+    pipe.store.reopen(before=swap)
     if os.path.exists(os.path.join(d, "rules.json")):
         from .graph_rules import rules_path as _rules_path
         shutil.copy2(os.path.join(d, "rules.json"), _rules_path())
@@ -338,8 +345,6 @@ def _restore(pipe, snap: Dict[str, str]) -> None:
         for k, v in ns.to_dict().items():
             if k != "toggles":
                 setattr(s, k, v)
-    from .store import Store
-    pipe.store = Store(s.db_path)
     pipe.reload()
 
 

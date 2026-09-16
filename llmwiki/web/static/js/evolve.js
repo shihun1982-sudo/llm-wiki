@@ -21,8 +21,10 @@
 
   async function loadMemory() {
     const m = await api('/api/memory?limit=40');
-    $('#mem-status').innerHTML = `<div class="stat"><b>${m.episodes}</b>에피소드</div><div class="stat"><b>${m.episodes_with_feedback}</b>피드백 있음</div><div class="stat"><b>${m.feedback_chunks}</b>부스트 청크</div><div class="stat"><b>${fmt(m.avg_strength_proposed, 2)}</b>제안 평균 strength</div><div class="stat"><b>${m.half_life_days}d</b>반감기</div><div class="stat"><b>${m.forensics}</b>포렌식</div><div class="stat"><b>${esc(JSON.stringify(m.proposals || {}))}</b>제안 상태</div>`;
-    $('#mem-episodes').innerHTML = '<table><tr><th>#</th><th>시각</th><th>질의</th><th>kind</th><th>outcome</th><th>fb</th><th>strength</th><th>청크</th></tr>' + (m.episodes || []).map((e) => `<tr><td>${e.id}</td><td class="muted small">${dt(e.ts)}</td><td>${esc(e.query)}</td><td>${esc(e.kind)}</td><td>${esc(e.outcome)}</td><td>${e.feedback == null ? '' : e.feedback > 0 ? '👍' : '👎'}</td><td class="num">${fmt(e.strength, 2)}</td><td class="muted small">${esc((e.chunks || []).slice(0, 2).join(', '))}</td></tr>`).join('') + '</table>';
+    $('#mem-status').innerHTML = `<div class="stat"><b>${Array.isArray(m.episodes) ? m.episodes.length : (m.episodes || 0)}</b>에피소드</div><div class="stat"><b>${m.episodes_with_feedback}</b>피드백 있음</div><div class="stat"><b>${m.feedback_chunks}</b>부스트 청크</div><div class="stat"><b>${fmt(m.avg_strength_proposed, 2)}</b>제안 평균 strength</div><div class="stat"><b>${m.half_life_days}d</b>반감기</div><div class="stat"><b>${m.forensics}</b>포렌식</div><div class="stat"><b>${esc(JSON.stringify(m.proposals || {}))}</b>제안 상태</div>`;
+    // m.episodes 는 '개수', m.recent 가 최근 에피소드 목록이다 (예전 버전 호환: 배열이면 그대로 쓴다)
+    const eps = m.recent || (Array.isArray(m.episodes) ? m.episodes : []);
+    $('#mem-episodes').innerHTML = '<table><tr><th>#</th><th>시각</th><th>질의</th><th>kind</th><th>outcome</th><th>fb</th><th>strength</th><th>청크</th></tr>' + eps.map((e) => `<tr><td>${e.id}</td><td class="muted small">${dt(e.ts)}</td><td>${esc(e.query)}</td><td>${esc(e.kind)}</td><td>${esc(e.outcome)}</td><td>${e.feedback == null ? '' : e.feedback > 0 ? '👍' : '👎'}</td><td class="num">${fmt(e.strength, 2)}</td><td class="muted small">${esc((e.chunks || []).slice(0, 2).join(', '))}</td></tr>`).join('') + '</table>';
   }
   $('#btn-mem-refresh').onclick = loadMemory;
   $('#btn-mem-decay').onclick = async () => { toast(JSON.stringify(await api('/api/memory', { action: 'decay' }))); loadMemory(); };

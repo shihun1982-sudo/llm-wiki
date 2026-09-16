@@ -1,0 +1,212 @@
+{
+  "_comment": "사용 가능한 LLM/임베딩 모델 목록 (Web 설정 드롭다운 · `models list` · `/api/models/catalog`). 항목 추가/삭제: `models catalog add <id> --provider ollama --label ... --roles answer,rerank` / `models catalog remove <id>` 또는 Web › Settings › 모델 › 카탈로그. roles 를 비우면 모든 역할에 표시. enabled=false 면 목록에서 숨김. 서버가 실제 제공하는 모델은 `models discover` 로 조회. 설명: docs/BRINGUP_GUIDE.md §3.4",
+  "models": [
+    {
+      "id": "claude-fable-5-1",
+      "provider": "anthropic",
+      "label": "Claude Fable 5.1 (최상위)",
+      "roles": [
+        "answer",
+        "review",
+        "forensic"
+      ],
+      "tags": [
+        "quality"
+      ],
+      "context_k": 200,
+      "enabled": true,
+      "notes": "Anthropic 직접 또는 anthropic_base_url 게이트웨이"
+    },
+    {
+      "id": "claude-opus-5",
+      "provider": "anthropic",
+      "label": "Claude Opus 5",
+      "roles": [
+        "answer",
+        "review",
+        "forensic",
+        "extract"
+      ],
+      "tags": [
+        "quality"
+      ],
+      "context_k": 200,
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "claude-sonnet-5",
+      "provider": "anthropic",
+      "label": "Claude Sonnet 5",
+      "roles": [],
+      "tags": [
+        "balanced"
+      ],
+      "context_k": 200,
+      "enabled": true,
+      "notes": "전 역할 기본 추천"
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "provider": "anthropic",
+      "label": "Claude Haiku 4.5",
+      "roles": [
+        "rerank",
+        "expand",
+        "verify",
+        "summary"
+      ],
+      "tags": [
+        "fast",
+        "cheap"
+      ],
+      "context_k": 200,
+      "enabled": true,
+      "notes": "보조 역할용"
+    },
+    {
+      "id": "llama3.1",
+      "provider": "ollama",
+      "label": "Ollama llama3.1 (로컬)",
+      "roles": [],
+      "tags": [],
+      "context_k": 128,
+      "enabled": true,
+      "notes": "로컬 Ollama 기본 모델"
+    },
+    {
+      "id": "qwen2.5:7b",
+      "provider": "ollama",
+      "label": "Qwen2.5 7B (local)",
+      "roles": [],
+      "tags": [
+        "local",
+        "korean"
+      ],
+      "context_k": 32,
+      "enabled": true,
+      "notes": "ollama pull qwen2.5:7b"
+    },
+    {
+      "id": "exaone3.5:7.8b",
+      "provider": "ollama",
+      "label": "EXAONE 3.5 7.8B (local, 한국어)",
+      "roles": [],
+      "tags": [
+        "local",
+        "korean"
+      ],
+      "context_k": 32,
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "gpt-4o-mini",
+      "provider": "openai",
+      "label": "gpt-4o-mini (OpenAI-compatible 게이트웨이)",
+      "roles": [],
+      "tags": [
+        "gateway"
+      ],
+      "context_k": 128,
+      "enabled": true,
+      "notes": "openai_base_url + PAT"
+    },
+    {
+      "id": "Qwen/Qwen2.5-7B-Instruct",
+      "provider": "openai",
+      "label": "Qwen2.5-7B-Instruct (vLLM)",
+      "roles": [],
+      "tags": [
+        "gateway",
+        "local"
+      ],
+      "context_k": 32,
+      "enabled": true,
+      "notes": "vLLM/LM Studio 의 모델 id"
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-5",
+      "provider": "headless:opencode",
+      "label": "opencode → claude-sonnet-4-5",
+      "roles": [],
+      "tags": [
+        "headless"
+      ],
+      "context_k": 200,
+      "enabled": true,
+      "notes": "agents.json opencode; model 은 provider/model 형식"
+    },
+    {
+      "id": "mock",
+      "provider": "mock",
+      "label": "mock (테스트용, 네트워크 없음)",
+      "roles": [],
+      "tags": [
+        "test"
+      ],
+      "context_k": 0,
+      "enabled": true,
+      "notes": "배선 검증·스트레스 테스트"
+    },
+    {
+      "id": "llama3.1",
+      "provider": "openai",
+      "label": "llama3.1 (로컬 Ollama의 OpenAI 호환 엔드포인트)",
+      "roles": [],
+      "tags": [],
+      "notes": "http://localhost:11434/v1 로 접속. 같은 모델을 provider=ollama 로도 부를 수 있다",
+      "enabled": true
+    }
+  ],
+  "embed": [
+    {
+      "id": "",
+      "provider": "hash",
+      "label": "hash (local n-gram, dim=embed_dim)",
+      "dim": 0,
+      "enabled": true,
+      "notes": "오프라인 기본"
+    },
+    {
+      "id": "bge-m3",
+      "provider": "ollama",
+      "label": "bge-m3 (ollama, 1024d)",
+      "dim": 1024,
+      "enabled": true,
+      "notes": "ollama pull bge-m3"
+    },
+    {
+      "id": "nomic-embed-text",
+      "provider": "ollama",
+      "label": "nomic-embed-text (ollama, 768d)",
+      "dim": 768,
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "label": "text-embedding-3-small (1536d)",
+      "dim": 1536,
+      "enabled": true,
+      "notes": "openai_embed_base_url"
+    },
+    {
+      "id": "voyage-3.5",
+      "provider": "voyage",
+      "label": "voyage-3.5 (1024d)",
+      "dim": 1024,
+      "enabled": true,
+      "notes": "VOYAGE_API_KEY"
+    },
+    {
+      "id": "BAAI/bge-m3",
+      "provider": "st",
+      "label": "BAAI/bge-m3 (sentence-transformers)",
+      "dim": 1024,
+      "enabled": true,
+      "notes": "pip install sentence-transformers"
+    }
+  ]
+}

@@ -31,7 +31,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-from .config import path_for
+from . import atomicio
+from .config import path_for, ROOT
 
 ROLES = ("viewer", "class3", "class2", "class1", "builder", "admin")
 RANK = {r: i for i, r in enumerate(ROLES)}
@@ -124,10 +125,9 @@ def security_path() -> str:
 def load_security() -> Dict[str, Any]:
     p = security_path()
     cfg = json.loads(json.dumps(DEFAULT_SECURITY))
-    if os.path.exists(p):
-        with open(p, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        _deep_update(cfg, raw)
+    raw_text = atomicio.read_text(p)       # 저장 중이면 기다렸다 읽는다
+    if raw_text is not None:
+        _deep_update(cfg, json.loads(raw_text))   # 깨진 파일은 조용히 기본값으로 되돌리지 않고 알린다
     # 역할 이름 정규화 (operator → class1 등)
     for u in (cfg.get("users") or {}).values():
         if isinstance(u, dict) and u.get("role"):
@@ -147,13 +147,8 @@ def load_security() -> Dict[str, Any]:
 
 
 def save_security(cfg: Dict[str, Any]) -> str:
-    p = security_path()
-    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
-    return p
+    # 여러 관리자가 동시에 권한을 바꿔도 파일이 깨지지 않도록 원자적으로 저장한다.
+    return atomicio.write_json(security_path(), cfg)
 
 
 def _deep_update(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
@@ -336,11 +331,14 @@ def classify_cli(argv: List[str]) -> Tuple[str, str]:
 
 
 _READ_POST = ("/api/query", "/api/search", "/api/feedback", "/api/evolve/propose", "/api/auth/login", "/api/auth/logout", "/api/auth/password",
-              "/api/forensic/expect", "/api/forensic/llm", "/api/time", "/mcp")
+              "/api/forensic/expect", "/api/forensic/llm", "/api/analysis/insight", "/api/time", "/mcp",
+              "/api/auth/preview",   # 자기 권한을 낮춰 보는 것뿐 (올릴 수 없다)
+              "/api/profile")   # 자기 화면 설정만 저장 (서버 설정을 바꾸지 않음 — llmwiki/profiles.py)
 _RUN_POST = ("/api/models/test", "/api/eval", "/api/fusion/compare", "/api/evolve/review")
 _EDIT_POST = ("/api/memory", "/api/evolve/apply", "/api/evolve/reject", "/api/wiki/page", "/api/rules", "/api/presets", "/api/prompts", "/api/pins",
               "/api/query_rules", "/api/tuning")
-_ADMIN_POST = ("/api/config", "/api/models/set", "/api/agents", "/api/auth/users", "/api/security", "/api/apikeys")
+_ADMIN_POST = ("/api/config", "/api/models/set", "/api/agents", "/api/auth/users", "/api/security", "/api/apikeys",
+               "/api/admin/server", "/api/schedule", "/api/models/catalog")
 
 
 def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str]:
@@ -348,9 +346,11 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
     body = body or {}
     act = str(body.get("action") or "")
     if method == "GET":
-        if path in ("/api/auth/users", "/api/audit", "/api/security", "/api/apikeys"):
+        if path in ("/api/auth/users", "/api/audit", "/api/security", "/api/apikeys", "/api/admin/server"):
             return "admin", path
         return "read", path
+    if path == "/api/activity":
+        return "read", "activity cancel"      # 본인 요청 취소 (서버가 소유자 검사; admin 은 전부)
     if path == "/api/build":
         if body.get("purge_logs"):
             return "destructive", "build --full --purge-logs"
@@ -407,13 +407,17 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
 
 # ---------------------------------------------------------------- Auth
 class User:
-    __slots__ = ("name", "role", "via", "issued")
+    __slots__ = ("name", "role", "via", "issued", "preview_of")
 
     def __init__(self, name: str, role: str, via: str, issued: float = 0.0):
         self.name, self.role, self.via, self.issued = name, norm_role(role), via, issued
+        self.preview_of = ""      # 권한 미리보기로 낮춘 경우 원래 역할
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "role": self.role, "via": self.via, "rank": RANK[self.role]}
+        d = {"name": self.name, "role": self.role, "via": self.via, "rank": RANK[self.role]}
+        if self.preview_of:
+            d["preview_of"] = self.preview_of
+        return d
 
     @property
     def anonymous(self) -> bool:
@@ -422,6 +426,33 @@ class User:
 
 COOKIE = "llmwiki_session"
 OIDC_COOKIE = "llmwiki_oidc"
+# 권한 미리보기: admin 이 "일반 사용자에게는 어떻게 보이나" 를 확인할 때 쓴다.
+# **낮추기만** 하므로 서명하지 않는다 — 위조해도 자기 권한을 더 줄일 뿐 올릴 수 없다.
+PREVIEW_COOKIE = "llmwiki_preview"
+
+
+def preview_cookie(role: str, https: bool = False) -> str:
+    if not role:
+        return "%s=; Path=/; SameSite=Lax; Max-Age=0" % PREVIEW_COOKIE
+    return "%s=%s; Path=/; SameSite=Lax; Max-Age=%d%s" % (PREVIEW_COOKIE, norm_role(role), 12 * 3600,
+                                                          "; Secure" if https else "")
+
+
+def preview_role(cookie_header: str) -> str:
+    r = _cookie(cookie_header or "", PREVIEW_COOKIE)
+    return norm_role(r) if r in ROLES else ""
+
+
+def apply_preview(user: Optional[User], cookie_header: str) -> Optional[User]:
+    """미리보기 역할이 지금 역할보다 낮으면 그 역할로 낮춘 사용자를 돌려준다. 올리지는 않는다."""
+    if user is None:
+        return None
+    want = preview_role(cookie_header)
+    if not want or RANK.get(want, 0) >= RANK.get(user.role, 0):
+        return user
+    u = User(user.name, want, user.via, user.issued)
+    u.preview_of = user.role      # UI 가 '미리보기 중' 배너를 띄우는 근거
+    return u
 PUBLIC_PATHS = ("/login", "/static/", "/auth/sso/", "/api/auth/login", "/api/auth/me", "/api/auth/logout", "/api/progress", "/favicon.ico")
 
 
@@ -626,10 +657,14 @@ class Auth:
         return User("key:" + str(rec.get("name") or kid), rec.get("role", "viewer"), "apikey", time.time())
 
     # ---- sessions ----
-    def make_cookie(self, user: User, https: bool = False) -> str:
+    def make_cookie(self, user: User, https: bool = False, ip: str = "", agent: str = "") -> str:
         hours = float(self.cfg.get("session_hours") or 12)
-        tok = self.signer.sign({"u": user.name, "r": user.role, "v": user.via, "iat": time.time(), "exp": time.time() + hours * 3600,
-                                "id": secrets.token_hex(8)})
+        sid = secrets.token_hex(8)
+        tok = self.signer.sign({"u": user.name, "r": user.role, "v": user.via, "iat": time.time(), "exp": time.time() + hours * 3600, "id": sid})
+        try:
+            sessions().register(sid, user, ip, agent, hours)
+        except Exception:
+            pass
         secure = self.cfg.get("secure_cookie")
         flag = "; Secure" if (secure is True or (secure == "auto" and https)) else ""
         return "%s=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d%s" % (COOKIE, tok, int(hours * 3600), flag)
@@ -637,6 +672,15 @@ class Auth:
     @staticmethod
     def clear_cookie() -> str:
         return "%s=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" % COOKIE
+
+    def end_session(self, cookie_header: str) -> None:
+        tok = _cookie(cookie_header, COOKIE)
+        data = self.signer.verify(tok) if tok else None
+        if data and data.get("id"):
+            try:
+                sessions().revoke(str(data["id"]))
+            except Exception:
+                pass
 
     def user_from_cookie(self, cookie_header: str) -> Optional[User]:
         tok = _cookie(cookie_header, COOKIE)
@@ -646,6 +690,13 @@ class Auth:
         if not data:
             return None
         name, role = data.get("u"), data.get("r", "viewer")
+        # 서버 측 세션 레지스트리(server.json sessions.enforce) — 강제 로그아웃·동시 세션 수 제한
+        try:
+            reg = sessions()
+            if reg.enforce and data.get("id") and not reg.touch(str(data["id"])):
+                return None
+        except Exception:
+            pass
         # 로컬 사용자의 역할이 그 사이 바뀌었으면 현재 값을 따른다 (강등 즉시 반영)
         rec = (self.cfg.get("users") or {}).get(name)
         if rec:
@@ -858,6 +909,126 @@ class Auth:
             except Exception:
                 pass
         return out
+
+
+# ---------------------------------------------------------------- 서버 측 세션 레지스트리 (2026-09-15)
+class SessionRegistry:
+    """로그인 세션(쿠키 id) 을 data/sessions.json 에 기억한다. server.json sessions: enforce(검사 여부)·max_per_user(초과 시 가장 오래된 세션 만료)·idle_timeout_min.
+    enforce=False 여도 목록은 기록되어 admin 이 누가 언제 어디서 로그인했는지 볼 수 있다(강제 로그아웃은 enforce=True 일 때만 효력)."""
+
+    def __init__(self, path: str, cfg: Optional[Dict[str, Any]] = None):
+        self.path = path
+        self.cfg = dict(cfg or {})
+        self._lock = threading.Lock()
+        self._data: Dict[str, Dict[str, Any]] = {}
+        self._loaded = False
+
+    @property
+    def enforce(self) -> bool:
+        return bool(self.cfg.get("enforce"))
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            self._data = atomicio.read_json(self.path, {}) or {}
+        except Exception:
+            self._data = {}
+
+    def _save(self) -> None:
+        try:
+            atomicio.write_json(self.path, self._data, indent=None)
+        except Exception:
+            pass
+
+    def _expire(self, now: float) -> None:
+        idle = float(self.cfg.get("idle_timeout_min") or 0) * 60
+        for sid in [k for k, v in self._data.items() if (v.get("exp") and now > float(v["exp"])) or (idle and now - float(v.get("last_seen") or 0) > idle)]:
+            self._data.pop(sid, None)
+
+    def register(self, sid: str, user: "User", ip: str, agent: str, hours: float) -> None:
+        with self._lock:
+            self._load()
+            now = time.time()
+            self._expire(now)
+            self._data[sid] = {"sid": sid, "user": user.name, "role": user.role, "via": user.via, "ip": ip, "agent": (agent or "")[:120],
+                               "created": now, "last_seen": now, "exp": now + hours * 3600}
+            mx = int(self.cfg.get("max_per_user") or 0)
+            if mx > 0:
+                mine = sorted([v for v in self._data.values() if v["user"] == user.name], key=lambda v: v["created"])
+                for v in mine[:-mx]:
+                    self._data.pop(v["sid"], None)
+            self._save()
+
+    def touch(self, sid: str) -> bool:
+        with self._lock:
+            self._load()
+            v = self._data.get(sid)
+            if not v:
+                return False
+            now = time.time()
+            idle = float(self.cfg.get("idle_timeout_min") or 0) * 60
+            if (v.get("exp") and now > float(v["exp"])) or (idle and now - float(v.get("last_seen") or 0) > idle):
+                self._data.pop(sid, None)
+                self._save()
+                return False
+            if now - float(v.get("last_seen") or 0) > 30:
+                v["last_seen"] = now
+                self._save()
+            return True
+
+    def revoke(self, sid: str) -> bool:
+        with self._lock:
+            self._load()
+            ok = self._data.pop(sid, None) is not None
+            if ok:
+                self._save()
+            return ok
+
+    def revoke_user(self, user: str) -> int:
+        with self._lock:
+            self._load()
+            sids = [k for k, v in self._data.items() if v.get("user") == user]
+            for k in sids:
+                self._data.pop(k, None)
+            if sids:
+                self._save()
+            return len(sids)
+
+    def list(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            self._load()
+            self._expire(time.time())
+            return sorted(self._data.values(), key=lambda v: v.get("last_seen") or 0, reverse=True)
+
+
+_SESSIONS: Optional[SessionRegistry] = None
+
+
+def sessions() -> SessionRegistry:
+    """전역 세션 레지스트리 (server.json sessions 설정, data/sessions.json)."""
+    global _SESSIONS
+    if _SESSIONS is None:
+        cfg: Dict[str, Any] = {}
+        try:
+            from . import reqmgr as _rq
+            cfg = dict((_rq.load_config().get("sessions") or {}))
+        except Exception:
+            pass
+        data_dir = os.path.join(ROOT, "data")
+        try:
+            from .config import load_settings
+            data_dir = load_settings().data_dir
+        except Exception:
+            pass
+        _SESSIONS = SessionRegistry(os.path.join(data_dir, "sessions.json"), cfg)
+    return _SESSIONS
+
+
+def reset_sessions() -> None:
+    global _SESSIONS
+    _SESSIONS = None
 
 
 def write_audit(user: Optional[User], op: str, level: str, ok: bool, ip: str = "", detail: Any = None, error: str = "") -> None:

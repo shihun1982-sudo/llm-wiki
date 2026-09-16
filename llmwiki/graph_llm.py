@@ -18,10 +18,11 @@ def SUMMARY_SYSTEM() -> str:   # prompts/summarize.md
     return _prompts.get("summarize")
 
 
-def llm_extract(llm: BaseLLM, text: str, heading: str, known: List[str], effort: str = "low", n_known: int = 60) -> Optional[Dict[str, Any]]:
+def llm_extract(llm: BaseLLM, text: str, heading: str, known: List[str], effort: str = "low", n_known: int = 60,
+                max_tokens: int = 4000) -> Optional[Dict[str, Any]]:
     user = "## 섹션: %s\n\n## 이미 알려진 엔티티\n%s\n\n## 텍스트\n%s" % (heading, ", ".join(known[:n_known]) or "(없음)", text)
     try:
-        r = llm.complete(EXTRACT_SYSTEM(), user, max_tokens=4000, effort=effort, json_mode=True)
+        r = llm.complete(EXTRACT_SYSTEM(), user, max_tokens=max_tokens, effort=effort, json_mode=True)
     except LLMError:
         return None
     data = parse_json(r["text"])
@@ -35,7 +36,7 @@ def llm_extract(llm: BaseLLM, text: str, heading: str, known: List[str], effort:
 
 
 def llm_summarize_community(llm: BaseLLM, entities: List[Dict[str, Any]], relations: List[Dict[str, Any]],
-                            effort: str = "low") -> str:
+                            effort: str = "low", max_tokens: int = 800) -> str:
     lines = ["엔티티:"]
     for e in entities[:40]:
         lines.append("- %s (%s) %s" % (e["name"], e["type"], (e.get("description") or "")[:80]))
@@ -43,6 +44,6 @@ def llm_summarize_community(llm: BaseLLM, entities: List[Dict[str, Any]], relati
     for r in relations[:60]:
         lines.append("- %s -[%s]-> %s : %s" % (r["src"], r["rel"], r["dst"], (r.get("description") or "")[:80]))
     try:
-        return llm.complete(SUMMARY_SYSTEM(), "\n".join(lines), max_tokens=800, effort=effort)["text"].strip()
+        return llm.complete(SUMMARY_SYSTEM(), "\n".join(lines), max_tokens=max_tokens, effort=effort)["text"].strip()
     except LLMError:
         return ""

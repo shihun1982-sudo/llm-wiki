@@ -1,4 +1,4 @@
-/* Corpus — 빌드/상태/health/verify, 임베딩 coverage/precompute, 문서 계약 lint, MCP 소스. */
+﻿/* Corpus — 빌드/상태/health/verify, 임베딩 coverage/precompute, 문서 계약 lint, MCP 소스. */
 (function (LW) {
   'use strict';
   const { $, $$, esc, fmt, fmtK, dt, api, toast, STATE, overrides, renderTrace, pollJob, switchTab, switchGroup, loadStatus, loaders } = LW;
@@ -14,6 +14,40 @@
     $('#build-alerts').innerHTML = alertsHtml(lb.alerts);
     return s;
   }
+  // ---- 서버에서 진행 중인 작업 (CLI 빌드 · 스케줄러 · 다른 사용자) ----
+  // 브라우저에서 시작한 job 은 pollJob 이 그리지만, CLI(`python -m llmwiki build`)나 스케줄러가 돌리는 빌드는
+  // 프로세스가 달라서 job 목록에 없다. /api/activity 가 data/live 의 외부 작업까지 합쳐 주므로 그것을 그린다.
+  function extRow(r) {
+    const pct = r.pct == null ? '' : `<div class="progress"><i style="width:${Math.max(0, Math.min(100, r.pct))}%"></i><span>${fmt(r.pct, 0)}%${r.eta_s ? ' · 남은 시간 ≈ ' + LW.fmtS(r.eta_s) : ''}</span></div>`;
+    const llm = r.llm && r.llm.active ? `<span class="pill warn">LLM 응답 대기 ${esc(r.llm.provider || '')}/${esc(r.llm.model || '')} ${LW.fmtS(r.llm.elapsed_s)}</span>` : '';
+    const who = [r.user, r.origin, r.host && r.host !== '' ? r.host : null, r.pid ? 'pid ' + r.pid : null].filter(Boolean).join(' · ');
+    const can = (STATE.auth && STATE.auth.user && (STATE.auth.user.role === 'admin' || STATE.auth.user.name === r.user));
+    return `<div class="live"><div class="live-head"><span class="spin"></span><b>${esc(r.kind || '작업')}: ${esc(r.label || '')}</b> ` +
+      `<span class="muted small">${esc(r.stage || '')}${r.path && r.path.length ? ' (' + esc(r.path.join(' › ')) + ')' : ''} · ${LW.fmtS(r.elapsed_s)}</span> ${llm}` +
+      `<span class="muted small"> — ${esc(who)}</span>` +
+      (can && !r.cancel_requested ? `<button class="mini danger" data-xcancel="${esc(r.token)}">■ 중지</button>` : (r.cancel_requested ? '<span class="pill warn">중지 중</span>' : '')) +
+      `</div>${pct}${(r.log && r.log.length) ? `<div class="live-log muted small">${esc(r.log.slice(-5).join('\n'))}</div>` : ''}</div>`;
+  }
+  // 공용 활동 피드(core.js LW.onActivity)가 주는 데이터로 그린다 — 탭마다 따로 폴링하면
+  // 브라우저의 동시 연결 6개를 금방 다 써서 갱신이 밀린다.
+  function renderExternal(j) {
+    const box = $('#build-external');
+    if (!box) return;
+    if (!LW.tabVisible('build')) { box.classList.add('hidden'); return; }
+    if (!j || j.error) { box.classList.add('hidden'); return; }
+    const rows = (j.running || []).concat(j.external || [], j.queued || [])
+      // 이 브라우저가 이미 위쪽 진행 패널로 보여 주고 있는 job 은 제외 (같은 작업이 두 번 보이지 않게)
+      .filter((r) => !LW.myJobs.has(r.token))
+      .filter((r) => ['build', 'schedule', 'job', 'eval', 'trial', 'precompute'].indexOf(r.kind) >= 0 || r.weight === 'exclusive' || r.weight === 'soft' || r.external);
+    if (!rows.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
+    box.innerHTML = '<h3>서버에서 진행 중 <small class="muted">이 브라우저에서 시작하지 않은 작업(CLI · 스케줄러 · 다른 사용자)도 표시됩니다</small></h3>' + rows.map(extRow).join('');
+    $$('#build-external [data-xcancel]').forEach((b) => b.onclick = async () => { b.disabled = true; await LW.cancelToken(b.dataset.xcancel, 'build tab'); setTimeout(LW.refreshActivity, 800); });
+  }
+  LW.onActivity(renderExternal);
+  const loadExternal = () => LW.refreshActivity();
+  const extAuto = () => {};            // 자동 갱신은 공용 피드가 맡는다
+  LW.loadExternalWork = loadExternal;
   function channelsSelected() { const c = []; ['fts', 'vector', 'graph'].forEach((k) => { const el = $('#bc-' + k); if (el && el.checked) c.push(k); }); return c; }
   async function runBuild(full, reset, channel, channelFull) {
     $('#build-log').textContent = '작업 요청 중…'; $('#build-result').innerHTML = ''; $('#build-trace').innerHTML = '';
@@ -65,7 +99,7 @@
     $$('#docs a').forEach((a) => a.onclick = async (e) => { e.preventDefault(); const ch = await api('/api/doc_chunks?id=' + encodeURIComponent(a.dataset.doc)); $('#console-out').textContent = ch.map((c) => `--- ${c.chunk_id} | ${c.heading}\n${c.text}\n`).join('\n'); switchGroup('observability'); switchTab('console'); });
   }
   $('#docs-filter').addEventListener('input', renderDocs);
-  loaders.build = loadDocs;
+  loaders.build = () => { loadDocs(); loadExternal(); extAuto(true); };
 
   // ---------------- EMBED ----------------
   async function loadEmbed() {

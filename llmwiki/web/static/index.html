@@ -15,8 +15,17 @@
   <div id="provider-badge" class="badge">providers: …</div>
   <div id="stats-badge" class="badge">index: …</div>
   <div id="watch-badge" class="badge">auto-build: …</div>
+  <div id="server-badge" class="badge" title="서버 동시 실행/대기 — 클릭하면 서버 모니터">서버: …</div>
   <div id="alert-badge" class="badge hidden" title="마지막 빌드 알림">alerts</div>
   <div id="user-badge" class="badge" title="로그인 사용자 · 역할">…</div>
+  <label class="badge preview-pick" title="다른 권한에서 화면이 어떻게 보이는지 확인합니다. 권한을 낮추기만 하며, 해제하면 원래대로 돌아옵니다">👁 권한 보기
+    <select id="preview-role"><option value="">내 권한</option><option value="viewer">viewer</option><option value="class3">class3</option><option value="class2">class2</option><option value="class1">class1</option><option value="builder">builder</option></select>
+  </label>
+  <!-- 항상 보이는 서버 활동 표시기: 동시 실행 슬롯을 칸으로, 내 요청은 초록으로. 클릭하면 진행 중 작업 -->
+  <a id="hud" class="hud" href="#observability/activity" title="서버 활동 — 클릭하면 진행 중 작업">
+    <span class="hud-bars" id="hud-bars"></span>
+    <span class="hud-txt" id="hud-txt">·</span>
+  </a>
   <label class="theme">테마 <select id="theme-select"></select></label>
 </header>
 
@@ -37,8 +46,14 @@
       <datalist id="dl-llm-models"></datalist>
     </div>
     <div class="toggle-group">
-      <button id="btn-save-config" class="secondary">토글을 config.json 에 저장</button>
       <button id="btn-reset-toggles" class="secondary">config 값으로 되돌리기</button>
+      <div class="muted small">토글은 <b>이번 요청에만</b> 적용됩니다. 서버 기본값을 바꾸려면 Settings › config.json (admin).</div>
+      <div class="row" style="margin-top:6px">
+        <button id="btn-profile-save" class="secondary mini" title="지금의 토글·프리셋·모델 오버라이드·테마·고정 탭을 내 계정에 저장합니다 (서버 설정은 바뀌지 않습니다)">💾 내 설정 저장</button>
+        <button id="btn-profile-load" class="secondary mini" title="저장해 둔 내 설정을 불러옵니다">↺ 불러오기</button>
+        <button id="btn-profile-reset" class="secondary mini" title="저장한 내 설정을 지웁니다">✕</button>
+      </div>
+      <div id="profile-msg" class="muted small"></div>
     </div>
     <div class="cli-hint"><div class="tg-title">CLI 동등 명령</div><code id="cli-equiv">python -m llmwiki …</code></div>
   </aside>
@@ -53,13 +68,26 @@
       <button data-group="settings">⚙ Settings</button>
       <button data-group="observability">🩺 Observability</button>
     </nav>
+    <div class="pin-bar">
+      <button id="btn-pin-tab" class="mini secondary" title="지금 보고 있는 탭을 아래에 고정합니다. 고정하면 다른 탭으로 이동해도 계속 보입니다 (서버 모니터·로그를 켜 두고 질의하기)">📌 이 탭 고정</button>
+      <span class="pin-seg" id="pin-cols" title="고정한 탭을 몇 열로 늘어놓을지 고릅니다. 자동은 창 너비에 맞춰 늘어납니다">
+        <span class="seg-label">열</span>
+        <button data-cols="auto" class="active">자동</button><button data-cols="1">1</button><button data-cols="2">2</button><button data-cols="3">3</button><button data-cols="4">4</button>
+      </span>
+      <span class="pin-seg" id="pin-height" title="고정 패널 하나의 높이. 낮게 잡으면 여러 개를 한눈에 봅니다">
+        <span class="seg-label">높이</span>
+        <button data-h="s">낮게</button><button data-h="m" class="active">보통</button><button data-h="l">높게</button><button data-h="auto">자유</button>
+      </span>
+      <span id="tabpin-list" class="pin-list"></span>
+      <button id="btn-pin-clear" class="mini secondary hidden" title="고정한 탭을 모두 해제합니다">모두 해제</button>
+    </div>
     <nav class="tabs" data-group="ask"><button data-tab="query" class="active">질의 · 답변</button><button data-tab="search">채널 디버그</button></nav>
     <nav class="tabs hidden" data-group="corpus"><button data-tab="build">빌드 · 상태</button><button data-tab="embed">임베딩 · coverage</button><button data-tab="contract">문서 계약 · lint</button><button data-tab="sources">MCP 소스</button></nav>
     <nav class="tabs hidden" data-group="knowledge"><button data-tab="graph">그래프</button><button data-tab="wiki">위키</button><button data-tab="rules">그래프 규칙</button></nav>
     <nav class="tabs hidden" data-group="quality"><button data-tab="trials">Trial 비교</button><button data-tab="eval">평가</button><button data-tab="forensics">포렌식</button></nav>
     <nav class="tabs hidden" data-group="evolve"><button data-tab="evolve">제안 (HITL)</button><button data-tab="memory">메모리</button></nav>
-    <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="config">config.json</button><button data-tab="security">보안 · 사용자</button></nav>
-    <nav class="tabs hidden" data-group="observability"><button data-tab="requests">요청 프로파일</button><button data-tab="logs">로그</button><button data-tab="arch">구조 · 흐름</button><button data-tab="system">시스템 · 규모</button><button data-tab="qlog">질의 로그</button><button data-tab="console">콘솔 (CLI)</button></nav>
+    <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="schedule">스케줄</button><button data-tab="config">config.json</button><button data-tab="security">보안 · 사용자</button></nav>
+    <nav class="tabs hidden" data-group="observability"><button data-tab="requests">요청 프로파일</button><button data-tab="activity">진행 중 작업</button><button data-tab="server">서버 모니터</button><button data-tab="logs">로그</button><button data-tab="arch">구조 · 흐름</button><button data-tab="system">시스템 · 규모</button><button data-tab="qlog">질의 로그</button><button data-tab="console">콘솔 (CLI)</button></nav>
 
     <!-- ================= ASK ================= -->
     <section id="tab-query" class="tab active">
@@ -70,6 +98,8 @@
         <label class="inline"><input type="checkbox" id="q-log" checked> 로그/자가진화 기록</label>
       </div>
       <div class="samples" id="samples"></div>
+      <!-- 지금 서버에서 실행·대기 중인 요청 한 줄 요약 (질의하면서 서버 상태를 같이 본다) -->
+      <div id="q-queue" class="queue-strip hidden"></div>
       <div id="q-live" class="live hidden"></div>
       <div id="query-out" class="hidden">
         <div class="statrow" id="q-stats"></div>
@@ -156,6 +186,8 @@
       </div>
       <div class="muted small">코퍼스: <code id="corpus-dirs"></code> · 스케줄: OS 스케줄러(작업 스케줄러/cron)에서 <code>python -m llmwiki build</code> 호출 권장 (setup/schedule_build.ps1). 서버 워처는 Observability › 시스템.</div>
       <div id="build-status" class="statrow"></div>
+      <!-- 다른 곳(CLI·스케줄러·다른 사용자)에서 돌고 있는 작업도 여기서 보인다 (2026-09-15) -->
+      <div id="build-external" class="hidden"></div>
       <div id="build-alerts"></div>
       <div id="build-live" class="live hidden"></div>
       <pre id="build-log" class="log"></pre>
@@ -254,7 +286,7 @@
     </section>
 
     <section id="tab-forensics" class="tab">
-      <div class="row"><button id="btn-fx-refresh" class="secondary">새로고침</button><input id="fx-req" type="number" placeholder="request id" style="width:110px"><button id="btn-fx-run" class="secondary">진단 실행</button><button id="btn-fx-llm" class="secondary">LLM 소견 추가</button><button id="btn-fx-consolidate" class="secondary">누적 소견 → 제안 (consolidate)</button></div>
+      <div class="row"><button id="btn-fx-refresh" class="secondary">새로고침</button><input id="fx-req" type="number" placeholder="request id (비우면 선택한 행)" title="비워 두면 아래 목록에서 고른 행, 없으면 마지막 질의를 씁니다" style="width:180px"><button id="btn-fx-run" class="secondary" title="그 요청의 검색·근거·답변을 같은 설정으로 다시 돌려 어디가 문제였는지 진단합니다">진단 실행</button><button id="btn-fx-llm" class="secondary">LLM 소견 추가</button><button id="btn-fx-consolidate" class="secondary">누적 소견 → 제안 (consolidate)</button></div>
       <div class="row"><span class="muted small">🎯 기대 결과 포렌식 (request id 기준):</span><input id="fx-docs" type="text" placeholder="기대 문서 ID (쉼표)" style="max-width:220px"><input id="fx-terms" type="text" placeholder="기대 용어 (쉼표)" style="max-width:200px"><input id="fx-note" type="text" placeholder="메모" style="max-width:200px"><label class="inline"><input type="checkbox" id="fx-propose"> 제안 등록</label><button id="btn-fx-expect" class="secondary">기대 결과 분석</button></div>
       <div id="fx-summary" class="statrow"></div>
       <div class="cols"><div class="col narrow-wide"><div id="fx-list"></div></div><div class="col wide"><div id="fx-detail" class="muted">목록에서 선택하거나 request id 로 진단하세요.</div></div></div>
@@ -314,12 +346,27 @@
           <div class="muted small" id="models-note"></div>
         </div>
         <div class="col wide">
-          <h3>역할별 LLM <small class="muted">비우면 전역값 상속 · provider 에 headless:&lt;agent&gt; 지정 가능</small></h3>
+          <h3>역할별 LLM <small class="muted">비우면 전역값 상속 · provider 에 headless:&lt;agent&gt; 지정 가능 · 모델은 models.json 카탈로그에서 선택</small>
+            <label class="inline" style="float:right"><input type="checkbox" id="roles-show-policy"> 재시도·타임아웃 열 보기</label></h3>
           <div id="roles-table"></div>
           <h3>연결 테스트 결과</h3>
           <div id="models-test" class="small"></div>
+          <h3>사용 가능한 모델 카탈로그 <small class="muted">models.json — 여기 있는 모델이 위 드롭다운에 나옵니다</small>
+            <button class="mini secondary" id="btn-cat-refresh">새로고침</button>
+            <button class="mini secondary" id="btn-cat-discover" title="Ollama·OpenAI 호환 서버가 실제로 제공하는 모델을 조회합니다">서버에서 조회</button>
+          </h3>
+          <div class="row">
+            <input id="cat-id" type="text" placeholder="모델 id (예 qwen2.5:14b)" style="width:200px">
+            <select id="cat-provider"></select>
+            <input id="cat-label" type="text" placeholder="표시 이름" style="width:160px">
+            <input id="cat-roles" type="text" placeholder="역할 (비우면 전체): answer,rerank" style="width:180px">
+            <label class="inline"><input type="checkbox" id="cat-embed"> 임베딩</label>
+            <button class="mini" id="btn-cat-add">추가</button>
+          </div>
+          <div id="cat-table"></div>
+          <div id="cat-discover" class="small"></div>
           <h3>Headless agents (agents.json) <button class="mini secondary" id="btn-agents-save">저장</button></h3>
-          <textarea id="agents-json" spellcheck="false" style="min-height:220px"></textarea>
+          <textarea id="agents-json" spellcheck="false" style="min-height:180px"></textarea>
         </div>
       </div>
     </section>
@@ -380,6 +427,40 @@
       </div>
     </section>
 
+    <!-- 스케줄: 정해진 시각/간격마다 빌드·URL 수집·스크립트·질의·LLM 호출 (schedule.json) -->
+    <section id="tab-schedule" class="tab">
+      <div class="row">
+        <button id="btn-sch-refresh" class="secondary">새로고침</button>
+        <button id="btn-sch-add">+ 작업 추가</button>
+        <span class="muted small">서버(serve)가 실행 중일 때 동작합니다. 파일: <code id="sch-path"></code> · CLI: <code>python -m llmwiki schedule list|run &lt;name&gt;|validate</code> · 설명: docs/SCHEDULER.md</span>
+      </div>
+      <div id="sch-msg" class="muted small"></div>
+      <div id="sch-table"></div>
+      <div id="sch-editor" class="form hidden">
+        <h3 id="sch-editor-title">작업 편집</h3>
+        <div class="row">
+          <label>이름 <input id="sch-name" type="text" placeholder="nightly-build" style="width:160px"></label>
+          <label class="inline"><input type="checkbox" id="sch-enabled" checked> 사용</label>
+          <label>실행 시점
+            <select id="sch-when-kind"><option value="every">간격 (every)</option><option value="at">매일/요일 시각 (at)</option><option value="cron">cron</option></select>
+          </label>
+          <span id="sch-when-every"><input id="sch-every" type="text" value="1h" placeholder="30s | 10m | 2h | 1d" style="width:110px"></span>
+          <span id="sch-when-at" class="hidden"><input id="sch-at" type="text" value="03:00" placeholder="HH:MM" style="width:80px"> <input id="sch-days" type="text" placeholder="mon,tue,… (비우면 매일)" style="width:180px"></span>
+          <span id="sch-when-cron" class="hidden"><input id="sch-cron" type="text" value="0 3 * * *" placeholder="분 시 일 월 요일" style="width:150px"></span>
+        </div>
+        <div class="row">
+          <label>동작 <select id="sch-type"></select></label>
+          <label>시간 제한(초) <input id="sch-timeout" type="number" value="0" style="width:90px" title="0 = 없음. 넘으면 자동 중지"></label>
+          <label>겹치면 <select id="sch-overlap"><option value="skip">건너뛰기</option><option value="queue">대기</option></select></label>
+        </div>
+        <div id="sch-type-help" class="muted small"></div>
+        <label>동작 설정 (JSON) <textarea id="sch-action" spellcheck="false" style="min-height:120px"></textarea></label>
+        <div class="row"><button id="btn-sch-save">저장</button><button id="btn-sch-cancel" class="secondary">취소</button><button id="btn-sch-test" class="secondary" title="지금 한 번 실행합니다">지금 실행</button></div>
+      </div>
+      <h3>실행 이력</h3>
+      <div id="sch-history"></div>
+    </section>
+
     <section id="tab-config" class="tab">
       <div class="row"><button id="btn-config-save">저장 &amp; 프로바이더 재로드</button><button id="btn-config-reload" class="secondary">다시 읽기</button><button id="btn-config-effective" class="secondary">유효 설정 (출처)</button><span id="config-msg" class="muted"></span></div>
       <div id="config-effective" class="hidden"></div>
@@ -428,6 +509,67 @@
       <div class="cols">
         <div class="col narrow-wide"><div id="req-list"></div></div>
         <div class="col wide"><div id="req-inspector" class="muted">왼쪽 목록에서 요청을 선택하세요.</div></div>
+      </div>
+    </section>
+
+    <!-- 진행 중 작업: viewer 도 볼 수 있다 (server.json monitor.viewer_can_see_activity) -->
+    <section id="tab-activity" class="tab">
+      <div class="row">
+        <span class="pin-seg" id="act-view" title="보드는 한 줄씩 압축해 보여 주고, 표는 토큰·IP 까지 모두 보여 줍니다">
+          <span class="seg-label">보기</span><button data-v="board" class="active">보드</button><button data-v="table">표</button>
+        </span>
+        <button id="btn-act-refresh" class="secondary">새로고침</button>
+        <label class="inline"><input type="checkbox" id="act-auto" checked> 2초마다 자동 갱신</label>
+        <label class="inline"><input type="checkbox" id="act-mine"> 내 요청만</label>
+        <span class="muted small">서버에서 지금 실행·대기 중인 요청(Web · MCP · CLI · 스케줄러)과 최근 완료. 자기 요청은 누구나, 다른 사용자의 요청은 admin 이 중지할 수 있습니다.</span>
+      </div>
+      <!-- 용량 게이지: 동시 실행 슬롯이 몇 칸 찼는지 · 대기열 · 락 상태를 한눈에 -->
+      <div id="act-gauge" class="act-gauge"></div>
+      <!-- 보드: 실행 중 / 대기 / 외부(CLI·MCP) 를 한 줄씩 압축해 쭉 나열 (넘치면 스크롤) -->
+      <div id="act-board" class="act-board"></div>
+      <div id="act-summary" class="statrow hidden"></div>
+      <div id="act-running" class="hidden"></div>
+      <h3>최근 완료</h3>
+      <div id="act-recent-board" class="act-board recent"></div>
+      <div id="act-recent" class="hidden"></div>
+    </section>
+
+    <!-- 서버 모니터 (admin): 동시성·속도 제한·차단·세션·회로 차단 -->
+    <section id="tab-server" class="tab">
+      <div class="row">
+        <button id="btn-srv-refresh" class="secondary">새로고침</button>
+        <label class="inline"><input type="checkbox" id="srv-auto" checked> 자동 갱신(3초)</label>
+        <button id="btn-srv-maint" class="secondary" title="점검 모드: admin 외의 요청을 503 으로 돌려보냅니다">점검 모드 전환</button>
+        <label>로그 레벨 <select id="srv-loglevel"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></label>
+        <button id="btn-srv-loglevel" class="secondary mini">적용(이번 실행)</button>
+        <span class="muted small">설정 파일: <code id="srv-path"></code> · CLI: <code>python -m llmwiki server status|limits set …|block|kick|circuits</code></span>
+      </div>
+      <div id="srv-msg" class="muted small"></div>
+      <div id="srv-overview" class="statrow"></div>
+      <div class="cols">
+        <div class="col">
+          <h3>클라이언트 (사용자 · IP)</h3>
+          <div id="srv-clients"></div>
+          <h3>지연 · 처리량</h3>
+          <div id="srv-latency"></div>
+          <h3>LLM 회로 차단 <small class="muted">연속 실패한 provider/model 을 잠시 건너뜀</small></h3>
+          <div id="srv-circuits"></div>
+          <div class="row"><button id="btn-srv-circuit-reset" class="secondary mini">회로 초기화</button></div>
+          <h3>로그인 세션</h3>
+          <div id="srv-sessions"></div>
+        </div>
+        <div class="col">
+          <h3>동시성 · 대기열 · 속도 제한 <small class="muted">저장 시 server.json</small></h3>
+          <div class="form" id="srv-limits"></div>
+          <div class="row"><button id="btn-srv-save">제한 저장</button><button id="btn-srv-reload" class="secondary">파일에서 다시 읽기</button></div>
+          <h3>차단 목록</h3>
+          <div class="row">
+            <select id="srv-block-kind"><option value="ip">IP 차단</option><option value="user">사용자 차단</option><option value="allow_ip">허용 IP만</option></select>
+            <input id="srv-block-value" type="text" placeholder="10.1.2.3 또는 10.1.2. 또는 user-id" style="width:200px">
+            <button id="btn-srv-block" class="secondary">추가</button>
+          </div>
+          <div id="srv-blocks" class="kv"></div>
+        </div>
       </div>
     </section>
 
@@ -513,6 +655,8 @@
       <div class="samples" id="console-samples"></div>
       <pre id="console-out" class="log tall"></pre>
     </section>
+    <!-- 고정한 탭들이 여기에 쌓인다 (복수 메뉴 동시 보기) -->
+    <div id="pinned-pane"></div>
   </main>
 </div>
 <div id="toast"></div>

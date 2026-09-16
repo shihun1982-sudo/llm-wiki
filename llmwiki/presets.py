@@ -12,6 +12,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from . import atomicio
 from .config import Settings, Toggles, apply_overrides, save_settings, path_for
 from . import tuning as _tuning
 
@@ -73,8 +74,9 @@ def load_presets() -> Dict[str, Dict[str, Any]]:
     if not os.path.exists(p):
         save_presets(DEFAULT_PRESETS)
         return json.loads(json.dumps(DEFAULT_PRESETS))
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = atomicio.read_json(p)
+    if not isinstance(data, dict):
+        return json.loads(json.dumps(DEFAULT_PRESETS))
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
@@ -83,9 +85,7 @@ def save_presets(data: Dict[str, Dict[str, Any]]) -> str:
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     out = {"_comment": "설정 프리셋. toggles/tuning/settings 를 묶어 `preset apply <name>` 또는 --preset 으로 적용. 새 프리셋은 항목 추가."}
     out.update(data)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
-    return p
+    return atomicio.write_json(p, out)
 
 
 def _known_toggles(t: Dict[str, Any]) -> Dict[str, Any]:

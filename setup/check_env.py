@@ -22,12 +22,28 @@ def line(status: str, msg: str, hint: str = "") -> None:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
+    try:
+        from llmwiki import console as _console
+        _console.setup()
+    except Exception:
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     problems = 0
+    # ---- 터미널 인코딩 (다른 환경에서 한글 깨짐의 가장 흔한 원인) ----
+    try:
+        from llmwiki import console as _c
+        cd = _c.describe()
+        line(OK if cd.get("safe") else WARN,
+             "터미널 출력: stdout=%s · 로캘=%s%s · %s · mode=%s" % (
+                 cd.get("stdout_encoding"), cd.get("locale_encoding"),
+                 (" · 콘솔 코드페이지=%s" % cd["codepage_now"]) if cd.get("codepage_now") else "",
+                 "콘솔" if cd.get("console") else "리디렉션(파일/파이프)", cd.get("mode")),
+             "" if cd.get("safe") else "한글/기호를 출력할 수 없습니다 → config.json console_encoding=utf-8, Windows 는 chcp 65001, Linux 는 LANG=C.UTF-8")
+    except Exception as e:
+        line(WARN, "터미널 인코딩 점검 실패: %s" % str(e)[:120])
     v = sys.version_info
     if v >= (3, 11):
         line(OK, "Python %d.%d.%d" % v[:3])
@@ -85,9 +101,34 @@ def main() -> int:
         line(OK, "serve 기본 %s:%s · mcp 기본 %s (http %s:%s)%s" % (s.web_host, s.web_port, s.mcp_transport, s.mcp_host, s.mcp_port,
              (" · 브리지 대상 " + (os.environ.get("LLMWIKI_MCP_URL") or s.mcp_url)) if (os.environ.get("LLMWIKI_MCP_URL") or s.mcp_url) else ""),
              "config.json web_host/web_port/mcp_* 또는 serve --host/--port 로 변경")
-        line(OK, "LLM 재시도: llm_timeout=%ss llm_retries=%s backoff=%ss (headless 는 agents.json 우선)" % (s.llm_timeout, s.llm_retries, s.llm_retry_backoff_s))
+        line(OK, "LLM 재시도(전역): timeout=%ss retries=%s backoff=%s %ss(max %ss) budget=%ss 회로차단 %s회/%ss (headless 는 agents.json, 역할별은 llm_roles 가 우선)" % (
+            s.llm_timeout, s.llm_retries, s.llm_retry_backoff, s.llm_retry_backoff_s, s.llm_retry_backoff_max_s, s.llm_budget_s or 0,
+            s.llm_circuit_failures, s.llm_circuit_cooldown_s))
+        # ---- 다중 사용자 동시성·스케줄·모델 카탈로그 (2026-09-15 기능) ----
+        from llmwiki import reqmgr as _rq
+        sp = _rq.server_path()
+        rcfg = _rq.load_config(sp)
+        c, rl = rcfg["concurrency"], rcfg["rate_limit"]
+        line(OK if os.path.exists(sp) else WARN, "server.json %s — 동시 읽기 %s · 사용자당 %s · 대기열 %s(%ss) · 빌드 중 질의 %s · 분당 %s/%s(질의 %s) · 점검모드 %s" % (
+            "있음" if os.path.exists(sp) else "없음(기본값 사용)", c["max_parallel_reads"], c["max_parallel_per_user"], c["queue_max"], c["queue_timeout_s"],
+            c["reads_during_build"], rl["per_user_per_min"], rl["per_ip_per_min"], rl["query_per_user_per_min"], (rcfg["access"] or {}).get("maintenance_mode")),
+            "" if os.path.exists(sp) else "copy setup\\server.example.json server.json (docs/CONCURRENCY.md)")
+        line(OK, "SQLite 동시성: db_pool_size=%s busy_timeout=%ss WAL" % (s.db_pool_size, s.db_busy_timeout_s))
+        from llmwiki import scheduler as _sc
+        tasks = _sc.list_tasks_static()
+        bad = [t for t in tasks if t.get("invalid")]
+        en = [t for t in tasks if t.get("enabled", True) and not t.get("invalid")]
+        line(FAIL if bad else OK, "schedule.json 작업 %d개 (활성 %d)%s" % (len(tasks) - len(bad), len(en), (" · 설정 오류 %d: %s" % (len(bad), bad[0].get("invalid"))) if bad else ""),
+             "python -m llmwiki schedule validate" if bad else "")
+        if bad:
+            problems += 1
+        from llmwiki import models_catalog as _mc
+        d = _mc.describe(s)
+        line(WARN if d["unknown_in_use"] else OK, "models.json 카탈로그 %d개 (임베딩 %d)%s" % (len(d["models"]), len(d["embed"]),
+             (" · 카탈로그에 없는 설정: " + ", ".join("%s=%s" % (u["role"], u["model"]) for u in d["unknown_in_use"])) if d["unknown_in_use"] else ""),
+             "models catalog add <id> --provider <p>" if d["unknown_in_use"] else "")
     except Exception as e:
-        line(WARN, "security/agents 점검 실패: %s" % str(e)[:120])
+        line(WARN, "security/agents/server/schedule 점검 실패: %s" % str(e)[:200])
     for d in s.corpus_dirs:
         if os.path.isdir(d):
             n = sum(len([f for f in fs if f.lower().endswith((".md", ".txt", ".html", ".htm", ".pdf"))]) for _, _, fs in os.walk(d))

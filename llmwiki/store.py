@@ -5,9 +5,11 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -42,6 +44,9 @@ CREATE TABLE IF NOT EXISTS relations (
 );
 CREATE INDEX IF NOT EXISTS idx_rel_src ON relations(src);
 CREATE INDEX IF NOT EXISTS idx_rel_dst ON relations(dst);
+-- 문서를 다시 색인할 때 그 문서의 관계를 지운다. 이 인덱스가 없으면 청크마다 relations 전체를 훑어
+-- 빌드가 청크 수의 제곱에 비례해 느려진다 (2026-09-15 측정).
+CREATE INDEX IF NOT EXISTS idx_rel_chunk ON relations(chunk_id);
 CREATE TABLE IF NOT EXISTS mentions (
   entity_id TEXT, chunk_id TEXT, doc_id TEXT, count INTEGER, source TEXT,
   PRIMARY KEY (entity_id, chunk_id)
@@ -122,18 +127,90 @@ MIGRATIONS = [
 
 
 class Store:
-    def __init__(self, path: str):
+    """SQLite 저장소.
+
+    병렬 처리(2026-09-15): 연결은 스레드마다 따로 쓴다.
+    - `conn` 은 현재 스레드가 session() 으로 빌린 연결(없으면 생성 스레드의 기본 연결)을 돌려준다. 같은 연결을 두 스레드가 나눠 쓰면
+      한 스레드의 commit 이 다른 스레드의 반쯤 쓴 트랜잭션을 확정하는 사고가 나므로, 서버는 모든 요청·잡·워처를 `with store.session():` 로 감싼다.
+    - WAL 모드라 여러 읽기 연결이 쓰기 연결과 동시에 동작하고, 쓰기끼리는 SQLite 의 busy_timeout 만큼 기다린다 (config db_busy_timeout_s).
+    - 벡터 행렬·엔티티 인덱스·doc_meta 캐시는 인스턴스 하나에 공유되며(읽기 전용 numpy), 적재는 락으로 한 번만 한다.
+    """
+
+    def __init__(self, path: str, busy_timeout_s: float = 30.0, pool_size: int = 16):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.path = path
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.executescript(SCHEMA)
+        self.busy_timeout_s = float(busy_timeout_s or 30.0)
+        self.pool_size = max(1, int(pool_size or 16))
+        self._pool: List[sqlite3.Connection] = []
+        self._pool_lock = threading.Lock()
+        self._tl = threading.local()
+        self._cache_lock = threading.RLock()
+        self.generation = 0      # reopen() 마다 증가 — 이전 세대의 빌린 연결은 풀에 돌려보내지 않고 닫는다
+        self._main = self._connect()
+        self._main.executescript(SCHEMA)
         self._migrate()
         self._vec_cache: Optional[Tuple[List[str], np.ndarray, str, int]] = None
         self._ent_cache: Optional[Tuple[int, List[Dict[str, Any]]]] = None   # (build_version, entities)
         self.sql_count = 0
-        self.conn.set_trace_callback(self._on_sql)   # 단계별 SQL 문 수 집계 (profiler.COUNTERS['sql'])
+        self.closed = False
+
+    # ---------- 연결 관리 ----------
+    def _connect(self) -> sqlite3.Connection:
+        c = sqlite3.connect(self.path, check_same_thread=False, timeout=self.busy_timeout_s)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=%d" % int(self.busy_timeout_s * 1000))
+        c.set_trace_callback(self._on_sql)   # 단계별 SQL 문 수 집계 (profiler 스레드 로컬 카운터 'sql')
+        return c
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        c = getattr(self._tl, "conn", None)
+        return c if c is not None else self._main
+
+    @conn.setter
+    def conn(self, c: sqlite3.Connection) -> None:   # 구 코드 호환 (직접 대입)
+        self._main = c
+
+    def in_session(self) -> bool:
+        return getattr(self._tl, "conn", None) is not None
+
+    @contextlib.contextmanager
+    def session(self):
+        """현재 스레드 전용 연결을 빌린다 (풀에서 꺼내거나 새로 연결). 중첩 호출은 바깥 세션을 그대로 쓴다.
+        끝나면 커밋되지 않은 트랜잭션을 롤백하고 풀에 돌려준다."""
+        if getattr(self._tl, "conn", None) is not None or self.closed:
+            yield self
+            return
+        with self._pool_lock:
+            c = self._pool.pop() if self._pool else None
+            gen = self.generation
+        if c is None:
+            c = self._connect()
+        self._tl.conn = c
+        try:
+            yield self
+        finally:
+            c = getattr(self._tl, "conn", None) or c    # reopen() 이 이 스레드의 연결을 갈아끼웠을 수 있다
+            self._tl.conn = None
+            try:
+                if c.in_transaction:
+                    c.rollback()
+            except Exception:
+                pass
+            with self._pool_lock:
+                if not self.closed and self.generation == gen and len(self._pool) < self.pool_size:
+                    self._pool.append(c)
+                    c = None
+            if c is not None:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+
+    def pool_info(self) -> Dict[str, Any]:
+        with self._pool_lock:
+            return {"idle": len(self._pool), "max": self.pool_size, "busy_timeout_s": self.busy_timeout_s}
 
     def _on_sql(self, _stmt: str) -> None:
         self.sql_count += 1
@@ -155,7 +232,61 @@ class Store:
 
     # ---------- generic ----------
     def close(self) -> None:
-        self.conn.close()
+        self.closed = True
+        self._drop_connections()
+
+    def _drop_connections(self) -> None:
+        with self._pool_lock:
+            self.generation += 1
+            pool, self._pool = self._pool, []
+        for c in pool:
+            try:
+                c.close()
+            except Exception:
+                pass
+        mine = getattr(self._tl, "conn", None)
+        if mine is not None:
+            try:
+                mine.close()
+            except Exception:
+                pass
+            self._tl.conn = None
+        try:
+            self._main.close()
+        except Exception:
+            pass
+
+    def reopen(self, before=None, path: Optional[str] = None, retries: int = 20, wait_s: float = 0.25) -> None:
+        """모든 연결을 닫고 (선택) before() 로 DB 파일을 바꾼 뒤 다시 연다 — 스냅샷 복원·롤백용.
+
+        Store 객체는 그대로 두므로 이 인스턴스를 참조하는 다른 스레드/코드가 계속 유효하다 (예전에는 pipe.store 를 통째로 갈아끼워
+        파일 교체가 실패하면 서버 전체가 'Cannot operate on a closed database' 로 죽었다).
+        Windows 는 연결을 닫아도 잠금 해제가 약간 늦을 수 있어 before() 를 짧게 재시도한다."""
+        in_sess = self.in_session()
+        self._drop_connections()
+        err: Optional[Exception] = None
+        if before is not None:
+            for i in range(max(1, retries)):
+                try:
+                    before()
+                    err = None
+                    break
+                except OSError as e:          # WinError 32: 다른 프로세스/연결이 파일을 아직 잡고 있음
+                    err = e
+                    time.sleep(wait_s * (1 + i * 0.5))
+        if path:
+            self.path = path
+        self.closed = False
+        self._main = self._connect()
+        self._main.executescript(SCHEMA)
+        self._migrate()
+        self.invalidate_caches()
+        self._meta_cache = None
+        self._tri_checked = None
+        if in_sess:
+            self._tl.conn = self._connect()   # 복원을 요청한 스레드는 남은 작업을 계속해야 한다
+        if err is not None:
+            raise err
 
     def kv_get(self, k: str, default: Any = None) -> Any:
         r = self.conn.execute("SELECT v FROM kv WHERE k=?", (k,)).fetchone()
@@ -192,34 +323,60 @@ class Store:
         return {r["doc_id"]: {"hash": r["hash"], "mtime": r["mtime"] or 0, "size": r["size"] or 0, "title": r["title"], "kind": r["kind"]}
                 for r in self.conn.execute("SELECT doc_id, hash, mtime, size, title, kind FROM docs")}
 
-    def delete_doc(self, doc_id: str) -> None:
+    def delete_doc(self, doc_id: str, fts_cleared: bool = False) -> None:
+        """문서 하나와 그에 딸린 모든 행을 지운다.
+
+        **청크마다 지우지 않는다.** chunks_fts / chunks_tri 는 chunk_id 가 UNINDEXED 라
+        `WHERE chunk_id=?` 가 매번 FTS 전체 스캔이 된다. 청크 N개면 N번 스캔 → 빌드가 N² 로 느려진다
+        (2026-09-15 측정: 청크 8,000개 기준 행별 삭제 64초 vs 일괄 0.7초, trigram 이면 129초).
+        그래서 doc_id 로 한 번에 지운다. 일반 테이블은 인덱스를 타도록 서브쿼리로 묶는다.
+
+        fts_cleared=True: 호출자가 이미 FTS 테이블을 통째로 비웠으므로 건너뛴다 (전체 리빌드).
+        """
         c = self.conn
-        ids = [r["chunk_id"] for r in c.execute("SELECT chunk_id FROM chunks WHERE doc_id=?", (doc_id,))]
-        for cid in ids:
-            c.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (cid,))
-            c.execute("DELETE FROM embeddings WHERE chunk_id=?", (cid,))
-            c.execute("DELETE FROM mentions WHERE chunk_id=?", (cid,))
-            c.execute("DELETE FROM relations WHERE chunk_id=?", (cid,))
+        sub = "SELECT chunk_id FROM chunks WHERE doc_id=?"        # idx_chunks_doc 사용
+        if not fts_cleared:
+            c.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc_id,))
             if self._has_trigram():
-                c.execute("DELETE FROM chunks_tri WHERE chunk_id=?", (cid,))
+                c.execute("DELETE FROM chunks_tri WHERE doc_id=?", (doc_id,))
+        c.execute("DELETE FROM embeddings WHERE chunk_id IN (%s)" % sub, (doc_id,))   # chunk_id PK
+        c.execute("DELETE FROM mentions WHERE chunk_id IN (%s)" % sub, (doc_id,))     # idx_mention_chunk
+        c.execute("DELETE FROM relations WHERE chunk_id IN (%s)" % sub, (doc_id,))    # idx_rel_chunk
         c.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         c.execute("DELETE FROM docs WHERE doc_id=?", (doc_id,))
         c.execute("DELETE FROM doc_meta WHERE doc_id=?", (doc_id,))
         c.execute("DELETE FROM doc_vectors WHERE doc_id=?", (doc_id,))
         self._vec_cache = None
 
-    def upsert_doc(self, doc, chunks, tokens_fn, extra_tokens: str = "", trigram: bool = False, fts: bool = True) -> None:
-        """fts=False 면 chunks 만 쓰고 FTS 행은 만들지 않는다 (toggles.build_fts off → 나중에 `build fts` 로 재색인)."""
+    def clear_fts(self, trigram: bool = False) -> None:
+        """FTS 채널을 통째로 비운다 (전체 리빌드 시작 시 한 번). 문서별로 지우는 것보다 수십 배 빠르다."""
+        self.conn.execute("DELETE FROM chunks_fts")
+        if trigram:
+            self.ensure_trigram()
+            self.conn.execute("DELETE FROM chunks_tri")
+        elif self._has_trigram():
+            self.drop_trigram()
+
+    def upsert_doc(self, doc, chunks, tokens_fn, extra_tokens: str = "", trigram: bool = False, fts: bool = True,
+                   fts_cleared: bool = False) -> None:
+        """fts=False 면 chunks 만 쓰고 FTS 행은 만들지 않는다 (toggles.build_fts off → 나중에 `build fts` 로 재색인).
+
+        FTS 의 기존 행은 **문서 단위로 한 번만** 지운다 — chunk_id 는 UNINDEXED 라 청크마다 지우면
+        매번 전체 스캔이 되어 빌드가 청크 수의 제곱으로 느려진다. fts_cleared=True 면 그것도 건너뛴다.
+        """
         c = self.conn
         c.execute("INSERT OR REPLACE INTO docs(doc_id,path,title,kind,hash,meta,n_chunks,built_at,mtime,size) VALUES(?,?,?,?,?,?,?,?,?,?)",
                   (doc.doc_id, doc.path, doc.title, doc.kind, doc.hash, json.dumps(doc.meta, ensure_ascii=False),
                    len(chunks), time.time(), float(getattr(doc, "mtime", 0) or 0), int(getattr(doc, "size", 0) or 0)))
         if trigram and fts:
             self.ensure_trigram()
+        if not fts_cleared:      # 이 문서의 기존 FTS 행을 한 번에 (청크마다 지우면 매번 전체 스캔)
+            c.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc.doc_id,))
+            if self._has_trigram():
+                c.execute("DELETE FROM chunks_tri WHERE doc_id=?", (doc.doc_id,))
         for ch in chunks:
             c.execute("INSERT OR REPLACE INTO chunks(chunk_id,doc_id,ordinal,heading,text,start,end) VALUES(?,?,?,?,?,?,?)",
                       (ch.chunk_id, ch.doc_id, ch.ordinal, ch.heading, ch.text, ch.start, ch.end))
-            c.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (ch.chunk_id,))
             if not fts:
                 continue
             toks = tokens_fn(ch.heading + "\n" + ch.text)
@@ -228,7 +385,6 @@ class Store:
             c.execute("INSERT INTO chunks_fts(chunk_id,doc_id,heading,body,tokens) VALUES(?,?,?,?,?)",
                       (ch.chunk_id, ch.doc_id, ch.heading, ch.text, toks))
             if trigram:
-                c.execute("DELETE FROM chunks_tri WHERE chunk_id=?", (ch.chunk_id,))
                 c.execute("INSERT INTO chunks_tri(chunk_id,doc_id,body) VALUES(?,?,?)", (ch.chunk_id, ch.doc_id, ch.heading + "\n" + ch.text))
         self._vec_cache = None
 
@@ -246,11 +402,11 @@ class Store:
             docs = [r["doc_id"] for r in c.execute("SELECT doc_id FROM docs ORDER BY doc_id")]
         else:
             docs = list(doc_ids)
-            for d in docs:
-                for cid in [r["chunk_id"] for r in c.execute("SELECT chunk_id FROM chunks WHERE doc_id=?", (d,))]:
-                    c.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (cid,))
-                    if self._has_trigram():
-                        c.execute("DELETE FROM chunks_tri WHERE chunk_id=?", (cid,))
+            has_tri = self._has_trigram()
+            for d in docs:      # 문서 단위로 한 번씩만 (chunk_id 는 UNINDEXED 라 청크별 삭제는 전체 스캔)
+                c.execute("DELETE FROM chunks_fts WHERE doc_id=?", (d,))
+                if has_tri:
+                    c.execute("DELETE FROM chunks_tri WHERE doc_id=?", (d,))
             if trigram:
                 self.ensure_trigram()
         n = 0
@@ -348,10 +504,14 @@ class Store:
         cache = getattr(self, "_meta_cache", None)
         if cache and cache[0] == v:
             return cache[1]
-        out = {r["doc_id"]: {"doc_type": r["doc_type"], "ext_id": r["ext_id"], "date": r["date"], "ts": r["ts"] or 0.0, "status": r["status"],
-                             "hw_rev": r["hw_rev"], "inferred": r["inferred"]}
-               for r in self.conn.execute("SELECT doc_id, doc_type, ext_id, date, ts, status, hw_rev, inferred FROM doc_meta")}
-        self._meta_cache = (v, out)
+        with self._cache_lock:
+            cache = getattr(self, "_meta_cache", None)
+            if cache and cache[0] == v:
+                return cache[1]
+            out = {r["doc_id"]: {"doc_type": r["doc_type"], "ext_id": r["ext_id"], "date": r["date"], "ts": r["ts"] or 0.0, "status": r["status"],
+                                 "hw_rev": r["hw_rev"], "inferred": r["inferred"]}
+                   for r in self.conn.execute("SELECT doc_id, doc_type, ext_id, date, ts, status, hw_rev, inferred FROM doc_meta")}
+            self._meta_cache = (v, out)
         return out
 
     def docs_by_ext_id(self, ext_id: str) -> List[str]:
@@ -657,26 +817,32 @@ class Store:
                 "bytes": int(mat.nbytes), "build_version": ver}
 
     def vector_matrix(self, provider: str) -> Tuple[List[str], np.ndarray]:
-        if self._vec_cache and self._vec_cache[2] == provider and self._vec_cache[3] == self.build_version():
-            return self._vec_cache[0], self._vec_cache[1]
-        self.last_vec_load_ms = 0.0
-        t0 = time.perf_counter()
-        rows = self.conn.execute("SELECT chunk_id, dim, vec FROM embeddings WHERE provider=?", (provider,)).fetchall()
-        if not rows:
-            self._vec_cache = ([], np.zeros((0, 1), dtype=np.float32), provider, self.build_version())
-            return [], self._vec_cache[1]
-        dim = rows[0]["dim"]
-        rows = [r for r in rows if r["dim"] == dim]
-        ids = [r["chunk_id"] for r in rows]
-        vecs = [self._decode_vec(r["vec"], dim) for r in rows]
-        # 모두 float16 이면 행렬도 float16 으로 유지(메모리 절반; 검색은 블록 단위 float32 변환), 아니면 float32
-        if vecs and all(v.dtype == np.float16 for v in vecs):
-            mat = np.vstack(vecs)
-        else:
-            mat = np.vstack([v.astype(np.float32) for v in vecs])
-        self._vec_cache = (ids, mat, provider, self.build_version())
-        self.last_vec_load_ms = (time.perf_counter() - t0) * 1000
-        return ids, mat
+        vc = self._vec_cache
+        if vc and vc[2] == provider and vc[3] == self.build_version():
+            return vc[0], vc[1]
+        with self._cache_lock:   # 동시에 여러 질의가 캐시 미스를 보면 한 스레드만 적재하고 나머지는 결과를 공유
+            vc = self._vec_cache
+            v = self.build_version()
+            if vc and vc[2] == provider and vc[3] == v:
+                return vc[0], vc[1]
+            self.last_vec_load_ms = 0.0
+            t0 = time.perf_counter()
+            rows = self.conn.execute("SELECT chunk_id, dim, vec FROM embeddings WHERE provider=?", (provider,)).fetchall()
+            if not rows:
+                self._vec_cache = ([], np.zeros((0, 1), dtype=np.float32), provider, v)
+                return [], self._vec_cache[1]
+            dim = rows[0]["dim"]
+            rows = [r for r in rows if r["dim"] == dim]
+            ids = [r["chunk_id"] for r in rows]
+            vecs = [self._decode_vec(r["vec"], dim) for r in rows]
+            # 모두 float16 이면 행렬도 float16 으로 유지(메모리 절반; 검색은 블록 단위 float32 변환), 아니면 float32
+            if vecs and all(v_.dtype == np.float16 for v_ in vecs):
+                mat = np.vstack(vecs)
+            else:
+                mat = np.vstack([v_.astype(np.float32) for v_ in vecs])
+            self._vec_cache = (ids, mat, provider, v)
+            self.last_vec_load_ms = (time.perf_counter() - t0) * 1000
+            return ids, mat
 
     # ---------- graph ----------
     def clear_graph_for_chunks(self, chunk_ids: Iterable[str]) -> None:
@@ -745,14 +911,19 @@ class Store:
     def entity_index(self) -> List[Dict[str, Any]]:
         """질의 시 반복 사용되는 경량 엔티티 목록(id, name, aliases(list, lower), degree, type) — build_version 별 캐시."""
         v = self.build_version()
-        if self._ent_cache and self._ent_cache[0] == v:
-            return self._ent_cache[1]
-        out: List[Dict[str, Any]] = []
-        for r in self.conn.execute("SELECT entity_id, name, type, aliases, degree FROM entities"):
-            names = [r["name"].lower()] + [a.lower() for a in json.loads(r["aliases"] or "[]")]
-            out.append({"entity_id": r["entity_id"], "name": r["name"], "type": r["type"], "degree": float(r["degree"] or 1),
-                        "names": [n for n in names if len(n) >= 2]})
-        self._ent_cache = (v, out)
+        ec = self._ent_cache
+        if ec and ec[0] == v:
+            return ec[1]
+        with self._cache_lock:
+            ec = self._ent_cache
+            if ec and ec[0] == v:
+                return ec[1]
+            out: List[Dict[str, Any]] = []
+            for r in self.conn.execute("SELECT entity_id, name, type, aliases, degree FROM entities"):
+                names = [r["name"].lower()] + [a.lower() for a in json.loads(r["aliases"] or "[]")]
+                out.append({"entity_id": r["entity_id"], "name": r["name"], "type": r["type"], "degree": float(r["degree"] or 1),
+                            "names": [n for n in names if len(n) >= 2]})
+            self._ent_cache = (v, out)
         return out
 
     def invalidate_caches(self) -> None:
@@ -860,10 +1031,37 @@ class Store:
         self.conn.execute("INSERT OR REPLACE INTO synonyms(term,expansion,source) VALUES(?,?,?)", (term, expansion, source))
 
     # ---------- requests (모든 요청의 프로파일/디버그 trace) ----------
+    def _warn_locked(self, what: str, e: Exception) -> None:
+        try:
+            from . import logging_setup as _ls
+            _ls.log("warning", "%s 기록을 건너뜁니다 (DB 쓰기 잠금): %s" % (what, str(e)[:160]), "query",
+                    hint="다른 프로세스(서버 워처·CLI 빌드)가 쓰는 중. config.json db_busy_timeout_s 를 늘리거나 빌드 시간을 피하세요")
+        except Exception:
+            pass
+
     def log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
                     error: Optional[str] = None, origin: str = "", keep: int = 2000) -> int:
+        """요청 프로파일 기록. **관측용이므로 실패해도 명령/질의를 죽이지 않는다** — 다른 프로세스가 빌드 중이라
+        쓰기 잠금을 못 얻으면 경고만 남기고 0 을 돌려준다 (2026-09-15: 서버 워처와 CLI 질의가 겹쳐 'database is locked' 로 질의가 실패했다)."""
+        try:
+            return self._log_request(kind, summary, trace, result, config, error, origin, keep)
+        except (sqlite3.OperationalError, UnicodeEncodeError) as e:
+            # UnicodeEncodeError: 경계에서 걸러지지만, 어떤 경로로든 SQLite 가 담지 못하는 문자열이
+            # 들어와도 관측 기록 때문에 질의가 죽지는 않게 한다.
+            self._warn_locked("요청 프로파일", e)
+            return 0
+
+    def _log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
+                     error: Optional[str] = None, origin: str = "", keep: int = 2000) -> int:
         sm = (trace or {}).get("summary") or {}
         llm = sm.get("llm") or {}
+        if not origin:
+            try:
+                from . import progress as _pg
+                cl = (_pg.get(_pg.current_token() or "") or {}).get("client") or {}
+                origin = " ".join(x for x in (cl.get("origin"), cl.get("user")) if x)[:80]
+            except Exception:
+                origin = ""
         cur = self.conn.execute(
             "INSERT INTO requests(ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,config,result,trace,error,origin,run_id) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -911,11 +1109,16 @@ class Store:
     # ---------- query log / proposals ----------
     def log_query(self, query: str, config: Dict[str, Any], top_chunks: List[str], answer: str,
                   scores: Dict[str, Any], trace: Dict[str, Any]) -> int:
-        cur = self.conn.execute("INSERT INTO query_log(ts,query,config,top_chunks,answer,scores,trace,feedback,note) VALUES(?,?,?,?,?,?,?,?,?)",
-                                (time.time(), query, json.dumps(config, ensure_ascii=False), json.dumps(top_chunks), answer,
-                                 json.dumps(scores, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), None, ""))
-        self.conn.commit()
-        return int(cur.lastrowid)
+        """질의 로그(자가진화 입력). 쓰기 잠금이면 건너뛴다 — 답변은 이미 만들어졌으므로 기록 실패로 질의를 실패시키지 않는다."""
+        try:
+            cur = self.conn.execute("INSERT INTO query_log(ts,query,config,top_chunks,answer,scores,trace,feedback,note) VALUES(?,?,?,?,?,?,?,?,?)",
+                                    (time.time(), query, json.dumps(config, ensure_ascii=False), json.dumps(top_chunks), answer,
+                                     json.dumps(scores, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), None, ""))
+            self.conn.commit()
+            return int(cur.lastrowid)
+        except (sqlite3.OperationalError, UnicodeEncodeError) as e:
+            self._warn_locked("질의 로그", e)
+            return 0
 
     def set_feedback(self, qid: int, feedback: int, note: str = "") -> None:
         self.conn.execute("UPDATE query_log SET feedback=?, note=? WHERE id=?", (feedback, note, qid))

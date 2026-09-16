@@ -42,9 +42,8 @@ def load_questions(path: Optional[str] = None) -> List[Dict[str, Any]]:
                 qs = json.load(f)
         except Exception:
             pass
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(qs, f, ensure_ascii=False, indent=2)
+    from . import atomicio
+    atomicio.write_json(path, qs)
     return qs
 
 

@@ -101,3 +101,28 @@ CL 문서는 `related.issues` 가 **필수**다 (lint error). 이 한 줄이 `CL
 
 `mcp_sources.json` 의 ingest 매핑이 raw record → 위 계약을 따르는 md(front matter 포함) 로 `data/mcp_cache/<source>/<doc_type>/<id>.md` 에 저장하므로,
 외부 데이터도 같은 lint/그래프/시간 규칙을 탄다. `doc_type` 은 매핑에서 지정(issue/cl/build …). 새 유형이면 스키마 파일을 추가한다.
+
+## 8. 형식이 없는 문서를 넣기 (범용 변환기)
+
+팀에 쌓인 자료는 대개 계약 형식이 아니다. 메모·소스코드·JSON·로그·HTML·PDF·docx 를 그대로 넣으려면 변환기를 쓴다.
+
+```bat
+python tools\corpus_ingest.py D:\team-docs --out corpus\imported
+python tools\corpus_ingest.py --verify-only --out corpus\imported    :: 나중에 무손실을 다시 확인
+```
+
+**본문은 건드리지 않는다.** 변환기는 front matter 와 제목 줄만 앞에 붙이고 원문을 그대로 이어 붙인다(코드·로그는 펜스로 감싸되 내용은 그대로).
+그리고 원문의 SHA-1 을 `body_sha1`, 길이를 `body_chars` 로 기록해 두므로, `--verify-only` 가 변환된 문서에서 본문을 다시 떼어 내 해시를 대조한다.
+한 글자라도 달라지면 그 파일이 보고된다.
+
+| 입력 | 무손실인가 | 비고 |
+|---|---|---|
+| `.md` `.txt` `.rst` `.csv` `.json` `.yaml` `.log` `.py` `.c` `.h` 등 텍스트 | **예** | 본문 그대로. 해시로 재검증 가능 |
+| `.html` `.pdf` `.docx` | 아니오 (텍스트 추출) | 표·그림·서식이 사라진다. **원본을 `_originals/` 에 보관**하고 `_ingest_manifest.json` 에 `lossless: false` 와 이유를 남긴다 |
+
+`_originals/` 는 색인에서 제외된다(`_archive`, `__pycache__`, `node_modules` 도 마찬가지). 원본을 남기되 같은 내용이 두 번 색인되지 않게 하기 위한 것이다.
+
+유형을 추론할 수 없는 문서는 `doc_type: note` 가 된다(`schemas/note.json`). id 는 `NOTE-<파일명>` 이고,
+`source_path`·`source_format`·`extracted` 필드로 어디서 온 무엇인지 추적한다. 나중에 제대로 된 유형으로 옮기려면 front matter 의 `doc_type` 과 `id` 만 고치면 된다.
+
+변환 결과는 `_ingest_manifest.json` 한 파일에 정리된다 — 파일별 상태(ok/skip/fail), 무손실 여부와 그 이유, 원본 경로, 바이트 수. 변환 후 `corpus lint` 로 계약 위반을 확인하고 `build` 를 돌린다.

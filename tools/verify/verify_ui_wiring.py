@@ -16,7 +16,8 @@ for fn in sorted(os.listdir(os.path.join(S, "js"))):
     src = open(os.path.join(S, "js", fn), encoding="utf-8").read()
     # 동적으로 innerHTML 로 만드는 id 는 같은 JS 파일 안에서 id="…" 로 생성된다
     created = set(re.findall(r'id="([a-zA-Z0-9_\-]+)"', src)) | set(re.findall(r"id='([a-zA-Z0-9_\-]+)'", src)) \
-        | set(re.findall(r"sel\('([a-zA-Z0-9_\-]+)'", src)) | set(re.findall(r"\.id = '([a-zA-Z0-9_\-]+)'", src))
+        | set(re.findall(r"sel\('([a-zA-Z0-9_\-]+)'", src)) | set(re.findall(r"\.id = '([a-zA-Z0-9_\-]+)'", src)) \
+        | set(re.findall(r"[a-zA-Z]+(?:Select|Input)\('([a-zA-Z0-9_\-]+)'", src))   # modelSelect('m-llm-model', …) 같은 헬퍼가 만드는 id
     refs = set(re.findall(r"\$\('#([a-zA-Z0-9_\-]+)'\)", src)) | set(re.findall(r"\$\(\"#([a-zA-Z0-9_\-]+)\"\)", src)) | set(re.findall(r"\$\('#([a-zA-Z0-9_\-]+) ", src))
     miss = sorted(r for r in refs if r not in ids and r not in created)
     missing[fn] = miss

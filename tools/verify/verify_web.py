@@ -28,7 +28,9 @@ ENV = dict(os.environ, PYTHONIOENCODING="utf-8", LLMWIKI_CONFIG=os.path.join(tmp
            LLMWIKI_QUERY_RULES_PATH=os.path.join(tmp, "query_rules.json"), LLMWIKI_MCP_SOURCES_PATH=os.path.join(tmp, "mcp_sources.json"),
            LLMWIKI_AGENTS_PATH=os.path.join(tmp, "agents.json"), LLMWIKI_PINS_PATH=os.path.join(tmp, "pins.json"), LLMWIKI_RULES_PATH=os.path.join(tmp, "rules.json"),
            LLMWIKI_SCHEMAS_DIR_PATH=os.path.join(tmp, "schemas"), LLMWIKI_PROMPTS_DIR_PATH=os.path.join(tmp, "prompts"), LLMWIKI_EVAL_PATH=os.path.join(tmp, "questions.json"),
-           LLMWIKI_LOGS_DIR_PATH=os.path.join(tmp, "logs"), LLMWIKI_SECURITY_PATH=os.path.join(tmp, "security.json"))
+           LLMWIKI_LOGS_DIR_PATH=os.path.join(tmp, "logs"), LLMWIKI_SECURITY_PATH=os.path.join(tmp, "security.json"),
+           LLMWIKI_SERVER_PATH=os.path.join(tmp, "server.json"), LLMWIKI_SCHEDULE_PATH=os.path.join(tmp, "schedule.json"),
+           LLMWIKI_MODELS_PATH=os.path.join(tmp, "models.json"))
 for k in ("LLMWIKI_USER", "LLMWIKI_PASSWORD", "LLMWIKI_API_KEY"):
     ENV.pop(k, None)
 subprocess.run([PY, "-m", "llmwiki", "build", "--full", "--yes", "--no-snapshot"], cwd=ROOT, env=ENV, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
@@ -276,6 +278,86 @@ try:
     check("non-lwk bearer → guest", "GET", "/api/auth/me", 200, token="opaque-proxy-token")
     check("admin cli purge → 428", "POST", "/api/cli", 428, dict(C, argv="maintenance purge_requests"), cookie=adm)
     check("admin cli purge confirmed", "POST", "/api/cli", 200, dict(D, argv="maintenance purge_requests"), cookie=adm)
+    # ---- 다중 사용자 동시성 · 모니터 · 스케줄 · 모델 카탈로그 (2026-09-15) ----
+    check("guest activity (viewer 도 조회)", "GET", "/api/activity", 200)
+    st, j, _ = check("guest activity 필드", "GET", "/api/activity?history=5", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and all(k in (j or {}) for k in ("running", "queued", "external", "recent", "lock", "limits"))
+    rows[-1]["out"] = "running=%d queued=%d admin=%s" % (len(j.get("running", [])), len(j.get("queued", [])), j.get("admin"))
+    check("guest admin/server → 401 (로그인 안내)", "GET", "/api/admin/server", 401)
+    check("guest cancel unknown → 404", "POST", "/api/activity", 404, {"action": "cancel", "token": "nope"})
+    st, j, _ = check("admin server status", "GET", "/api/admin/server", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and all(k in (j or {}) for k in ("counters", "limits", "clients", "latency", "activity", "sessions", "circuits"))
+    rows[-1]["out"] = "uptime=%ss clients=%d" % (j.get("uptime_s"), len(j.get("clients", [])))
+    check("admin set_limits", "POST", "/api/admin/server", 200, dict(C, action="set_limits", values={"concurrency.max_parallel_reads": 6, "rate_limit.per_user_per_min": 500}, save=True), cookie=adm)
+    check("admin set_limits (없는 키) → 400", "POST", "/api/admin/server", 400, dict(C, action="set_limits", values={"concurrency.nope": 1}), cookie=adm)
+    check("admin block ip", "POST", "/api/admin/server", 200, dict(C, action="block", kind="ip", value="203.0.113.7", add=True), cookie=adm)
+    check("admin unblock ip", "POST", "/api/admin/server", 200, dict(C, action="block", kind="ip", value="203.0.113.7", add=False), cookie=adm)
+    check("admin sessions list", "POST", "/api/admin/server", 200, dict(C, action="sessions", sub="list"), cookie=adm)
+    check("admin circuit reset", "POST", "/api/admin/server", 200, dict(C, action="circuit_reset"), cookie=adm)
+    check("admin log_level DEBUG", "POST", "/api/admin/server", 200, dict(C, action="log_level", level="DEBUG", save=False), cookie=adm)
+    check("admin query (DEBUG 로그)", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False}, cookie=adm)
+    check("admin log_level INFO", "POST", "/api/admin/server", 200, dict(C, action="log_level", level="INFO", save=False), cookie=adm)
+    check("admin maintenance on", "POST", "/api/admin/server", 200, dict(C, action="maintenance", enabled=True), cookie=adm)
+    check("점검 모드: 게스트 질의 → 503", "POST", "/api/query", 503, {"q": "x"})
+    check("점검 모드: admin 은 통과", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False}, cookie=adm)
+    check("admin maintenance off", "POST", "/api/admin/server", 200, dict(C, action="maintenance", enabled=False), cookie=adm)
+    check("게스트 질의 복구", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False})
+    st, j, _ = check("models catalog 조회", "GET", "/api/models/catalog", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and (j or {}).get("models")
+    rows[-1]["out"] = "models=%d embed=%d" % (len(j.get("models", [])), len(j.get("embed", [])))
+    check("guest catalog 수정 → 401", "POST", "/api/models/catalog", 401, {"action": "add", "model": {"id": "x", "provider": "ollama"}})
+    check("admin catalog add", "POST", "/api/models/catalog", 200, dict(C, action="add", model={"id": "web-verify-model", "provider": "ollama", "label": "웹검증", "roles": ["answer"]}), cookie=adm)
+    st, j, _ = check("catalog add 반영", "GET", "/api/models/catalog?role=answer", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and any(m["id"] == "web-verify-model" for m in (j or {}).get("models", []))
+    check("admin catalog remove", "POST", "/api/models/catalog", 200, dict(C, action="remove", id="web-verify-model"), cookie=adm)
+    st, j, _ = check("models 역할 정책 포함", "GET", "/api/models", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and "policy" in (j or {}) and "answer" in (j.get("policy") or {}) and "timeout_s" in j["policy"]["answer"]
+    check("admin 역할별 정책 저장", "POST", "/api/models/set", 200, dict(C, settings={"llm_roles": {"answer": {"timeout_s": 120, "retries": 2}}}), cookie=adm)
+    st, j, _ = check("역할 정책 반영 확인", "GET", "/api/models", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and (j.get("policy") or {}).get("answer", {}).get("timeout_s") == 120
+    check("역할별 정책 되돌리기", "POST", "/api/models/set", 200, dict(C, settings={"llm_roles": {}}), cookie=adm)
+    st, j, _ = check("schedule 조회", "GET", "/api/schedule", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and "tasks" in (j or {}) and "action_types" in (j or {})
+    check("guest schedule 수정 → 401", "POST", "/api/schedule", 401, {"action": "add", "task": {"name": "x", "every": "1h", "action": {"type": "build"}}})
+    check("admin schedule add", "POST", "/api/schedule", 200, dict(C, action="add", task={"name": "web-verify", "every": "1h",
+                                                                                          "action": {"type": "maintenance", "action": "wal_checkpoint"}}), cookie=adm)
+    st, j, _ = check("schedule 목록에 반영", "GET", "/api/schedule", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and any(t["name"] == "web-verify" for t in (j or {}).get("tasks", []))
+    check("admin schedule 즉시 실행", "POST", "/api/schedule", 200, dict(C, action="run", name="web-verify"), cookie=adm)
+    time.sleep(1.0)
+    st, j, _ = check("schedule 이력", "GET", "/api/schedule?n=5", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and any(h.get("name") == "web-verify" for h in (j or {}).get("history", []))
+    check("admin schedule disable", "POST", "/api/schedule", 200, dict(C, action="disable", name="web-verify"), cookie=adm)
+    check("admin schedule remove", "POST", "/api/schedule", 200, dict(C, action="remove", name="web-verify"), cookie=adm)
+    check("admin schedule 잘못된 작업 → 400", "POST", "/api/schedule", 400, dict(C, action="add", task={"name": "bad", "cron": "nope", "action": {"type": "build"}}), cookie=adm)
+    # 동시 질의 20건 (대기열·슬롯) — 모두 200 이어야 한다. 버스트 동안에는 속도 제한을 넉넉히.
+    check("버스트용 제한 완화", "POST", "/api/admin/server", 200, dict(C, action="set_limits", save=False, values={
+        "concurrency.max_parallel_reads": 6, "concurrency.max_parallel_per_user": 40, "concurrency.max_parallel_per_ip": 40,
+        "rate_limit.per_user_per_min": 0, "rate_limit.per_ip_per_min": 0, "rate_limit.query_per_user_per_min": 0}), cookie=adm)
+    import threading as _th
+    _codes = []
+
+    def _one(i):
+        s2, _j2, _h2 = req("POST", "/api/query", {"q": "ISSUE-200%d 원인" % (i % 3 + 1), "log": False})
+        _codes.append(s2)
+    _ths = [_th.Thread(target=_one, args=(i,)) for i in range(20)]
+    [t.start() for t in _ths]
+    [t.join(300) for t in _ths]
+    rows.append({"name": "동시 질의 20건 (게스트)", "path": "POST /api/query ×20", "status": ",".join(str(c) for c in sorted(set(_codes))),
+                 "expect": 200, "ok": all(c == 200 for c in _codes), "out": "%d/%d OK" % (sum(1 for c in _codes if c == 200), len(_codes))})
+    # 긴 작업 취소: 전체 리빌드를 시작하자마자 중지 (티켓이 생기기 전에 들어온 취소 = 예약 취소 경로)
+    st, j, _ = check("admin 전체 빌드 시작(취소용)", "POST", "/api/build", 200, dict(D, full=True, reset=True), cookie=adm, keep="cxjob")
+    if st == 200 and j.get("job"):
+        check("admin 작업 취소 (DELETE /api/jobs)", "DELETE", "/api/jobs/" + j["job"], 200, cookie=adm)
+        _fin = wait_job(j["job"], adm)
+        rows.append({"name": "취소된 작업 상태", "path": "GET /api/jobs/<id>", "status": _fin.get("status"), "expect": "cancelled|done",
+                     "ok": _fin.get("status") in ("cancelled", "done"), "out": str(_fin.get("error"))[:80]})
+        check("취소 후 전체 빌드 정상", "POST", "/api/build", 200, dict(D, full=True, reset=True), cookie=adm, keep="rbjob")
+        _rb = wait_job(state["rbjob"]["job"], adm)
+        print("  recovery build job:", _rb.get("status"), (_rb.get("error") or "")[:200])
+        rows.append({"name": "취소 후 빌드 복구", "path": "GET /api/jobs/<id>", "status": _rb.get("status"), "expect": "done",
+                     "ok": _rb.get("status") == "done", "out": (_rb.get("error") or "")[:80]})
+    check("취소 후 질의 정상", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False})
     check("csrf origin → 403", "POST", "/api/query", 403, {"q": "x"}, cookie=adm, headers={"Origin": "http://evil.example"})
     check("admin logout", "POST", "/api/auth/logout", 200, {}, cookie=adm)
 finally:

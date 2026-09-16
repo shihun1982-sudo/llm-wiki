@@ -108,6 +108,32 @@ class ArchitectureTest(unittest.TestCase):
         txt = render_text(reg, {"fts": False})
         self.assertIn("fts(OFF)", txt)
 
+    def test_guide_markdown(self):
+        """docs/OPTIMIZATION_GUIDE.md 는 레지스트리에서 생성된다 — 흐름·단계·손잡이가 모두 실려야 한다."""
+        from llmwiki import optimize as opt
+        md = opt.guide_markdown()
+        for head in ("## 0. 세 가지 렌즈", "## 3. 전체 구조", "## 9. LLM 에게 최적화를 묻는 법"):
+            self.assertIn(head, md)
+        reg = registry()
+        for fk, f in reg["flows"].items():
+            self.assertIn("%s — %s" % (fk, f["title"]), md)
+            for st in f["stages"]:
+                name = ", ".join(st.get("trace") or [st["key"]])
+                self.assertIn("| `%s` |" % name, md, "단계 %s 가 가이드에 없음" % st["key"])
+                for t in st["toggles"]:
+                    self.assertIn("`%s`" % t, md)
+
+    def test_demote_keeps_code_fences(self):
+        """묶음에 끼워 넣을 때 제목만 낮추고, 코드블록 안의 '#' 은 건드리지 않는다 (프롬프트 샘플 보호)."""
+        from llmwiki import optimize as opt
+        src = "# 제목\n\n```\n# 이건 샘플 안의 주석\n```\n\n## 소제목\n####### 제목아님\n"
+        out = opt.demote(src, 2)
+        self.assertIn("### 제목", out)
+        self.assertIn("#### 소제목", out)
+        self.assertIn("\n# 이건 샘플 안의 주석\n", out)     # 펜스 안은 그대로
+        self.assertIn("####### 제목아님", out)              # h7 은 제목이 아님
+        self.assertEqual(opt.demote("###### 최하단", 2), "###### 최하단")   # 6 을 넘지 않음
+
 
 class QualityOptionsTest(unittest.TestCase):
     def setUp(self):
@@ -207,6 +233,21 @@ class QualityOptionsTest(unittest.TestCase):
         k2 = self.p._cache_key("x")
         tn.T.reset("fts_mode")
         self.assertNotEqual(k1, k2)
+
+    def test_optimize_bundle(self):
+        """`optimize` 묶음 = 설정 스냅샷 + 실측 리포트 + 지시문 + 손잡이 지도, 목차가 겹치지 않아야 한다."""
+        from llmwiki import optimize as opt
+        self.p.query("캐파 확장 1차 투자 담당은?", log=True)
+        b = opt.bundle_markdown(self.p, None, "quality")
+        md = b["markdown"]
+        for head in ("## A. 지금 설정 스냅샷", "## B. 질의 실측", "## C. 무엇을 해 달라는 요청인가", "## D. 손잡이 지도"):
+            self.assertIn(head, md)
+        self.assertIn(opt.FOCUS_KO["quality"], md)
+        self.assertEqual(b["focus"], "quality")
+        self.assertEqual(b["chars"], len(md))
+        self.assertTrue(b["request_id"])
+        tops = [ln for ln in md.splitlines() if ln.startswith("# ")]
+        self.assertEqual(len(tops), 1, "최상위 제목이 하나여야 한다: %s" % tops)
 
     def test_mcp_tools(self):
         init = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})

@@ -31,7 +31,7 @@ _PATH_DEFAULTS: Dict[str, str] = {
     "query_rules": "query_rules.json", "mcp_sources": "mcp_sources.json", "agents": "agents.json",
     "pins": "pins.json", "rules": "data/rules.json", "schemas_dir": "schemas", "prompts_dir": "prompts",
     "eval": "eval/questions.json", "logs_dir": "logs", "themes": "llmwiki/web/static/themes/themes.json",
-    "security": "security.json",
+    "security": "security.json", "server": "server.json", "schedule": "schedule.json", "models": "models.json",
 }
 _PATH_ENV_ALIASES = {"config": "LLMWIKI_CONFIG", "env": "LLMWIKI_ENV_FILE", "tuning": "LLMWIKI_TUNING"}
 
@@ -209,6 +209,9 @@ class Settings:
     # ---- 지역/시간 ----
     timezone: str = "Asia/Seoul"   # 상대 시간 표현("지난주") 해석 기준 시간대 (IANA 이름)
     week_start: str = "mon"        # 주의 시작 요일 (mon | sun)
+    # ---- 터미널 출력 (다른 환경에서 한글/기호 깨짐 방지 — llmwiki/console.py) ----
+    console_encoding: str = "auto"      # auto | utf-8 | native | off. auto = Windows 콘솔이면 코드페이지를 UTF-8 로 바꾸고, 리디렉션이면 UTF-8 로 출력
+    console_set_codepage: bool = True   # Windows 콘솔의 출력 코드페이지를 UTF-8(65001)로 바꿀지 (종료 시 원래대로 복구)
     # ---- 로그 (logs/ 폴더) ----
     log_level: str = "INFO"        # DEBUG | INFO | WARNING | ERROR
     log_max_mb: int = 10           # 파일당 최대 MB (로테이션)
@@ -231,9 +234,23 @@ class Settings:
     wal_checkpoint_mb: int = 64    # 빌드 중 WAL 이 이보다 크면 체크포인트
     embed_store_dtype: str = "float32"   # float32 | float16 (저장·행렬 메모리 절반, 유사도 오차 미미)
     build_lock_timeout: int = 0    # 다른 빌드가 락을 잡고 있을 때 기다릴 초 (0 = 즉시 실패)
+    db_busy_timeout_s: float = 60.0   # SQLite 쓰기 잠금 대기(초). 다른 프로세스(CLI 빌드·서버 워처)가 쓰는 동안 기다리는 시간. 초과하면 관측용 기록(요청 로그)은 건너뛰고 질의는 정상 응답한다
+    db_pool_size: int = 16         # 서버가 스레드별로 재사용하는 SQLite 읽기 연결 풀 크기 (동시 질의 수 이상이면 충분)
     llm_timeout: int = 600         # LLM 호출 1회의 HTTP 타임아웃(초). 응답이 없으면 이 시간 뒤 실패로 처리(재시도 포함). headless 는 agents.json timeout_s 우선
     llm_retries: int = 3           # LLM 호출이 timeout/네트워크/실행 실패(transient)면 재시도할 횟수 (최대 1+llm_retries 회). headless 는 agents.json retries 우선
-    llm_retry_backoff_s: float = 2.0   # 재시도 사이 대기(초) × 시도 번호
+    llm_retry_backoff_s: float = 2.0   # 재시도 사이 기본 대기(초). llm_retry_backoff=linear 면 × 시도 번호, exponential 이면 × 2^(시도-1)
+    # ---- 역할별 LLM 정책 기본값 (llm_roles.<role>.{timeout_s,retries,backoff_s,backoff,backoff_max_s,budget_s,circuit_failures,circuit_cooldown_s} 가 우선) ----
+    llm_retry_backoff: str = "exponential"   # 재시도 대기 증가 방식: linear | exponential (+ 최대 20% 지터)
+    llm_retry_backoff_max_s: float = 60.0    # 재시도 대기 상한(초)
+    llm_budget_s: int = 0          # 한 호출의 재시도까지 포함한 총 시간 예산(초). 넘으면 더 재시도하지 않고 실패 → 대체 경로. 0 = 제한 없음
+    # 반복 억제: 작은 모델이 같은 구절을 수십 번 되풀이하는 고장을 줄인다 (0 = 보내지 않음).
+    # OpenAI 호환 게이트웨이는 frequency/presence_penalty, Ollama 네이티브는 repeat_penalty 로 전달된다.
+    llm_frequency_penalty: float = 0.3
+    llm_presence_penalty: float = 0.0
+    llm_repeat_penalty: float = 1.1   # Ollama 네이티브(/api/generate) 전용. 1.0 = 억제 없음
+    llm_http_retries: int = 2      # HTTP 429/5xx 에 대한 프로바이더 내부 짧은 재시도 횟수 (llm_retries 와 별도, 총 시도 ≤ (1+llm_retries)×(1+llm_http_retries))
+    llm_circuit_failures: int = 3  # 같은 provider/model 이 연속으로 이 횟수 실패하면 회로를 열어(circuit open) 그 뒤 호출은 즉시 실패시킨다 (0 = 끔)
+    llm_circuit_cooldown_s: int = 60   # 회로가 열린 뒤 다시 시도해 보기까지의 대기(초). 다수 사용자가 죽은 엔드포인트에 각각 timeout×재시도만큼 기다리는 것을 막는다
     # ---- 서버·MCP 기본값 (serve / mcp 명령의 플래그를 생략하면 여기 값; 플래그가 우선) ----
     web_host: str = "127.0.0.1"    # serve 바인드 주소. 여러 사람에게 공개하면 0.0.0.0 (security.json 로그인 필요)
     web_port: int = 8765           # serve 포트 (Web UI + POST /mcp)
@@ -245,14 +262,70 @@ class Settings:
     toggles: Toggles = field(default_factory=Toggles)
 
     LLM_ROLES = ("answer", "rerank", "extract", "summary", "review", "expand", "verify", "forensic")
+    # 역할별로 지정할 수 있는 속성 (llm_roles.<role>.<attr>, 단축키 <role>_<attr>, 환경변수 LLMWIKI_<ROLE>_<ATTR>)
+    LLM_ROLE_ATTRS = ("provider", "model", "effort", "timeout_s", "retries", "backoff_s", "backoff", "backoff_max_s", "budget_s",
+                      "circuit_failures", "circuit_cooldown_s")
+    LLM_ROLE_POLICY_ATTRS = ("timeout_s", "retries", "backoff_s", "backoff", "backoff_max_s", "budget_s",
+                             "circuit_failures", "circuit_cooldown_s", "max_tokens")
 
-    def role_llm(self, role: str) -> Dict[str, str]:
-        """역할별 (provider, model, effort) 해석: llm_roles[role] 의 값이 비어 있으면 전역값."""
+    def role_llm(self, role: str) -> Dict[str, Any]:
+        """역할별 (provider, model, effort + 재시도 정책) 해석: llm_roles[role] 의 값이 비어 있으면 전역값.
+        정책 키: timeout_s(llm_timeout) · retries(llm_retries) · backoff_s(llm_retry_backoff_s) · backoff(llm_retry_backoff) ·
+        backoff_max_s(llm_retry_backoff_max_s) · budget_s(llm_budget_s) · circuit_failures(llm_circuit_failures) · circuit_cooldown_s(llm_circuit_cooldown_s)."""
         r = dict((self.llm_roles or {}).get(role) or {})
         default_effort = self.answer_effort if role == "answer" else self.llm_effort
+
+        def num(key: str, default: Any, typ=float) -> Any:
+            v = r.get(key)
+            if v in (None, ""):
+                return default
+            try:
+                return typ(v)
+            except (TypeError, ValueError):
+                return default
         return {"provider": r.get("provider") or self.llm_provider,
                 "model": r.get("model") or self.llm_model,
-                "effort": r.get("effort") or default_effort}
+                "effort": r.get("effort") or default_effort,
+                "timeout_s": num("timeout_s", int(self.llm_timeout or 600), int),
+                "retries": num("retries", int(self.llm_retries), int),
+                "backoff_s": num("backoff_s", float(self.llm_retry_backoff_s), float),
+                "backoff": str(r.get("backoff") or self.llm_retry_backoff or "exponential"),
+                "backoff_max_s": num("backoff_max_s", float(self.llm_retry_backoff_max_s), float),
+                "budget_s": num("budget_s", int(self.llm_budget_s or 0), int),
+                "circuit_failures": num("circuit_failures", int(self.llm_circuit_failures), int),
+                "circuit_cooldown_s": num("circuit_cooldown_s", int(self.llm_circuit_cooldown_s), int),
+                # 0 = 지정 안 함 → 호출부의 단계별 기본값을 쓴다 (role_max_tokens 참고)
+                "max_tokens": num("max_tokens", int(self.answer_max_tokens) if role == "answer" else 0, int)}
+
+    def role_max_tokens(self, role: str, default: int) -> int:
+        """역할별 출력 토큰 상한. `llm_roles.<role>.max_tokens` 가 있으면 그 값, 없으면 단계별 기본값.
+
+        단계마다 필요한 길이가 다르다(라우터 200 · 리랭크 400 · 답변 3000 …). 품질을 올리려고
+        답변만 늘리거나, 비용을 줄이려고 추출만 줄이는 식으로 단계별로 조절할 수 있게 한다.
+        """
+        try:
+            v = int(self.role_llm(role).get("max_tokens") or 0)
+        except (TypeError, ValueError):
+            v = 0
+        return v if v > 0 else int(default)
+
+    # 역할별 출력 토큰의 단계 기본값 (llm_roles.<role>.max_tokens 를 비워 두면 이 값이 쓰인다).
+    # 그 단계가 실제로 뱉는 길이에 맞춘 값이다 — 화면·문서에서 '상속값' 으로 보여 준다.
+    ROLE_DEFAULT_MAX_TOKENS = {"answer": 3000, "rerank": 400, "expand": 400, "verify": 1500,
+                               "extract": 4000, "summary": 800, "review": 3000, "forensic": 1200}
+
+    def role_policy_table(self) -> Dict[str, Dict[str, Any]]:
+        """역할별 유효 정책 표 (models show / Web 설정 / check_env 용).
+
+        max_tokens 는 '실제로 쓰일 값' 으로 채운다 — 지정이 없으면 0 이 아니라 단계 기본값.
+        """
+        out = {}
+        for role in self.LLM_ROLES:
+            pol = self.role_llm(role)
+            dflt = int(self.answer_max_tokens) if role == "answer" else self.ROLE_DEFAULT_MAX_TOKENS.get(role, 1000)
+            pol["max_tokens"] = self.role_max_tokens(role, dflt)
+            out[role] = pol
+        return out
 
     def __post_init__(self) -> None:
         self.corpus_dirs = [resolve_path(p) for p in (self.corpus_dirs or [])]
@@ -322,11 +395,26 @@ def env_overrides() -> Dict[str, Any]:
         if v is not None and v != "":
             ov[name] = v
     for role in Settings.LLM_ROLES:
-        for attr in ("provider", "model", "effort"):
+        for attr in Settings.LLM_ROLE_ATTRS:
             v = os.environ.get("LLMWIKI_%s_%s" % (role.upper(), attr.upper()))
             if v:
                 ov["%s_%s" % (role, attr)] = v
     return ov
+
+
+def is_role_key(k: str) -> bool:
+    """'answer_model', 'rerank_timeout_s' 처럼 <role>_<attr> 형태의 단축 키인지."""
+    for role in Settings.LLM_ROLES:
+        if k.startswith(role + "_") and k[len(role) + 1:] in Settings.LLM_ROLE_ATTRS:
+            return True
+    return False
+
+
+def split_role_key(k: str) -> Optional[tuple]:
+    for role in Settings.LLM_ROLES:
+        if k.startswith(role + "_") and k[len(role) + 1:] in Settings.LLM_ROLE_ATTRS:
+            return role, k[len(role) + 1:]
+    return None
 
 
 def load_settings(path: Optional[str] = None) -> Settings:
@@ -336,9 +424,10 @@ def load_settings(path: Optional[str] = None) -> Settings:
         shutil.copy2(CONFIG_EXAMPLE, path)
     SETTING_SOURCES.clear()
     file_keys: set = set()
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+    from . import atomicio
+    raw_text = atomicio.read_text(path)       # 다른 요청이 저장 중이면 기다렸다 읽는다
+    if raw_text is not None:
+        raw = json.loads(raw_text)
         s = Settings.from_dict(raw)
         file_keys = set(k for k in raw if k != "toggles") | set("toggles." + k for k in (raw.get("toggles") or {}))
     else:
@@ -376,9 +465,8 @@ def effective_settings(s: Settings) -> List[Dict[str, Any]]:
 
 
 def save_settings(s: Settings, path: Optional[str] = None) -> None:
-    path = path or CONFIG_PATH
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(s.to_portable_dict(), f, ensure_ascii=False, indent=2)
+    from . import atomicio      # 순환 import 방지: config 는 다른 모듈보다 먼저 적재된다
+    atomicio.write_json(path or CONFIG_PATH, s.to_portable_dict())
 
 
 def apply_overrides(s: Settings, overrides: Dict[str, Any]) -> Settings:
@@ -391,14 +479,14 @@ def apply_overrides(s: Settings, overrides: Dict[str, Any]) -> Settings:
         elif k == "llm_roles":
             if isinstance(v, str):
                 v = json.loads(v) if v.strip() else {}
-            s.llm_roles = {role: {kk: vv for kk, vv in (cfg or {}).items() if vv} for role, cfg in (v or {}).items()}
-        elif "_" in k and k.rsplit("_", 1)[0] in Settings.LLM_ROLES and k.rsplit("_", 1)[1] in ("provider", "model", "effort"):
-            role, attr = k.rsplit("_", 1)   # rerank_model=..., answer_provider=... 형태의 단축 키
+            s.llm_roles = {role: {kk: vv for kk, vv in (cfg or {}).items() if vv not in (None, "")} for role, cfg in (v or {}).items()}
+        elif split_role_key(k):
+            role, attr = split_role_key(k)   # rerank_model=..., answer_provider=..., answer_timeout_s=... 형태의 단축 키
             s.llm_roles.setdefault(role, {})
             if v == "":
                 s.llm_roles[role].pop(attr, None)
             else:
-                s.llm_roles[role][attr] = str(v)
+                s.llm_roles[role][attr] = str(v) if attr in ("provider", "model", "effort", "backoff") else v
         elif k in Settings.__dataclass_fields__ and k != "toggles":
             cur = getattr(s, k)
             if isinstance(cur, bool):
@@ -452,7 +540,7 @@ TOGGLE_HELP: Dict[str, str] = {
     "warm_cache": "[지연] 빌드 직후 벡터 행렬·엔티티 인덱스를 메모리에 적재해 첫 질의 지연 제거.",
     "fts_optimize": "[속도] 전체 빌드 후 FTS5 세그먼트 병합(optimize) + PRAGMA optimize.",
     "rerank_llm": "[토큰] 리랭크에 LLM 사용. 끄면 로컬 휴리스틱만 (토큰 0, 수 ms).",
-    "query_cache": "[토큰/지연] 동일 질의+설정+빌드버전 결과를 메모리 캐시 (LLM 호출 생략).",
+    "query_cache": "[토큰/지연] 동일 질의+설정+빌드버전 결과를 메모리 캐시 (LLM 호출 생략). ※ 캐시는 둘이다 — 이것을 꺼도 precompute(영속 answer_cache)가 계속 답을 돌려주므로, 매번 새로 계산하려면 precompute 도 함께 끈다.",
     "context_trim": "[토큰] 긴 청크를 질의 관련 문장 위주로 압축해 답변 프롬프트 입력 토큰 절감.",
     "dedupe_hits": "[토큰] 같은 문서의 겹치는(오버랩) 청크를 컨텍스트에서 제거.",
     "auto_build": "[운영] 서버가 auto_build_interval 초마다 코퍼스를 stat 스캔, 변경 시 증분 빌드.",
@@ -472,7 +560,7 @@ TOGGLE_HELP: Dict[str, str] = {
     "evidence_compress": "[토큰] LLM 이 근거 문단에서 질문 관련 문장만 남김 (context_trim 의 LLM 판).",
     "router_llm": "[품질/토큰] LLM 이 질의 의도·문서 유형을 분류해 라우터/부스트에 반영.",
     "pins": "[품질] pins.json 의 고정 근거(조건부 문서/청크, 질의별 정답)를 검색 결과 상단에 주입.",
-    "precompute": "[속도/토큰] 사전 계산된 답변 캐시(answer_cache, build_version 키)를 우선 사용.",
+    "precompute": "[속도/토큰] 사전 계산된 답변 캐시(answer_cache, build_version 키)를 우선 사용. query_cache 와 별개의 영속 캐시라, 매번 새로 계산하려면 둘 다 꺼야 한다. 내용 확인·정리: `precompute status|check|clear`.",
     "doc_vector": "[품질] 문서 카드(제목·메타·헤딩 개요) 임베딩 채널 — 긴 설계 문서의 문서 단위 검색.",
     "feedback_boost": "[품질] 긍정 피드백을 받은 청크에 감쇠하는 소량 boost.",
     "forensic_auto": "[운영] 근거 부족·미지원 답변이 나오면 포렌식 진단을 자동 실행해 forensics 테이블에 누적.",
@@ -522,6 +610,8 @@ SETTING_HELP: Dict[str, str] = {
     "embed_dim": "hash 임베딩 차원 (메모리 = 청크수×dim×4B; float16 저장 시 절반). 모든 차원 지원, 변경 시 build --full.",
     "timezone": "상대 시간 표현(지난주·어제·3일전) 해석 기준 시간대. 기본 Asia/Seoul.",
     "week_start": "주 시작 요일 (mon|sun) — '지난주' 범위 계산.",
+    "console_encoding": "터미널 출력 인코딩: auto(기본) | utf-8 | native | off. 한글·기호(⏳ ✔ ·)가 깨지거나 UnicodeEncodeError 로 죽는 환경에서 조정. native = 코드페이지를 바꾸지 않고 표현 불가 문자만 ? 로.",
+    "console_set_codepage": "Windows 콘솔 출력 코드페이지를 UTF-8(65001)로 바꿀지 (chcp 65001 과 동일, 종료 시 복구). 콘솔을 바꾸면 안 되는 환경이면 false + console_encoding=native.",
     "log_level": "logs/ 파일 로그 레벨 (DEBUG 면 단계별 상세까지).",
     "log_max_mb": "로그 파일당 최대 크기(MB). 초과 시 로테이션.",
     "log_backups": "로테이션 보관 파일 수.",
@@ -541,9 +631,20 @@ SETTING_HELP: Dict[str, str] = {
     "wal_checkpoint_mb": "빌드 중 WAL 파일이 이 크기(MB)를 넘으면 체크포인트.",
     "embed_store_dtype": "벡터 저장/행렬 dtype: float32 | float16 (메모리 절반).",
     "build_lock_timeout": "다른 프로세스가 빌드 중일 때 락을 기다릴 초 (0=즉시 실패).",
+    "db_busy_timeout_s": "SQLite 쓰기 잠금 대기(초). CLI 빌드가 쓰는 동안 서버 질의의 로그 기록이 기다리는 시간 (WAL 이라 읽기는 기다리지 않음).",
+    "db_pool_size": "서버 스레드별 SQLite 연결 풀 크기 (server.json concurrency.max_parallel_reads 이상 권장).",
     "llm_timeout": "LLM 호출 1회의 HTTP 타임아웃(초). 로컬 모델(Ollama)이 느리면 늘리고, 멈춘 서버를 빨리 감지하려면 줄인다 (예: 120). headless 는 agents.json timeout_s(기본 300) 가 우선.",
     "llm_retries": "LLM 호출이 timeout/네트워크/headless 실행 실패(transient)면 재시도할 횟수 (최대 1+n 회). HTTP 4xx(인증·모델명) 는 재시도하지 않음. headless 는 agents.json retries 우선.",
-    "llm_retry_backoff_s": "재시도 사이 대기 초 (× 시도 번호).",
+    "llm_retry_backoff_s": "재시도 사이 기본 대기 초. linear 면 ×시도번호, exponential 이면 ×2^(시도-1) (+지터). 역할별: llm_roles.<role>.backoff_s",
+    "llm_retry_backoff": "재시도 대기 증가 방식 linear | exponential. 역할별: llm_roles.<role>.backoff",
+    "llm_retry_backoff_max_s": "재시도 대기 상한(초). 역할별: llm_roles.<role>.backoff_max_s",
+    "llm_budget_s": "한 LLM 호출의 재시도 포함 총 시간 예산(초). 넘으면 재시도를 멈추고 대체 경로(추출식 답변 등)로. 0=무제한. 역할별: llm_roles.<role>.budget_s",
+    "llm_frequency_penalty": "같은 토큰을 다시 쓸 때의 벌점(OpenAI 호환). 작은 모델이 한 구절을 수십 번 되풀이하는 고장을 줄인다. 0=끔, 0.2~0.6 권장.",
+    "llm_presence_penalty": "이미 나온 토큰에 주는 벌점(OpenAI 호환). 보통 0 으로 둔다.",
+    "llm_repeat_penalty": "Ollama 네이티브(/api/generate) 의 repeat_penalty. 1.0=억제 없음, 1.1 권장.",
+    "llm_http_retries": "HTTP 429/5xx 에 대한 프로바이더 내부 짧은 재시도 횟수 (llm_retries 와 곱해짐).",
+    "llm_circuit_failures": "같은 provider/model 이 연속 n회 최종 실패하면 회로 차단(circuit open): cooldown 동안 호출을 즉시 실패시켜 30명이 각각 timeout 을 기다리지 않게. 0=끔. 역할별: llm_roles.<role>.circuit_failures",
+    "llm_circuit_cooldown_s": "회로 차단 후 재시도까지 대기(초). 역할별: llm_roles.<role>.circuit_cooldown_s",
     "web_host": "serve 기본 바인드 주소 (플래그 --host 가 우선). 사내 공개는 0.0.0.0 — security.json 의 로그인 설정이 있어야 허용.",
     "web_port": "serve 기본 포트 (--port 가 우선). Web UI 와 MCP Streamable HTTP(POST /mcp) 가 같은 포트.",
     "mcp_transport": "mcp 명령 기본 전송: stdio | http (--transport 가 우선).",

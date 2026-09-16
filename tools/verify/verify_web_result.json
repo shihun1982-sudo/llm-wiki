@@ -1,0 +1,2193 @@
+[
+ {
+  "name": "GET /",
+  "path": "GET /",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8"
+ },
+ {
+  "name": "GET /login",
+  "path": "GET /login",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8"
+ },
+ {
+  "name": "static js/core.js",
+  "path": "GET /static/js/core.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* LLM Wiki UI core — utilities, API, sidebar(toggles/pres"
+ },
+ {
+  "name": "static js/ask.js",
+  "path": "GET /static/js/ask.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* Ask — 질의·답변·근거 판정·claim·pin·포렌"
+ },
+ {
+  "name": "static js/corpus.js",
+  "path": "GET /static/js/corpus.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "﻿/* Corpus — 빌드/상태/health/verify, 임베딩 cove"
+ },
+ {
+  "name": "static js/knowledge.js",
+  "path": "GET /static/js/knowledge.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* Knowledge — 그래프(provenance 필터), 위키, 그"
+ },
+ {
+  "name": "static js/quality.js",
+  "path": "GET /static/js/quality.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* Quality — trial 비교, 평가, 포렌식, fusion 비"
+ },
+ {
+  "name": "static js/evolve.js",
+  "path": "GET /static/js/evolve.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* Evolve — 제안(HITL), 메모리(에피소드·decay·c"
+ },
+ {
+  "name": "static js/settings.js",
+  "path": "GET /static/js/settings.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* Settings — 모델/프로바이더/엔드포인트/agent"
+ },
+ {
+  "name": "static js/observability.js",
+  "path": "GET /static/js/observability.js",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "﻿/* Observability — 요청 프로파일, 로그 뷰어, "
+ },
+ {
+  "name": "static style.css",
+  "path": "GET /static/style.css",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "/* LLM Wiki UI — 모든 색은 CSS 변수. 테마는 theme"
+ },
+ {
+  "name": "static themes/dark.css",
+  "path": "GET /static/themes/dark.css",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": ":root[data-theme=\"dark\"]{\n  --surface:#161715; --page:#12131"
+ },
+ {
+  "name": "static themes/themes.json",
+  "path": "GET /static/themes/themes.json",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\n  \"_comment\": \"테마 레지스트리. 새 테마 = themes"
+ },
+ {
+  "name": "static traversal",
+  "path": "GET /static/../config.json",
+  "status": 404,
+  "expect": 404,
+  "ok": true,
+  "out": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta ch"
+ },
+ {
+  "name": "guest me",
+  "path": "GET /api/auth/me",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"mode\": \"on\", \"local\": true, \"sso\": false, \"sso_type\": \"oidc\"}"
+ },
+ {
+  "name": "guest status",
+  "path": "GET /api/status",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"stats\": \"…\", \"providers\": \"…\", \"settings\": \"…\", \"toggle_names\": \"…\"}"
+ },
+ {
+  "name": "guest query",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "guest search",
+  "path": "POST /api/search",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\", \"request_id\": 3, \"cli\": \"python -m llmwiki search fts \\\"RX D"
+ },
+ {
+  "name": "guest feedback",
+  "path": "POST /api/feedback",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"query_id\": 1, \"feedback\": 1, \"proposals\": \"…\", \"episode\": 1}"
+ },
+ {
+  "name": "guest forensic expect",
+  "path": "POST /api/forensic/expect",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"request_id\": 2, \"run_id\": \"4dc47ed365d6\", \"query\": \"ISSUE-2001 의 원인과 수정 CL 은?\", \"expecte"
+ },
+ {
+  "name": "guest forensic llm",
+  "path": "POST /api/forensic/llm",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"heuristic\": \"…\", \"llm\": \"…\", \"available\": true}"
+ },
+ {
+  "name": "guest propose",
+  "path": "POST /api/evolve/propose",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": 2}"
+ },
+ {
+  "name": "guest pins test",
+  "path": "POST /api/pins",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"weights\": \"…\", \"inject\": \"…\", \"matched\": \"…\"}"
+ },
+ {
+  "name": "guest presets apply (memory)",
+  "path": "POST /api/presets",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"names\": \"…\", \"unknown\": \"…\", \"toggles\": \"…\", \"tuning\": \"…\"}"
+ },
+ {
+  "name": "guest build → 401",
+  "path": "POST /api/build",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: 'build (incremental)' 작업(색인 갱신(복구 가능))은 class1 이상 (게스트 viewer)\", \"s"
+ },
+ {
+  "name": "guest eval → 401",
+  "path": "POST /api/eval",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/eval' 작업(실행(토큰·시간 소모))은 class3 이상 (게스트 viewer)\", \"status\": 40"
+ },
+ {
+  "name": "guest pins add → 401",
+  "path": "POST /api/pins",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/pins add' 작업(지식 편집(복구 가능))은 class2 이상 (게스트 viewer)\", \"status\""
+ },
+ {
+  "name": "guest config → 401",
+  "path": "POST /api/config",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/config' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\": 401,"
+ },
+ {
+  "name": "guest users list → 401",
+  "path": "GET /api/auth/users",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/auth/users' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\": "
+ },
+ {
+  "name": "guest cli → 401",
+  "path": "POST /api/cli",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: 'cli:stats ' 작업(실행(토큰·시간 소모))은 class3 이상 (게스트 viewer)\", \"status\": 4"
+ },
+ {
+  "name": "guest GET /api/graph",
+  "path": "GET /api/graph?limit=20",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"nodes\": \"…\", \"edges\": \"…\", \"communities\": \"…\", \"provenance_counts\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/entity",
+  "path": "GET /api/entity?id=e:issue-2001",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"entity\": \"…\", \"relations\": \"…\", \"mentions\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/docs",
+  "path": "GET /api/docs",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[38]"
+ },
+ {
+  "name": "guest GET /api/queries",
+  "path": "GET /api/queries",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[1]"
+ },
+ {
+  "name": "guest GET /api/requests",
+  "path": "GET /api/requests?limit=5",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[3]"
+ },
+ {
+  "name": "guest GET /api/request",
+  "path": "GET /api/request?id=2",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": 2, \"ts\": 1789507232.1849587, \"kind\": \"query\", \"summary\": \"ISSUE-2001 의 원인과 수정 CL 은?"
+ },
+ {
+  "name": "guest GET /api/models",
+  "path": "GET /api/models",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"providers\": \"…\", \"settings\": \"…\", \"roles\": \"…\", \"role_attrs\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/system",
+  "path": "GET /api/system",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"index\": \"…\", \"avg_chunks_per_doc\": 5.0, \"embedding\": \"…\", \"projection\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/watch",
+  "path": "GET /api/watch",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"enabled\": true, \"last_scan\": 1789507231.6153045, \"last_result\": \"…\", \"last_build\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/tuning",
+  "path": "GET /api/tuning",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"tunables\": \"…\", \"stages\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3ev"
+ },
+ {
+  "name": "guest GET /api/architecture",
+  "path": "GET /api/architecture",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"flows\": \"…\", \"toggle_help\": \"…\", \"setting_help\": \"…\", \"tuning_stages\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/evolve/status",
+  "path": "GET /api/evolve/status",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"pending\": \"…\", \"recent_log\": \"…\", \"applied\": \"…\", \"synonyms\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/evolve/proposals",
+  "path": "GET /api/evolve/proposals",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[2]"
+ },
+ {
+  "name": "guest GET /api/wiki/list",
+  "path": "GET /api/wiki/list",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[48]"
+ },
+ {
+  "name": "guest GET /api/wiki/page",
+  "path": "GET /api/wiki/page?name=INDEX",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"name\": \"INDEX\", \"content\": \"# LLM Wiki 인덱스\\n\\n| 엔티티 | 유형 | 연결수 | 문서수 | 커뮤니티 |\\n|---|---|"
+ },
+ {
+  "name": "guest GET /api/eval/questions",
+  "path": "GET /api/eval/questions",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[25]"
+ },
+ {
+  "name": "guest GET /api/rules",
+  "path": "GET /api/rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"entities\": \"…\", \"relation_patterns\": \"…\", \"analyst_pattern\": \"\\\\*\\\\*([가-힣A-Za-z]+)\\\\s*\\\\"
+ },
+ {
+  "name": "guest GET /api/health",
+  "path": "GET /api/health?quick=1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"fails\": 0, \"warnings\": 0, \"checks\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/config/effective",
+  "path": "GET /api/config/effective",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[142]"
+ },
+ {
+  "name": "guest GET /api/presets",
+  "path": "GET /api/presets",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"presets\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\presets.j"
+ },
+ {
+  "name": "guest GET /api/presets/diff",
+  "path": "GET /api/presets/diff?name=speed",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[27]"
+ },
+ {
+  "name": "guest GET /api/prompts",
+  "path": "GET /api/prompts",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[12]"
+ },
+ {
+  "name": "guest GET /api/prompts",
+  "path": "GET /api/prompts?name=answer_guide",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"name\": \"answer_guide\", \"content\": \"# 답변 가이드 (Evidence-rich · Structured · Explanatory · "
+ },
+ {
+  "name": "guest GET /api/logs/files",
+  "path": "GET /api/logs/files",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\logs\", \"files\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/logs",
+  "path": "GET /api/logs?n=5",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"file\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\logs\\\\llmwiki.log\", \"rows"
+ },
+ {
+  "name": "guest GET /api/forensics",
+  "path": "GET /api/forensics",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[1]"
+ },
+ {
+  "name": "guest GET /api/forensics/summary",
+  "path": "GET /api/forensics/summary",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"n\": 1, \"by_verdict\": \"…\", \"top_topics\": \"…\", \"suggestion_kinds\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/forensic",
+  "path": "GET /api/forensic?request_id=2&rerun=1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"findings\": \"…\", \"suggestions\": \"…\", \"topics\": \"…\", \"severity\": \"info\"}"
+ },
+ {
+  "name": "guest GET /api/trials",
+  "path": "GET /api/trials",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[0]"
+ },
+ {
+  "name": "guest GET /api/pins",
+  "path": "GET /api/pins",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[0]"
+ },
+ {
+  "name": "guest GET /api/query_rules",
+  "path": "GET /api/query_rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"rules\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\query_rules"
+ },
+ {
+  "name": "guest GET /api/query_rules/test",
+  "path": "GET /api/query_rules/test?q=PDCCH",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"query\": \"PDCCH\", \"query_alias\": \"PDCCH\", \"fts_query\": \"\\\"pdcch\\\" OR (\\\"pdcch\\\" OR \\\"Phys"
+ },
+ {
+  "name": "guest GET /api/embed/report",
+  "path": "GET /api/embed/report",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"embedder\": \"…\", \"coverage\": \"…\", \"cache\": \"…\", \"progress\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/build/status",
+  "path": "GET /api/build/status",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"running\": false, \"lock\": \"…\", \"embed_progress\": \"…\", \"last_build\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/build/verify",
+  "path": "GET /api/build/verify",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"problems\": 0, \"checks\": \"…\", \"fixed\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/corpus/lint",
+  "path": "GET /api/corpus/lint",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"summary\": \"…\", \"rows\": \"…\", \"doc_types\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/corpus/types",
+  "path": "GET /api/corpus/types",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"schemas\": \"…\", \"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\schemas\", "
+ },
+ {
+  "name": "guest GET /api/mcp_sources",
+  "path": "GET /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"sources\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\mcp_sourc"
+ },
+ {
+  "name": "guest GET /api/memory",
+  "path": "GET /api/memory",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"episodes\": 2, \"episodes_with_feedback\": 2, \"proposals\": \"…\", \"avg_strength_proposed\": 1."
+ },
+ {
+  "name": "guest GET /api/precompute",
+  "path": "GET /api/precompute",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"entries\": 1, \"current_version\": 1, \"hits\": 0, \"build_version\": 1}"
+ },
+ {
+  "name": "guest GET /api/agents",
+  "path": "GET /api/agents",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"agents\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\agents.jso"
+ },
+ {
+  "name": "guest GET /api/themes",
+  "path": "GET /api/themes",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"_comment\": \"테마 레지스트리. 새 테마 = themes/<key>.css 에 :root[data-theme=\\\"<key>\\\"]{ --변수 } 만 재정"
+ },
+ {
+  "name": "guest GET /api/time",
+  "path": "GET /api/time?q=%EC%A7%80%EB%82%9C%EC%A3%BC",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"from\": \"2026-09-07\", \"to\": \"2026-09-13\", \"expr\": \"지난주\", \"query\": \"지난주\"}"
+ },
+ {
+  "name": "guest GET /api/progress",
+  "path": "GET /api/progress",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"running\": \"…\", \"jobs\": \"…\"}"
+ },
+ {
+  "name": "guest GET /api/snapshot",
+  "path": "GET /api/snapshot",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"snapshots\": \"…\"}"
+ },
+ {
+  "name": "guest GET chunk",
+  "path": "GET /api/chunk?id=sample_corpus_modem/README.md%230",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"chunk_id\": \"sample_corpus_modem/README.md#0\", \"doc_id\": \"sample_corpus_modem/README.md\","
+ },
+ {
+  "name": "guest GET doc_chunks",
+  "path": "GET /api/doc_chunks?id=sample_corpus_modem/README.md",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[1]"
+ },
+ {
+  "name": "guest GET query_trace",
+  "path": "GET /api/query_trace?id=1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"name\": \"query\", \"ms\": 30.0, \"self_ms\": 6.42, \"offset_ms\": 0.0}"
+ },
+ {
+  "name": "guest GET audit → 401",
+  "path": "GET /api/audit",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/audit' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\": 401, "
+ },
+ {
+  "name": "guest GET security → 401",
+  "path": "GET /api/security",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/security' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\": 40"
+ },
+ {
+  "name": "guest GET apikeys → 401",
+  "path": "GET /api/apikeys",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/apikeys' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\": 401"
+ },
+ {
+  "name": "guest 404",
+  "path": "GET /api/no/such",
+  "status": 404,
+  "expect": 404,
+  "ok": true,
+  "out": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta ch"
+ },
+ {
+  "name": "login v1",
+  "path": "POST /api/auth/login",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"user\": \"…\"}"
+ },
+ {
+  "name": "login bad",
+  "path": "POST /api/auth/login",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"아이디 또는 비밀번호가 올바르지 않습니다\"}"
+ },
+ {
+  "name": "viewer build → 403",
+  "path": "POST /api/build",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"권한 부족: 'build (incremental)' 작업(색인 갱신(복구 가능))은 class1 이상만 할 수 있습니다 (현재 viewer)\""
+ },
+ {
+  "name": "viewer password change",
+  "path": "POST /api/auth/password",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "viewer logout",
+  "path": "POST /api/auth/logout",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "login c1",
+  "path": "POST /api/auth/login",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"user\": \"…\"}"
+ },
+ {
+  "name": "c1 eval (run) job",
+  "path": "POST /api/eval",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"f6e5a099\"}"
+ },
+ {
+  "name": "c1 pins add (edit) → 428",
+  "path": "POST /api/pins",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"확인이 필요합니다: /api/pins add\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "c1 pins add confirmed",
+  "path": "POST /api/pins",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": \"p1\", \"doc\": \"RULE-ISR-001\", \"chunk\": \"…\", \"when\": \"…\"}"
+ },
+ {
+  "name": "c1 pins remove",
+  "path": "POST /api/pins",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "c1 build incremental (index) confirmed",
+  "path": "POST /api/build",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"58da8759\"}"
+ },
+ {
+  "name": "c1 build full → 403",
+  "path": "POST /api/build",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"권한 부족: 'build --full/--reset' 작업(리빌드 — 색인 채널/전체를 다시 만듦)은 builder 이상만 할 수 있습니다 ("
+ },
+ {
+  "name": "c1 channel build → 403",
+  "path": "POST /api/build",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"권한 부족: 'build channel fts' 작업(리빌드 — 색인 채널/전체를 다시 만듦)은 builder 이상만 할 수 있습니다 (현재 "
+ },
+ {
+  "name": "c1 config → 403",
+  "path": "POST /api/config",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"권한 부족: '/api/config' 작업(관리자 설정 변경)은 admin 이상만 할 수 있습니다 (현재 class1)\", \"status\": "
+ },
+ {
+  "name": "c1 cli stats (run)",
+  "path": "POST /api/cli",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"code\": 0, \"output\": \"{\\n  \\\"stats\\\": {\\n    \\\"docs\\\": 38,\\n    \\\"chunks\\\": 190,\\n    \\\"e"
+ },
+ {
+  "name": "c1 cli build --full → 403",
+  "path": "POST /api/cli",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"권한 부족: 'cli:build --full' 작업(리빌드 — 색인 채널/전체를 다시 만듦)은 builder 이상만 할 수 있습니다 (현재 c"
+ },
+ {
+  "name": "login admin",
+  "path": "POST /api/auth/login",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"user\": \"…\"}"
+ },
+ {
+  "name": "admin GET users",
+  "path": "GET /api/auth/users",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"users\": \"…\", \"mode\": \"on\", \"sso\": false, \"roles\": \"…\"}"
+ },
+ {
+  "name": "admin GET audit",
+  "path": "GET /api/audit?n=10",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"rows\": \"…\"}"
+ },
+ {
+  "name": "admin GET security",
+  "path": "GET /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"security\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\security"
+ },
+ {
+  "name": "admin GET apikeys",
+  "path": "GET /api/apikeys",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"keys\": \"…\", \"roles\": \"…\"}"
+ },
+ {
+  "name": "admin models/test",
+  "path": "POST /api/models/test",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"answer\": \"…\"}"
+ },
+ {
+  "name": "admin models/set",
+  "path": "POST /api/models/set",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"settings\": \"…\", \"providers\": \"…\"}"
+ },
+ {
+  "name": "admin config",
+  "path": "POST /api/config",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"settings\": \"…\", \"providers\": \"…\"}"
+ },
+ {
+  "name": "admin agents save",
+  "path": "POST /api/agents",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin mcp_sources test",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[1]"
+ },
+ {
+  "name": "admin mcp_sources ingest dry",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"sources\": \"…\", \"written\": 0, \"skipped\": 0, \"errors\": \"…\"}"
+ },
+ {
+  "name": "admin mcp_sources enrich",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "list[0]"
+ },
+ {
+  "name": "admin mcp_sources retrieve (외부 RAG)",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"results\": \"…\"}"
+ },
+ {
+  "name": "admin mcp_sources tools",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"name\": \"mock\", \"tools\": \"…\"}"
+ },
+ {
+  "name": "admin mcp_sources tools (unknown) → 400",
+  "path": "POST /api/mcp_sources",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"unknown source\"}"
+ },
+ {
+  "name": "admin mcp_sources federated",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"mcp_federation\": true, \"tools\": \"…\", \"errors\": \"…\", \"plugins\": \"…\"}"
+ },
+ {
+  "name": "guest mcp_sources retrieve → 401 (run 등급)",
+  "path": "POST /api/mcp_sources",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: 'mcp_sources retrieve' 작업(실행(토큰·시간 소모))은 class3 이상 (게스트 viewer)\", \""
+ },
+ {
+  "name": "guest query analysis_mode override",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "analysis md=True detail=2"
+ },
+ {
+  "name": "guest GET /api/analysis (json)",
+  "path": "GET /api/analysis?request_id=31&focus=quality",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"summary\": \"…\", \"paths\": \"…\", \"markdown\": \"# 질의 상세 분석 리포트 — request #31\\n\\n> 질의: **ISSUE-"
+ },
+ {
+  "name": "guest GET /api/analysis (md download)",
+  "path": "GET /api/analysis?request_id=31&format=md&download=1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "# 질의 상세 분석 리포트 — request #31\n\n> 질의: "
+ },
+ {
+  "name": "guest GET /api/analysis (unknown) → 404",
+  "path": "GET /api/analysis?request_id=999999",
+  "status": 404,
+  "expect": 404,
+  "ok": true,
+  "out": "{\"error\": \"request 999999 not found\"}"
+ },
+ {
+  "name": "mcp wiki_analysis",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 31, \"result\": \"…\"}"
+ },
+ {
+  "name": "admin query external_rag override",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "admin mcp_sources save",
+  "path": "POST /api/mcp_sources",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin tuning set",
+  "path": "POST /api/tuning",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"errors\": \"…\", \"overrides\": \"…\", \"tunables\": \"…\"}"
+ },
+ {
+  "name": "admin tuning reset",
+  "path": "POST /api/tuning",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"errors\": \"…\", \"overrides\": \"…\", \"tunables\": \"…\"}"
+ },
+ {
+  "name": "admin presets save",
+  "path": "POST /api/presets",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin presets apply save",
+  "path": "POST /api/presets",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"names\": \"…\", \"unknown\": \"…\", \"toggles\": \"…\", \"tuning\": \"…\"}"
+ },
+ {
+  "name": "admin prompts set",
+  "path": "POST /api/prompts",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\prompts\\\\rerank.md\", \"con"
+ },
+ {
+  "name": "admin prompts reset",
+  "path": "POST /api/prompts",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\prompts\\\\rerank.md\", \"con"
+ },
+ {
+  "name": "admin query_rules add",
+  "path": "POST /api/query_rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"type\": \"synonym\", \"term\": \"언더런\", \"values\": \"…\", \"source\": \"web\"}"
+ },
+ {
+  "name": "admin query_rules remove",
+  "path": "POST /api/query_rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin query_rules save",
+  "path": "POST /api/query_rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin rules save",
+  "path": "POST /api/rules",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin wiki page save",
+  "path": "POST /api/wiki/page",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin wiki page bad name",
+  "path": "POST /api/wiki/page",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"bad name\"}"
+ },
+ {
+  "name": "admin evolve review",
+  "path": "POST /api/evolve/review",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"proposals\": \"…\", \"usage\": \"…\", \"raw\": \"(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C3]\"}"
+ },
+ {
+  "name": "admin propose pin",
+  "path": "POST /api/evolve/propose",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": 3}"
+ },
+ {
+  "name": "admin evolve apply",
+  "path": "POST /api/evolve/apply",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"status\": \"applied\", \"before\": \"…\", \"after\": \"…\", \"rebuilt\": false}"
+ },
+ {
+  "name": "admin propose synonym",
+  "path": "POST /api/evolve/propose",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": 4}"
+ },
+ {
+  "name": "admin evolve reject",
+  "path": "POST /api/evolve/reject",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"status\": \"rejected\"}"
+ },
+ {
+  "name": "admin memory decay",
+  "path": "POST /api/memory",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"proposals_decayed\": 0, \"proposals_archived\": 0, \"pins_decayed\": 0}"
+ },
+ {
+  "name": "admin memory consolidate",
+  "path": "POST /api/memory",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"groups\": 13, \"proposals\": \"…\", \"min_events\": 3}"
+ },
+ {
+  "name": "admin build verify fix",
+  "path": "POST /api/build/verify",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"problems\": 0, \"checks\": \"…\", \"fixed\": \"…\"}"
+ },
+ {
+  "name": "admin precompute run job",
+  "path": "POST /api/precompute",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"e36fa1f2\"}"
+ },
+ {
+  "name": "admin precompute doc_vectors",
+  "path": "POST /api/precompute",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"doc_vectors\": 38, \"provider\": \"hash\"}"
+ },
+ {
+  "name": "admin precompute clear",
+  "path": "POST /api/precompute",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"removed\": 52}"
+ },
+ {
+  "name": "admin maintenance vacuum",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"vacuum\", \"ms\": 43.2, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance fts_optimize",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"fts_optimize\", \"ms\": 1.0, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance wal_checkpoint",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 1.3, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance clear_cache",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"clear_cache\", \"ms\": 2.1, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance warm_cache",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"warm_cache\", \"ms\": 0.8, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance refresh_doc_refs",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"refresh_doc_refs\", \"ms\": 1.1, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance purge → 428",
+  "path": "POST /api/maintenance",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"파괴적 작업 확인이 필요합니다: maintenance purge_requests\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance purge confirmed",
+  "path": "POST /api/maintenance",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"action\": \"purge_requests\", \"ms\": 3.9, \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin trials run job",
+  "path": "POST /api/trials",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"0f11ac02\"}"
+ },
+ {
+  "name": "admin trials compare",
+  "path": "GET /api/trials/compare?ids=w1,w1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"trials\": \"…\", \"same_questions\": true, \"metrics\": \"…\", \"per_question\": \"…\"}"
+ },
+ {
+  "name": "admin trial get",
+  "path": "GET /api/trial?id=w1",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"trial_id\": 1, \"name\": \"w1\", \"ts\": 1789507237.2342305, \"build_version\": 2}"
+ },
+ {
+  "name": "admin trials delete",
+  "path": "POST /api/trials",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ },
+ {
+  "name": "admin fusion compare job",
+  "path": "POST /api/fusion/compare",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"567dd84d\"}"
+ },
+ {
+  "name": "admin watch scan",
+  "path": "POST /api/watch",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"changed\": \"…\", \"removed\": \"…\", \"n_changed\": 0, \"n_removed\": 0}"
+ },
+ {
+  "name": "admin watch start",
+  "path": "POST /api/watch",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"enabled\": true, \"last_scan\": 1789507237.901577, \"last_result\": \"…\", \"last_build\": \"…\"}"
+ },
+ {
+  "name": "admin watch tick",
+  "path": "POST /api/watch",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"changed\": \"…\", \"removed\": \"…\", \"n_changed\": 0, \"n_removed\": 0}"
+ },
+ {
+  "name": "admin watch stop",
+  "path": "POST /api/watch",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"enabled\": false, \"last_scan\": 1789507237.9060311, \"last_result\": \"…\", \"last_build\": \"…\"}"
+ },
+ {
+  "name": "admin snapshot create",
+  "path": "POST /api/snapshot",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"name\": \"20260916-062037_w\", \"tag\": \"w\", \"ts\": 1789507237.9579961, \"actor\": \"kh82.kim\"}"
+ },
+ {
+  "name": "admin snapshot restore → 428",
+  "path": "POST /api/snapshot",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"리빌드 작업 확인이 필요합니다: snapshot restore\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin snapshot restore confirmed",
+  "path": "POST /api/snapshot",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"restored\": \"20260916-062037_w\", \"stats\": \"…\"}"
+ },
+ {
+  "name": "admin snapshot prune",
+  "path": "POST /api/snapshot",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"removed\": \"…\"}"
+ },
+ {
+  "name": "admin channel build → 428 phrase",
+  "path": "POST /api/build",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"리빌드 작업 확인이 필요합니다: build channel vector\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin channel build confirmed",
+  "path": "POST /api/build",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"12a9b5b8\"}"
+ },
+ {
+  "name": "admin build full confirmed",
+  "path": "POST /api/build",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"8bbc4e80\"}"
+ },
+ {
+  "name": "admin build purge_logs wrong pw → 428",
+  "path": "POST /api/build",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"파괴적 작업 확인이 필요합니다: build --full --purge-logs\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin users add",
+  "path": "POST /api/auth/users",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"users\": \"…\"}"
+ },
+ {
+  "name": "admin users set_role",
+  "path": "POST /api/auth/users",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"users\": \"…\"}"
+ },
+ {
+  "name": "admin users set_password",
+  "path": "POST /api/auth/users",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"users\": \"…\"}"
+ },
+ {
+  "name": "admin users remove self → 400",
+  "path": "POST /api/auth/users",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"자기 자신은 삭제할 수 없습니다\"}"
+ },
+ {
+  "name": "admin users remove",
+  "path": "POST /api/auth/users",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"users\": \"…\"}"
+ },
+ {
+  "name": "admin security set_permission",
+  "path": "POST /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"permissions\": \"…\"}"
+ },
+ {
+  "name": "admin security set_permissions",
+  "path": "POST /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"permissions\": \"…\"}"
+ },
+ {
+  "name": "admin security set_anonymous",
+  "path": "POST /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"anonymous_role\": \"viewer\"}"
+ },
+ {
+  "name": "admin security set_cli",
+  "path": "POST /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"cli\": \"…\"}"
+ },
+ {
+  "name": "admin security reload",
+  "path": "POST /api/security",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"mode\": \"on\"}"
+ },
+ {
+  "name": "admin security bad action",
+  "path": "POST /api/security",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"unknown action\"}"
+ },
+ {
+  "name": "admin apikeys add",
+  "path": "POST /api/apikeys",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"id\": \"5915a8a2\", \"token\": \"lwk_5915a8a2_0b2lTlTvcFXNxmnvT3oh0nLTPvyMHiNg\", \"name\": \"w-ke"
+ },
+ {
+  "name": "apikey query",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "mcp initialize (key)",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp tools/list (guest)",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "tools=13 federated=['mock__search']"
+ },
+ {
+  "name": "mcp federated call mock__search",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 21, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_external_search",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 22, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp federated call with depth header → guarded",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 23, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp bad token → 401",
+  "path": "POST /mcp",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": \"…\", \"error\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_query",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_search",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_related",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_doc",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_entity",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_propose",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_feedback",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_forensic",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp wiki_status",
+  "path": "POST /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"result\": \"…\"}"
+ },
+ {
+  "name": "mcp GET → 405",
+  "path": "GET /mcp",
+  "status": 405,
+  "expect": 405,
+  "ok": true,
+  "out": "{\"error\": \"SSE stream not supported; use POST (JSON response"
+ },
+ {
+  "name": "mcp DELETE",
+  "path": "DELETE /mcp",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{}"
+ },
+ {
+  "name": "admin apikeys remove",
+  "path": "POST /api/apikeys",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"keys\": \"…\"}"
+ },
+ {
+  "name": "admin cli console",
+  "path": "POST /api/cli",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"code\": 0, \"output\": \"{\\n  \\\"n\\\": 33,\\n  \\\"by_verdict\\\": {\\n    \\\"expectation\\\": 2,\\n    "
+ },
+ {
+  "name": "admin cli serve → 428 (admin 등급 확인)",
+  "path": "POST /api/cli",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"확인이 필요합니다: cli:serve\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin cli serve blocked",
+  "path": "POST /api/cli",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"code\": 1, \"output\": \"serve 는 콘솔에서 실행할 수 없습니다 (서버가 이미 실행 중; watch 는 --once 로).\"}"
+ },
+ {
+  "name": "bad apikey on /api/query → 401",
+  "path": "POST /api/query",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"API 키가 유효하지 않습니다 (폐기되었거나 잘못된 키)\", \"status\": 401, \"need\": \"…\"}"
+ },
+ {
+  "name": "non-lwk bearer → guest",
+  "path": "GET /api/auth/me",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"mode\": \"on\", \"local\": true, \"sso\": false, \"sso_type\": \"oidc\"}"
+ },
+ {
+  "name": "admin cli purge → 428",
+  "path": "POST /api/cli",
+  "status": 428,
+  "expect": 428,
+  "ok": true,
+  "out": "{\"error\": \"파괴적 작업 확인이 필요합니다: cli:maintenance purge_requests\", \"status\": 428, \"need\": \"…\"}"
+ },
+ {
+  "name": "admin cli purge confirmed",
+  "path": "POST /api/cli",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"code\": 0, \"output\": \"{\\n  \\\"ok\\\": true,\\n  \\\"action\\\": \\\"purge_requests\\\",\\n  \\\"ms\\\": 1."
+ },
+ {
+  "name": "guest activity (viewer 도 조회)",
+  "path": "GET /api/activity",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"running\": \"…\", \"queued\": \"…\", \"external\": \"…\", \"recent\": \"…\"}"
+ },
+ {
+  "name": "guest activity 필드",
+  "path": "GET /api/activity?history=5",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "running=0 queued=0 admin=False"
+ },
+ {
+  "name": "guest admin/server → 401 (로그인 안내)",
+  "path": "GET /api/admin/server",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/admin/server' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\""
+ },
+ {
+  "name": "guest cancel unknown → 404",
+  "path": "POST /api/activity",
+  "status": 404,
+  "expect": 404,
+  "ok": true,
+  "out": "{\"ok\": false, \"error\": \"실행 중인 요청이 아닙니다: nope\"}"
+ },
+ {
+  "name": "admin server status",
+  "path": "GET /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "uptime=8.0s clients=5"
+ },
+ {
+  "name": "admin set_limits",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"limits\": \"…\"}"
+ },
+ {
+  "name": "admin set_limits (없는 키) → 400",
+  "path": "POST /api/admin/server",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"'unknown key concurrency.nope'\"}"
+ },
+ {
+  "name": "admin block ip",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"list\": \"…\"}"
+ },
+ {
+  "name": "admin unblock ip",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"list\": \"…\"}"
+ },
+ {
+  "name": "admin sessions list",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"sessions\": \"…\"}"
+ },
+ {
+  "name": "admin circuit reset",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"circuits\": \"…\"}"
+ },
+ {
+  "name": "admin log_level DEBUG",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"log_level\": \"DEBUG\"}"
+ },
+ {
+  "name": "admin query (DEBUG 로그)",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "admin log_level INFO",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"log_level\": \"INFO\"}"
+ },
+ {
+  "name": "admin maintenance on",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"limits\": \"…\"}"
+ },
+ {
+  "name": "점검 모드: 게스트 질의 → 503",
+  "path": "POST /api/query",
+  "status": 503,
+  "expect": 503,
+  "ok": true,
+  "out": "{\"error\": \"서버 점검 중입니다. 잠시 후 다시 시도하세요.\", \"code\": \"maintenance\", \"retry_after_s\": 60.0}"
+ },
+ {
+  "name": "점검 모드: admin 은 통과",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "admin maintenance off",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"limits\": \"…\"}"
+ },
+ {
+  "name": "게스트 질의 복구",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "models catalog 조회",
+  "path": "GET /api/models/catalog",
+  "status": 200,
+  "expect": 200,
+  "ok": [
+   {
+    "id": "claude-fable-5-1",
+    "provider": "anthropic",
+    "label": "Claude Fable 5.1 (최상위)",
+    "roles": [
+     "answer",
+     "review",
+     "forensic"
+    ],
+    "tags": [
+     "quality"
+    ],
+    "context_k": 200,
+    "enabled": true,
+    "notes": "Anthropic 직접 또는 anthropic_base_url 게이트웨이"
+   },
+   {
+    "id": "claude-opus-5",
+    "provider": "anthropic",
+    "label": "Claude Opus 5",
+    "roles": [
+     "answer",
+     "review",
+     "forensic",
+     "extract"
+    ],
+    "tags": [
+     "quality"
+    ],
+    "context_k": 200,
+    "enabled": true,
+    "notes": ""
+   },
+   {
+    "id": "claude-sonnet-5",
+    "provider": "anthropic",
+    "label": "Claude Sonnet 5",
+    "roles": [],
+    "tags": [
+     "balanced"
+    ],
+    "context_k": 200,
+    "enabled": true,
+    "notes": "전 역할 기본 추천"
+   },
+   {
+    "id": "claude-haiku-4-5-20251001",
+    "provider": "anthropic",
+    "label": "Claude Haiku 4.5",
+    "roles": [
+     "rerank",
+     "expand",
+     "verify",
+     "summary"
+    ],
+    "tags": [
+     "fast",
+     "cheap"
+    ],
+    "context_k": 200,
+    "enabled": true,
+    "notes": "보조 역할용"
+   },
+   {
+    "id": "llama3.1",
+    "provider": "ollama",
+    "label": "Llama 3.1 8B (local)",
+    "roles": [],
+    "tags": [
+     "local"
+    ],
+    "context_k": 128,
+    "enabled": true,
+    "notes": "ollama pull llama3.1"
+   },
+   {
+    "id": "qwen2.5:7b",
+    "provider": "ollama",
+    "label": "Qwen2.5 7B (local)",
+    "roles": [],
+    "tags": [
+     "local",
+     "korean"
+    ],
+    "context_k": 32,
+    "enabled": true,
+    "notes": "ollama pull qwen2.5:7b"
+   },
+   {
+    "id": "exaone3.5:7.8b",
+    "provider": "ollama",
+    "label": "EXAONE 3.5 7.8B (local, 한국어)",
+    "roles": [],
+    "tags": [
+     "local",
+     "korean"
+    ],
+    "context_k": 32,
+    "enabled": true,
+    "notes": ""
+   },
+   {
+    "id": "gpt-4o-mini",
+    "provider": "openai",
+    "label": "gpt-4o-mini (OpenAI-compatible 게이트웨이)",
+    "roles": [],
+    "tags": [
+     "gateway"
+    ],
+    "context_k": 128,
+    "enabled": true,
+    "notes": "openai_base_url + PAT"
+   },
+   {
+    "id": "Qwen/Qwen2.5-7B-Instruct",
+    "provider": "openai",
+    "label": "Qwen2.5-7B-Instruct (vLLM)",
+    "roles": [],
+    "tags": [
+     "gateway",
+     "local"
+    ],
+    "context_k": 32,
+    "enabled": true,
+    "notes": "vLLM/LM Studio 의 모델 id"
+   },
+   {
+    "id": "anthropic/claude-sonnet-4-5",
+    "provider": "headless:opencode",
+    "label": "opencode → claude-sonnet-4-5",
+    "roles": [],
+    "tags": [
+     "headless"
+    ],
+    "context_k": 200,
+    "enabled": true,
+    "notes": "agents.json opencode; model 은 provider/model 형식"
+   },
+   {
+    "id": "mock",
+    "provider": "mock",
+    "label": "mock (테스트용, 네트워크 없음)",
+    "roles": [],
+    "tags": [
+     "test"
+    ],
+    "context_k": 0,
+    "enabled": true,
+    "notes": "배선 검증·스트레스 테스트"
+   }
+  ],
+  "out": "models=11 embed=6"
+ },
+ {
+  "name": "guest catalog 수정 → 401",
+  "path": "POST /api/models/catalog",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/models/catalog add' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"s"
+ },
+ {
+  "name": "admin catalog add",
+  "path": "POST /api/models/catalog",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"catalog\": \"…\"}"
+ },
+ {
+  "name": "catalog add 반영",
+  "path": "GET /api/models/catalog?role=answer",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\models.json\", \"models\": \""
+ },
+ {
+  "name": "admin catalog remove",
+  "path": "POST /api/models/catalog",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"catalog\": \"…\"}"
+ },
+ {
+  "name": "models 역할 정책 포함",
+  "path": "GET /api/models",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"providers\": \"…\", \"settings\": \"…\", \"roles\": \"…\", \"role_attrs\": \"…\"}"
+ },
+ {
+  "name": "admin 역할별 정책 저장",
+  "path": "POST /api/models/set",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"settings\": \"…\", \"providers\": \"…\"}"
+ },
+ {
+  "name": "역할 정책 반영 확인",
+  "path": "GET /api/models",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"providers\": \"…\", \"settings\": \"…\", \"roles\": \"…\", \"role_attrs\": \"…\"}"
+ },
+ {
+  "name": "역할별 정책 되돌리기",
+  "path": "POST /api/models/set",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"settings\": \"…\", \"providers\": \"…\"}"
+ },
+ {
+  "name": "schedule 조회",
+  "path": "GET /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\schedule.js"
+ },
+ {
+  "name": "guest schedule 수정 → 401",
+  "path": "POST /api/schedule",
+  "status": 401,
+  "expect": 401,
+  "ok": true,
+  "out": "{\"error\": \"로그인이 필요합니다: '/api/schedule add' 작업(관리자 설정 변경)은 admin 이상 (게스트 viewer)\", \"status\""
+ },
+ {
+  "name": "admin schedule add",
+  "path": "POST /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"tasks\": \"…\"}"
+ },
+ {
+  "name": "schedule 목록에 반영",
+  "path": "GET /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\schedule.js"
+ },
+ {
+  "name": "admin schedule 즉시 실행",
+  "path": "POST /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"job\": \"sch-web_verify-ddef4b\", \"tasks\": \"…\"}"
+ },
+ {
+  "name": "schedule 이력",
+  "path": "GET /api/schedule?n=5",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_3evz1uji\\\\schedule.js"
+ },
+ {
+  "name": "admin schedule disable",
+  "path": "POST /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"tasks\": \"…\"}"
+ },
+ {
+  "name": "admin schedule remove",
+  "path": "POST /api/schedule",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"tasks\": \"…\"}"
+ },
+ {
+  "name": "admin schedule 잘못된 작업 → 400",
+  "path": "POST /api/schedule",
+  "status": 400,
+  "expect": 400,
+  "ok": true,
+  "out": "{\"error\": \"cron 은 5필드: 분 시 일 월 요일 (예 '0 3 * * *')\"}"
+ },
+ {
+  "name": "버스트용 제한 완화",
+  "path": "POST /api/admin/server",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"limits\": \"…\"}"
+ },
+ {
+  "name": "동시 질의 20건 (게스트)",
+  "path": "POST /api/query ×20",
+  "status": "200",
+  "expect": 200,
+  "ok": true,
+  "out": "20/20 OK"
+ },
+ {
+  "name": "admin 전체 빌드 시작(취소용)",
+  "path": "POST /api/build",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"ef703218\"}"
+ },
+ {
+  "name": "admin 작업 취소 (DELETE /api/jobs)",
+  "path": "DELETE /api/jobs/ef703218",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true, \"token\": \"ef703218\", \"status\": \"running\"}"
+ },
+ {
+  "name": "취소된 작업 상태",
+  "path": "GET /api/jobs/<id>",
+  "status": "cancelled",
+  "expect": "cancelled|done",
+  "ok": true,
+  "out": "cancelled by kh82.kim: user request"
+ },
+ {
+  "name": "취소 후 전체 빌드 정상",
+  "path": "POST /api/build",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"job\": \"c78bb8d2\"}"
+ },
+ {
+  "name": "취소 후 빌드 복구",
+  "path": "GET /api/jobs/<id>",
+  "status": "done",
+  "expect": "done",
+  "ok": true,
+  "out": ""
+ },
+ {
+  "name": "취소 후 질의 정상",
+  "path": "POST /api/query",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"result\": \"…\", \"trace\": \"…\"}"
+ },
+ {
+  "name": "csrf origin → 403",
+  "path": "POST /api/query",
+  "status": 403,
+  "expect": 403,
+  "ok": true,
+  "out": "{\"error\": \"cross-origin 요청 차단 (Origin http://evil.example)\", \"status\": 403}"
+ },
+ {
+  "name": "admin logout",
+  "path": "POST /api/auth/logout",
+  "status": 200,
+  "expect": 200,
+  "ok": true,
+  "out": "{\"ok\": true}"
+ }
+]

@@ -18,6 +18,9 @@ from typing import Any, Dict, List, Optional, Iterable, Tuple
 from .textutil import sha1
 
 SUPPORTED = (".md", ".txt", ".csv", ".html", ".htm", ".pdf")
+# 코퍼스 폴더 안에 있어도 색인하지 않는 폴더. _originals 는 tools/corpus_ingest.py 가 변환 전 원본을 보관하는 곳이라
+# 색인하면 같은 내용이 두 번 들어간다 (원본은 추적·재변환용으로만 둔다).
+EXCLUDE_DIRS = {"_originals", "_archive", "__pycache__", "node_modules"}
 
 
 @dataclass
@@ -169,7 +172,7 @@ def iter_corpus(dirs: Iterable[str], known: Optional[Dict[str, Dict[str, Any]]] 
             st["missing_dirs"].append(d)
             continue
         for base, _dirs, files in os.walk(d):
-            _dirs[:] = [x for x in _dirs if not x.startswith(".") or x == ".claude"]  # 숨김 폴더 제외(.claude 는 허용)
+            _dirs[:] = [x for x in _dirs if (not x.startswith(".") or x == ".claude") and x not in EXCLUDE_DIRS]  # 숨김 폴더 제외(.claude 는 허용)
             for fn in sorted(files):
                 p = os.path.join(base, fn)
                 st["files_seen"] += 1
@@ -202,7 +205,7 @@ def scan_changed(dirs: Iterable[str], known: Dict[str, Dict[str, Any]]) -> Dict[
         if not os.path.isdir(d):
             continue
         for base, _dirs, files in os.walk(d):
-            _dirs[:] = [x for x in _dirs if not x.startswith(".") or x == ".claude"]
+            _dirs[:] = [x for x in _dirs if (not x.startswith(".") or x == ".claude") and x not in EXCLUDE_DIRS]
             for fn in files:
                 if os.path.splitext(fn)[1].lower() not in SUPPORTED:
                     continue

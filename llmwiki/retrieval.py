@@ -467,7 +467,8 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
             st.note(prompt_chars=len(prompt) + len(sys_p), est_input_tokens=(len(prompt) + len(sys_p)) // 3)
             st.sample(prompt=prompt[:6000])
             try:
-                r = llm.complete(sys_p, prompt, max_tokens=400, effort=effort, json_mode=True)
+                mt = settings.role_max_tokens("rerank", 400) if settings is not None and hasattr(settings, "role_max_tokens") else 400
+                r = llm.complete(sys_p, prompt, max_tokens=mt, effort=effort, json_mode=True)
                 st.sample(response=r["text"][:2000])
                 data = parse_json(r["text"]) or {}
                 order = [int(i) for i in data.get("ranking", []) if isinstance(i, (int, float)) and 0 <= int(i) < len(cands)]

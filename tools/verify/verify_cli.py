@@ -25,7 +25,9 @@ ENV = dict(os.environ, PYTHONIOENCODING="utf-8", LLMWIKI_CONFIG=os.path.join(tmp
            LLMWIKI_QUERY_RULES_PATH=os.path.join(tmp, "query_rules.json"), LLMWIKI_MCP_SOURCES_PATH=os.path.join(tmp, "mcp_sources.json"),
            LLMWIKI_AGENTS_PATH=os.path.join(tmp, "agents.json"), LLMWIKI_PINS_PATH=os.path.join(tmp, "pins.json"), LLMWIKI_RULES_PATH=os.path.join(tmp, "rules.json"),
            LLMWIKI_SCHEMAS_DIR_PATH=os.path.join(tmp, "schemas"), LLMWIKI_PROMPTS_DIR_PATH=os.path.join(tmp, "prompts"), LLMWIKI_EVAL_PATH=os.path.join(tmp, "questions.json"),
-           LLMWIKI_LOGS_DIR_PATH=os.path.join(tmp, "logs"), LLMWIKI_SECURITY_PATH=os.path.join(tmp, "security.json"))
+           LLMWIKI_LOGS_DIR_PATH=os.path.join(tmp, "logs"), LLMWIKI_SECURITY_PATH=os.path.join(tmp, "security.json"),
+           LLMWIKI_SERVER_PATH=os.path.join(tmp, "server.json"), LLMWIKI_SCHEDULE_PATH=os.path.join(tmp, "schedule.json"),
+           LLMWIKI_MODELS_PATH=os.path.join(tmp, "models.json"))
 for k in ("LLMWIKI_USER", "LLMWIKI_PASSWORD", "LLMWIKI_API_KEY"):
     ENV.pop(k, None)
 
@@ -281,10 +283,63 @@ rows[-1]["ok"] = rows[-1]["ok"] and '"timeline"' in out and '"lenses"' in out
 run("tuning set forensic_*", ["tuning", "set", "forensic_near_miss_mult=4", "forensic_term_targets=10"])
 run("tuning reset forensic_near_miss_mult", ["tuning", "reset", "forensic_near_miss_mult"])
 run("tuning doc", ["tuning", "doc"])
+# ---- 다중 사용자·스케줄·모델 카탈로그 (2026-09-15) ----
+out = run("models list (카탈로그)", ["models", "list"])
+rows[-1]["ok"] = rows[-1]["ok"] and "모델 카탈로그" in out
+out = run("models list --role rerank", ["models", "list", "--role", "rerank"])
+out = run("models policy", ["models", "policy"])
+rows[-1]["ok"] = rows[-1]["ok"] and "timeout" in out and "answer" in out
+run("models catalog add", ["models", "catalog", "add", "verify-model", "--provider", "ollama", "--label", "검증용", "--roles", "answer"])
+run("models catalog add (임베딩)", ["models", "catalog", "add", "verify-embed", "--provider", "ollama", "--embedding"])
+run("models catalog remove (임베딩)", ["models", "catalog", "remove", "verify-embed"])
+# 토글 이름과 겹치는 플래그가 설정을 덮어쓰지 않는지 (2026-09-15 회귀 방지): models set 뒤에도 embed 토글이 유지돼야 한다
+out = run("models set 후 embed 토글 유지", ["config", "show", "--json"])
+rows[-1]["ok"] = rows[-1]["ok"] and '"embed": true' in out.replace("True", "true")
+out = run("models list (추가 확인)", ["models", "list", "--json"])
+rows[-1]["ok"] = rows[-1]["ok"] and "verify-model" in out
+run("models catalog remove", ["models", "catalog", "remove", "verify-model"])
+run("models catalog remove (없음)", ["models", "catalog", "remove", "nope-model"], expect=1)
+run("models discover", ["models", "discover"])
+run("models set 역할 정책", ["models", "set", "answer_timeout_s=120", "answer_retries=2", "rerank_backoff=linear"])
+out = run("models policy (역할 반영)", ["models", "policy"])
+rows[-1]["ok"] = rows[-1]["ok"] and "120" in out
+run("models set 되돌리기", ["models", "set", "answer_timeout_s=", "answer_retries=", "rerank_backoff="])
+
+run("schedule list (비어 있음)", ["schedule", "list"])
+run("schedule add", ["schedule", "add", "--task", json.dumps({"name": "verify-maint", "every": "1h", "action": {"type": "maintenance", "action": "wal_checkpoint"}})])
+out = run("schedule list", ["schedule", "list"])
+rows[-1]["ok"] = rows[-1]["ok"] and "verify-maint" in out
+run("schedule show", ["schedule", "show", "verify-maint"])
+run("schedule validate", ["schedule", "validate"])
+out = run("schedule run (즉시 실행)", ["schedule", "run", "verify-maint"], timeout=300)
+rows[-1]["ok"] = rows[-1]["ok"] and "done" in out
+run("schedule history", ["schedule", "history", "-n", "5"])
+run("schedule disable", ["schedule", "disable", "verify-maint"])
+run("schedule enable", ["schedule", "enable", "verify-maint"])
+run("schedule add (query 동작)", ["schedule", "add", "--task", json.dumps({"name": "verify-digest", "at": "03:00", "days": ["mon"],
+                                                                          "action": {"type": "query", "q": "ISSUE-2001 원인", "out": os.path.join(tmp, "digest.md"), "log": False}})])
+out = run("schedule run (query)", ["schedule", "run", "verify-digest"], timeout=300)
+rows[-1]["ok"] = rows[-1]["ok"] and "done" in out and os.path.exists(os.path.join(tmp, "digest.md"))
+run("schedule add (잘못된 cron)", ["schedule", "add", "--task", json.dumps({"name": "bad", "cron": "nope", "action": {"type": "build"}})], expect=1)
+run("schedule add (없는 동작)", ["schedule", "add", "--task", json.dumps({"name": "bad2", "every": "1h", "action": {"type": "nope"}})], expect=1)
+run("schedule run (없는 작업)", ["schedule", "run", "nope"], expect=1)
+run("schedule remove", ["schedule", "remove", "verify-maint"])
+run("schedule remove (없음)", ["schedule", "remove", "nope"], expect=1)
+run("schedule remove digest", ["schedule", "remove", "verify-digest"])
+
+run("server status (서버 없음)", ["server", "status"], expect=1)
+run("server cancel (인자 없음)", ["server", "cancel"], expect=1)
+run("server limits (서버 없음)", ["server", "limits"], expect=1)
+run("--log-level DEBUG", ["--log-level", "DEBUG", "query", "ISSUE-2001 원인", "--no-log"])
+out = run("logs grep DEBUG", ["logs", "grep", "--level", "DEBUG", "-n", "5"])
+rows[-1]["ok"] = rows[-1]["ok"] and ("DEBUG" in out or "[]" in out)
+
 run("config reset (no --yes)", ["config", "reset"], expect=4)
 run("config reset --yes", ["config", "reset", "--yes"])
 run("help", ["--help"])
 run("query --help", ["query", "--help"])
+run("server --help", ["server", "--help"])
+run("schedule --help", ["schedule", "--help"])
 
 # ---- 리포트 ----
 bad = [r for r in rows if not r["ok"]]

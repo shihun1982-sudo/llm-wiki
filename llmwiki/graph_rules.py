@@ -171,19 +171,18 @@ def entity_id_for(name: str) -> str:
 
 
 def load_rules(path: Optional[str] = None) -> Dict[str, object]:
+    from . import atomicio
     path = path or rules_path()
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    got = atomicio.read_json(path)
+    if isinstance(got, dict):
+        return got
     save_rules(DEFAULT_RULES, path)
     return json.loads(json.dumps(DEFAULT_RULES))
 
 
 def save_rules(rules: Dict[str, object], path: Optional[str] = None) -> None:
-    path = path or rules_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
+    from . import atomicio
+    atomicio.write_json(path or rules_path(), rules)
 
 
 class RuleExtractor:

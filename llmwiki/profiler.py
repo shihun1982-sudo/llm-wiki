@@ -20,18 +20,35 @@ import traceback
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-# 전역 카운터: Store(SQL) 와 providers(LLM) 가 증가시키고 Stage 가 진입/종료 시점의 차이를 기록한다.
+# 카운터: Store(SQL) 와 providers(LLM) 가 증가시키고 Stage 가 진입/종료 시점의 차이를 기록한다.
+# 요청(스레드) 단위로 분리한다 — 여러 질의가 동시에 실행될 때 서로의 SQL/LLM/토큰 수가 섞이지 않도록 (2026-09-15 병렬화).
+# COUNTERS 는 프로세스 전체 누적(관측용), _TL.counters 는 현재 스레드 누적(Stage 가 읽는 값).
 COUNTERS: Dict[str, float] = {"sql": 0, "llm_calls": 0, "llm_input_tokens": 0, "llm_output_tokens": 0,
                               "embed_calls": 0, "embed_texts": 0}
 _CLOCK = threading.Lock()
+_TL = threading.local()
+
+
+def _tl_counters() -> Dict[str, float]:
+    c = getattr(_TL, "counters", None)
+    if c is None:
+        c = _TL.counters = {}
+    return c
 
 
 def count(key: str, n: float = 1) -> None:
+    c = _tl_counters()
+    c[key] = c.get(key, 0) + n
     with _CLOCK:
         COUNTERS[key] = COUNTERS.get(key, 0) + n
 
 
 def _snapshot() -> Dict[str, float]:
+    return dict(_tl_counters())
+
+
+def totals() -> Dict[str, float]:
+    """프로세스 전체 누적 카운터 (서버 모니터용)."""
     with _CLOCK:
         return dict(COUNTERS)
 
@@ -178,16 +195,18 @@ class Profiler:
         with self._lock:
             self._stack[-1].children.append(st)
             self._stack.append(st)
+        _pg = None
         try:
-            from . import progress as _pg   # 실시간 진행 표시 (Web 폴링용) — 바인딩된 스레드에서만 기록
-            _pg.stage_enter(name, meta)
-        except Exception:
-            _pg = None
-        try:
+            try:
+                from . import progress as _pg   # 실시간 진행 표시 (Web 폴링용) — 바인딩된 스레드에서만 기록
+                _pg.stage_enter(name, meta)     # 취소 요청이 있으면 여기서 progress.Cancelled (BaseException) 가 난다
+            except Exception:
+                _pg = None
             yield st
-        except Exception as e:
+        except BaseException as e:
             st.error = "%s: %s" % (type(e).__name__, e)
-            st.logs.append(traceback.format_exc()[-800:])
+            if isinstance(e, Exception):
+                st.logs.append(traceback.format_exc()[-800:])
             raise
         finally:
             st.close()

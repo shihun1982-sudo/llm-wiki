@@ -38,6 +38,7 @@ from . import progress as _pg
 
 
 def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
+    p.set_defaults(_has_toggle_flags=True)   # 이 명령만 토글 플래그(--fts/--no-fts …)를 갖는다 (_overrides_from_ns 가 확인)
     for name in Toggles.__dataclass_fields__:
         dash = name.replace("_", "-")
         p.add_argument("--%s" % dash, dest=name, action="store_true", default=None, help="enable %s" % name)
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="llmwiki", description="LLM Wiki: FTS + Vector + GraphRAG (self-evolving)")
     ap.add_argument("--user", dest="cli_user", default=None, help="CLI 실행자 로컬 계정 (security.json users). 비밀번호는 --password / LLMWIKI_PASSWORD / 프롬프트. 기본 역할은 security.json cli.default_role")
     ap.add_argument("--password", dest="cli_password", default=None, help="--user 의 비밀번호 (스크립트용; 가능하면 LLMWIKI_PASSWORD 환경변수 사용)")
+    ap.add_argument("--log-level", dest="log_level", default=None, help="이번 실행의 logs/ 파일 로그 레벨 (DEBUG|INFO|WARNING|ERROR; = LLMWIKI_LOG_LEVEL)")
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("build", help="코퍼스 색인 (FTS/Vector/Graph/Wiki) · build status · build verify [--fix] · build fts|vector|graph [--full] (채널 리빌드)")
@@ -169,10 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("precompute", help="답변 사전 계산 캐시: run [--from-log N] | status | clear [--stale] | doc-vectors(문서 카드 임베딩 재생성)")
-    p.add_argument("action", choices=["run", "status", "clear", "doc-vectors"], nargs="?", default="status")
+    p = sub.add_parser("precompute", help="답변 사전 계산 캐시: run [--from-log N] | status | check(고장난 답변 찾기) | clear [--stale|--broken] | doc-vectors(문서 카드 임베딩 재생성)")
+    p.add_argument("action", choices=["run", "status", "check", "clear", "doc-vectors"], nargs="?", default="status")
     p.add_argument("--from-log", type=int, default=20)
     p.add_argument("--stale", action="store_true")
+    p.add_argument("--broken", action="store_true", help="같은 구절을 되풀이하는 고장난 답변만 지운다 (precompute check 로 먼저 확인)")
     _add_toggle_flags(p)   # --json 포함
 
     p = sub.add_parser("forensic", help="포렌식: <request_id> | last | list | summary | run <request_id> [--llm] | expect <request_id|last> --doc … --term … (기대 결과 포렌식)")
@@ -276,10 +279,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true", help="reset: 확인 문구 생략")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("models", help="역할별 LLM/임베딩 모델 설정 보기·테스트·변경")
-    p.add_argument("action", choices=["show", "test", "set"], nargs="?", default="show")
-    p.add_argument("kv", nargs="*", help="set: answer_model=claude-opus-5 rerank_provider=ollama rerank_model=llama3.1 embed_provider=hash ...")
+    p = sub.add_parser("models", help="역할별 LLM/임베딩 모델 설정 보기·테스트·변경 · 카탈로그(models.json): list | catalog add|remove | discover")
+    p.add_argument("action", choices=["show", "test", "set", "list", "catalog", "discover", "policy"], nargs="?", default="show",
+                   help="show(역할별 설정+정책) | test [--live] | set k=v | list [--role r] [--provider p] (카탈로그) | catalog add <id> --provider … | catalog remove <id> | discover (서버가 제공하는 모델 조회) | policy (역할별 timeout/retry 표)")
+    p.add_argument("kv", nargs="*", help="set: answer_model=claude-opus-5 rerank_provider=ollama answer_timeout_s=120 answer_retries=2 embed_provider=hash ... | catalog add <id> | catalog remove <id>")
     p.add_argument("--live", action="store_true", help="test: ping 외에 실제 완성 호출 1회 (PAT 권한·헤더·모델명·headless 실행 확인, 토큰 소량 소비)")
+    p.add_argument("--role", default=None, help="list: 역할 필터")
+    p.add_argument("--provider", default=None, help="list/catalog add: provider")
+    p.add_argument("--label", default=None, help="catalog add: 표시 이름")
+    p.add_argument("--roles", default=None, help="catalog add: 쉼표 목록 (비우면 전 역할)")
+    p.add_argument("--tags", default=None, help="catalog add: 쉼표 목록")
+    p.add_argument("--notes", default=None, help="catalog add: 메모")
+    # 주의: dest 는 토글 이름(embed 등)과 겹치면 안 된다 — _overrides_from_ns 가 토글로 오인해 설정을 덮어쓴다
+    p.add_argument("--embedding", dest="catalog_embed", action="store_true", help="catalog add/remove: 임베딩 모델 목록에 넣기")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("server", help="실행 중인 서버(serve) 모니터/제어 (HTTP): status | requests | cancel <token> | limits [set k=v …] | block add|remove ip|user <값> | sessions [revoke <sid>] | maintenance on|off | kick <user> | circuits [reset]")
+    p.add_argument("action", choices=["status", "requests", "cancel", "limits", "block", "sessions", "maintenance", "kick", "circuits", "log-level"], nargs="?", default="status")
+    p.add_argument("args", nargs="*", help="cancel <token> | limits set concurrency.max_parallel_reads=16 … | block add ip 10.0.0.5 | sessions revoke <sid> | maintenance on [메시지] | kick <user> | circuits reset [key] | log-level DEBUG")
+    p.add_argument("--url", default=None, help="서버 URL (기본 http://<web_host>:<web_port>)")
+    p.add_argument("--token", default=None, help="admin API 키 (LLMWIKI_API_KEY); 없으면 --user/--password 로 로그인")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("schedule", help="스케줄 작업(schedule.json): list | show <name> | run <name> (서버 없이 지금 실행) | enable|disable <name> | remove <name> | add --task '<json>' | history [-n N] | validate | trigger <name> (실행 중인 서버에 요청)")
+    p.add_argument("action", choices=["list", "show", "run", "enable", "disable", "remove", "add", "history", "validate", "trigger"], nargs="?", default="list")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--task", default=None, help="add: 작업 JSON (예 '{\"name\":\"nightly\",\"cron\":\"0 3 * * *\",\"action\":{\"type\":\"build\"}}')")
+    p.add_argument("-n", type=int, default=30, help="history: 최근 N 건")
+    p.add_argument("--url", default=None, help="trigger: 서버 URL")
+    p.add_argument("--token", default=None, help="trigger: admin API 키")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("requests", help="요청별 프로파일/디버그 trace 조회")
@@ -311,8 +339,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stage", default=None, help="show 시 단계 필터")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("arch", help="구조/흐름과 토글·CLI·튜닝 영향 (Web Architecture 탭과 동일 정의)")
+    p = sub.add_parser("arch", help="구조/흐름과 토글·CLI·튜닝 영향 (Web Architecture 탭과 동일 정의). `arch doc` = 최적화 가이드 문서 생성")
+    p.add_argument("action", nargs="?", choices=["show", "doc"], default="show",
+                   help="show(기본) | doc(docs/OPTIMIZATION_GUIDE.md 생성)")
     p.add_argument("--flow", default=None, help="query|build|evolve|watch")
+    p.add_argument("--out", default=None, help="doc 의 출력 파일 (기본 docs/OPTIMIZATION_GUIDE.md)")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("optimize", help="LLM 에게 그대로 줄 최적화 자료 묶음 생성 (가이드 + 지금 설정 + 질의 실측 + 지시문)")
+    p.add_argument("target", nargs="?", default="last", help="request id 또는 last")
+    p.add_argument("--focus", choices=["all", "quality", "speed", "tokens"], default="all")
+    p.add_argument("--out", default=None, help="출력 파일 (생략하면 화면)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("mcp", help="MCP 서버: stdio(기본) | --transport http (Streamable HTTP, 원격 LLM 다수) | --connect URL (stdio→HTTP 브리지)")
@@ -323,6 +360,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", default=None, help="브리지/HTTP: API 키 (apikey add …; LLMWIKI_MCP_TOKEN)")
     p.add_argument("--insecure", action="store_true", help="http: 로그인 설정 없이 외부에 공개 (권장하지 않음)")
     p.add_argument("--client-config", action="store_true", help="실행하지 않고, 이 환경(python 경로·프로젝트 루트·web_host/web_port) 기준 MCP 클라이언트 설정 JSON(stdio/http/브리지) 을 출력")
+    p.add_argument("--doctor", action="store_true", help="실행하지 않고, MCP 설정을 자가 점검: 도구 목록·스키마·플러그인·외부 소스 연결·페더레이션·인증 (bring-up 확인용)")
+    p.add_argument("--check-sources", action="store_true", help="--doctor: 외부 소스에 실제로 연결해 본다 (느릴 수 있음)")
+    p.add_argument("--json", action="store_true", help="--doctor/--client-config: JSON 으로 출력")
     p.add_argument("--url", default=None, help="--client-config: 클라이언트가 접근할 서버 URL (기본 http://<web_host>:<web_port>; 0.0.0.0 이면 이 PC 호스트명)")
 
     p = sub.add_parser("serve", help="Web UI 서버 (+ /mcp Streamable HTTP MCP)")
@@ -373,7 +413,8 @@ def _cli_gate(argv: List[str], ns: argparse.Namespace) -> Optional[int]:
 
 def _overrides_from_ns(ns: argparse.Namespace) -> Dict[str, Any]:
     ov: Dict[str, Any] = {}
-    keys = list(Toggles.__dataclass_fields__) + ["llm_provider", "embed_provider", "llm_model", "debug_level"]
+    # 토글은 _add_toggle_flags 를 붙인 명령에서만 읽는다 — 다른 명령의 같은 이름 플래그(예 models --embedding)를 토글로 오인하지 않도록
+    keys = (list(Toggles.__dataclass_fields__) if getattr(ns, "_has_toggle_flags", False) else []) + ["llm_provider", "embed_provider", "llm_model", "debug_level"]
     keys += ["%s_%s" % (r, a) for r in Settings.LLM_ROLES for a in ("model", "provider")]
     for name in keys:
         v = getattr(ns, name, None)
@@ -412,6 +453,21 @@ def _out(obj: Any, as_json: bool, text: Optional[str] = None) -> None:
         print(json.dumps(jsonable(obj), ensure_ascii=False, indent=2))
     else:
         print(text)
+
+
+def _mcp_doctor_text(rep: Dict[str, Any]) -> str:
+    """mcp --doctor 를 사람이 읽는 표로."""
+    mark = {"ok": "  OK ", "warn": "WARN ", "error": " !!  "}
+    lines = ["MCP 자가 점검 — 프로토콜 %s (지원 %s)" % (rep["protocol"], ", ".join(rep["supported_protocols"])), ""]
+    for c in rep["checks"]:
+        lines.append("%s %-18s %s" % (mark[c["level"]], c["check"], c["detail"]))
+        if c["level"] != "ok" and c.get("hint"):
+            lines.append("%s%s→ %s" % (" " * 5, " " * 19, c["hint"]))
+    lines += ["", "도구 %d개: %s" % (len(rep["tools"]), ", ".join(rep["tools"])), ""]
+    lines.append("결과: %s (오류 %d · 경고 %d)" % ("정상" if rep["ok"] else "문제 있음", rep["errors"], rep["warnings"]))
+    if rep["ok"]:
+        lines.append("클라이언트 설정: python -m llmwiki mcp --client-config   · 문서 docs/MCP.md")
+    return "\n".join(lines)
 
 
 def _print_trace(trace: Dict[str, Any], depth: int = 0, total: Optional[float] = None, verbose: bool = False) -> None:
@@ -460,14 +516,26 @@ def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, p
         code = _cli_gate(list(argv if argv is not None else sys.argv[1:]), ns)
         if code is not None:
             return code
-    s = settings or load_settings()
-    s = apply_overrides(s.copy() if settings else s, _overrides_from_ns(ns))
-    from .pipeline import Pipeline
-    p = pipe or Pipeline(s)
-    if pipe is not None:
-        p.s = s
-        p.reload()
+    if getattr(ns, "log_level", None):
+        os.environ["LLMWIKI_LOG_LEVEL"] = str(ns.log_level).upper()   # load_settings 가 env 를 읽는다 (Pipeline 이 logs/ 핸들러 레벨을 맞춤)
     as_json = getattr(ns, "json", False)
+    ov = _overrides_from_ns(ns)
+    from .pipeline import Pipeline
+    if pipe is not None:
+        # Web 콘솔/스케줄러: 공유 파이프라인을 요청 범위(설정 사본 + 프리셋 오버레이 + 스레드 전용 DB 연결)로 감싼다 — 전역 설정을 건드리지 않음
+        from . import presets as _presets
+        names = _presets.parse_names(getattr(ns, "preset", None)) if getattr(ns, "preset", None) else []
+        with pipe.request_scope(overrides=ov or None, presets=names):
+            return _run_cmd(ns, pipe.s, pipe, as_json)
+    s = settings or load_settings()
+    s = apply_overrides(s.copy() if settings else s, ov)
+    p = Pipeline(s)
+    if ns.cmd in ("query", "build", "eval", "trial", "precompute", "forensic", "schedule", "fusion"):
+        try:
+            from . import reqmgr as _rq
+            _rq.install_cli_publisher()   # data/live 에 진행 상황 발행 → 실행 중인 서버의 모니터에서 보이고 취소할 수 있다
+        except Exception:
+            pass
     preset_prev = None
     if getattr(ns, "preset", None):
         from . import presets as _presets
@@ -478,6 +546,12 @@ def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, p
         p.reload_tuning(from_file=False)   # 프리셋 튜닝값은 메모리에만 있음 — 파일 재로드 금지
     try:
         return _run_cmd(ns, s, p, as_json)
+    except _pg.Cancelled as e:
+        print("cancelled: %s" % e)
+        return 130
+    except KeyboardInterrupt:
+        print("\ncancelled (Ctrl+C) — 지금까지의 진행(체크포인트)은 보존됩니다; 빌드는 다음 build 가 이어서 합니다")
+        return 130
     finally:
         if preset_prev is not None:
             from . import presets as _presets
@@ -620,13 +694,14 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             return 0
         if ns.action == "apply":
             r = _presets.apply(s, ns.names, save=ns.save)
-            p.reload_tuning(from_file=False)
+            scoped = p.in_request_scope()      # Web 콘솔/스케줄러: 요청 범위라 --save 없이는 이 요청에만 적용되고 사라진다 (다른 사용자에게 영향 없음)
             if ns.save:
-                p.reload()
-            _out({k: v for k, v in r.items() if k != "prev"}, as_json,
-                 "applied %s: toggles=%d tuning=%d settings=%d conflicts=%d%s%s" % (ns.names, len(r["toggles"]), len(r["tuning"]), len(r["settings"]),
-                                                                                  len(r["conflicts"]), " (saved)" if ns.save else " (이번 프로세스만; --save 로 저장)",
-                                                                                  ("\nunknown: %s" % r["unknown"]) if r["unknown"] else ""))
+                p.reload()                     # apply(save=True) 가 config.json·tuning.json 을 이미 썼다 → 전역으로 승격
+            _out({k: v for k, v in r.items() if k != "prev"} | {"scope": "saved" if ns.save else ("request" if scoped else "process")}, as_json,
+                 "applied %s: toggles=%d tuning=%d settings=%d conflicts=%d%s%s" % (
+                     ns.names, len(r["toggles"]), len(r["tuning"]), len(r["settings"]), len(r["conflicts"]),
+                     " (config.json/tuning.json 에 저장됨)" if ns.save else (" (이번 요청에만 적용 — 서버 기본값을 바꾸려면 --save)" if scoped else " (이번 프로세스만; --save 로 저장)"),
+                     ("\nunknown: %s" % r["unknown"]) if r["unknown"] else ""))
             return 0
 
     if ns.cmd == "logs":
@@ -642,7 +717,12 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         path = __import__("os").path.join(d, ns.file + ".log")
         run_id = ns.run
         if ns.request is not None:
-            r = p.store.get_request(int(ns.request))
+            try:
+                _rid = int(ns.request)
+            except (TypeError, ValueError):
+                print("ERROR: --request 는 요청 번호(정수)여야 합니다 (받은 값: %s)" % ns.request)
+                return 1
+            r = p.store.get_request(_rid)
             run_id = (r or {}).get("run_id") or ""
             if not run_id:
                 print("request %s has no run_id (구버전 기록)" % ns.request)
@@ -849,8 +929,15 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             r = _pc.run(p, from_log=ns.from_log, progress=lambda m: print("  ·", m) if not as_json else None)
             _out(r, as_json, "precompute: questions=%s computed=%s skipped=%s ms=%s cache=%s" % (r["questions"], r["computed"], r["skipped_cached"], r["ms"], json.dumps(r["cache"])))
             return 0
+        if ns.action == "check":
+            bad = _pc.find_broken(p.store)
+            _out({"broken": bad, "n": len(bad)}, as_json,
+                 ("고장난 답변 %d개 (같은 구절 반복) — `precompute clear --broken` 으로 지우세요:\n" % len(bad)
+                  + "\n".join("  · %s  (%d번 반복) %s" % ((b.get("query") or "")[:50], b.get("times", 0), (b.get("phrase") or "")[:50]) for b in bad))
+                 if bad else "고장난 답변 없음 (캐시 정상)")
+            return 0
         if ns.action == "clear":
-            _out({"removed": _pc.clear_cache(p.store, stale_only=ns.stale)}, True)
+            _out({"removed": _pc.clear_cache(p.store, stale_only=ns.stale, broken_only=ns.broken)}, True)
             return 0
         if ns.action == "doc-vectors":
             _out(_pc.build_doc_vectors(p), True)
@@ -1018,7 +1105,11 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
 
     if ns.cmd == "analyze":
         from . import analysis as _an
-        rid = None if ns.target in ("last", "", None) else int(ns.target)
+        try:
+            rid = None if ns.target in ("last", "", None) else int(ns.target)
+        except (TypeError, ValueError):
+            print("ERROR: analyze 의 대상은 요청 번호(정수) 또는 last 입니다 (받은 값: %s)" % ns.target)
+            return 1
         r = _an.analyze(p, rid, focus=None if ns.focus == "all" else ns.focus)
         if r.get("error"):
             print("ERROR:", r["error"])
@@ -1183,18 +1274,38 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         if a == "list":
             _out(p.store.proposals(ns.args[0] if ns.args else None), True)
             return 0
+        _bad = []
+
+        def _num(i: int, what: str):
+            """잘못된 인자로 traceback 을 흘리지 않고 사용법을 알려 준다."""
+            try:
+                return int(ns.args[i])
+            except (IndexError, TypeError, ValueError):
+                _bad.append(what)
+                return None
+        def _usage(example: str) -> int:
+            print("ERROR: %s 가 정수가 아닙니다. 사용법: evolve %s (받은 인자: %s)"
+                  % ("·".join(_bad), example, list(ns.args) or "없음"))
+            return 1
         if a == "apply":
-            res = ev.apply_proposal(p, int(ns.args[0]), evaluate=not ns.no_eval)
-            _out(res, True)
+            n = _num(0, "제안 번호")
+            if n is None:
+                return _usage("apply <제안번호>")
+            _out(ev.apply_proposal(p, n, evaluate=not ns.no_eval), True)
             return 0
         if a == "reject":
-            _out(ev.reject_proposal(p, int(ns.args[0]), " ".join(ns.args[1:])), True)
+            n = _num(0, "제안 번호")
+            if n is None:
+                return _usage("reject <제안번호> [사유]")
+            _out(ev.reject_proposal(p, n, " ".join(ns.args[1:])), True)
             return 0
         if a == "review":
             _out(ev.llm_review(p), True)
             return 0
         if a == "feedback":
-            qid, fb = int(ns.args[0]), int(ns.args[1])
+            qid, fb = _num(0, "질의 번호"), _num(1, "평가 점수")
+            if qid is None or fb is None:
+                return _usage("feedback <질의번호> <점수> [메모]")
             _out(ev.record_feedback(p, qid, fb, " ".join(ns.args[2:])), True)
             return 0
 
@@ -1246,6 +1357,84 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         _out(p.s.to_dict(), True)
         return 0
 
+    if ns.cmd == "server":
+        return _cmd_server(ns, p, as_json)
+
+    if ns.cmd == "schedule":
+        return _cmd_schedule(ns, p, as_json)
+
+    if ns.cmd == "models" and ns.action in ("list", "catalog", "discover", "policy"):
+        from . import models_catalog as _mc
+        if ns.action == "policy":
+            tbl = p.s.role_policy_table()
+            if as_json:
+                _out(tbl, True)
+                return 0
+            print("역할별 LLM 정책 (llm_roles.<role>.<attr> > config 전역 > 기본값; headless 는 agents.json timeout_s/retries 가 전역보다 우선)")
+            print("  %-9s %-28s %8s %7s %9s %-11s %7s %8s %8s" % ("role", "provider/model", "timeout", "retries", "backoff", "mode", "max", "budget", "circuit"))
+            for r, c in tbl.items():
+                print("  %-9s %-28s %7ss %7s %8ss %-11s %6ss %7ss %s/%ss" % (r, ("%s/%s" % (c["provider"], c["model"]))[:28], c["timeout_s"], c["retries"], c["backoff_s"],
+                                                                            c["backoff"], c["backoff_max_s"], c["budget_s"] or "-", c["circuit_failures"], c["circuit_cooldown_s"]))
+            print("변경: models set answer_timeout_s=120 answer_retries=2 rerank_backoff=linear … (config.json llm_roles) · 회로 상태: server circuits")
+            return 0
+        if ns.action == "discover":
+            r = _mc.discover(p.s)
+            if as_json:
+                _out(r, True)
+                return 0
+            for prov in ("ollama", "openai"):
+                rows = r.get(prov) or []
+                print("%s (%s): %s" % (prov, getattr(p.s, "ollama_url" if prov == "ollama" else "openai_base_url", ""), r["errors"].get(prov, "%d models" % len(rows))))
+                for m in rows:
+                    print("  %s %s" % ("✔" if m.get("in_catalog") else "+", m.get("id")))
+            print("+ 표시는 카탈로그에 없는 모델: models catalog add <id> --provider %s" % "ollama|openai")
+            return 0
+        if ns.action == "catalog":
+            sub = ns.kv[0] if ns.kv else "list"
+            if sub == "add":
+                if len(ns.kv) < 2:
+                    print("usage: models catalog add <id> --provider <p> [--label …] [--roles a,b] [--tags x,y] [--notes …] [--embed]")
+                    return 1
+                m: Dict[str, Any] = {"id": ns.kv[1], "provider": ns.provider or "auto", "label": ns.label or ns.kv[1],
+                                     "roles": [x for x in (ns.roles or "").split(",") if x.strip()], "tags": [x for x in (ns.tags or "").split(",") if x.strip()],
+                                     "notes": ns.notes or "", "enabled": True}
+                if getattr(ns, "catalog_embed", False):
+                    m["kind"] = "embed"
+                _mc.add_model(m)
+                print("added: %s (%s) → %s" % (m["id"], m["provider"], _mc.catalog_path()))
+                return 0
+            if sub == "remove":
+                if len(ns.kv) < 2:
+                    print("usage: models catalog remove <id> [--provider p]")
+                    return 1
+                try:
+                    _mc.remove_model(ns.kv[1], ns.provider)
+                except ValueError as e:
+                    print("ERROR:", e)
+                    return 1
+                print("removed: %s" % ns.kv[1])
+                return 0
+            if sub == "path":
+                print(_mc.catalog_path())
+                return 0
+        d = _mc.describe(p.s, role=ns.role)
+        rows = [m for m in d["models"] if (not ns.provider or m["provider"] == ns.provider)]
+        if as_json:
+            _out({"models": rows, "embed": d["embed"], "in_use": d["in_use"], "unknown_in_use": d["unknown_in_use"], "path": d["path"]}, True)
+            return 0
+        print("모델 카탈로그 (%s)%s" % (d["path"], (" — role=%s" % ns.role) if ns.role else ""))
+        for m in rows:
+            print("  %s %-34s %-18s %-32s roles=%s %s" % ("✔" if m.get("enabled", True) else "✘", m["id"][:34], m["provider"], (m.get("label") or "")[:32],
+                                                       ",".join(m.get("roles") or []) or "*", " ".join("#" + t for t in (m.get("tags") or []))))
+        print("임베딩:")
+        for m in d["embed"]:
+            print("  %-26s %-8s %s" % (m.get("id") or "(hash)", m.get("provider"), m.get("label") or ""))
+        print("현재 사용: " + ", ".join("%s=%s/%s" % (r, c["provider"], c["model"]) for r, c in d["in_use"].items()))
+        if d["unknown_in_use"]:
+            print("카탈로그에 없는 설정: " + ", ".join("%s=%s/%s" % (u["role"], u["provider"], u["model"]) for u in d["unknown_in_use"]) + "  (models catalog add … 로 등록)")
+        print("추가/삭제: models catalog add <id> --provider ollama --label … --roles answer,rerank | models catalog remove <id> · 서버 조회: models discover")
+        return 0
+
     if ns.cmd == "models":
         if ns.action == "set":
             ov = {}
@@ -1274,12 +1463,18 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         print("embedder: %s model=%s dim=%s available=%s (embed_provider=%s embed_model=%r)" % (
             st["embedder"]["name"], st["embedder"].get("model"), st["embedder"].get("dim"), st["embedder"]["available"],
             st["embedder"]["provider_setting"], st["embedder"]["model_setting"]))
-        print("global llm: provider=%s model=%s effort(extract/rerank)=%s effort(answer)=%s" % (p.s.llm_provider, p.s.llm_model, p.s.llm_effort, p.s.answer_effort))
+        print("global llm: provider=%s model=%s effort(extract/rerank)=%s effort(answer)=%s  timeout=%ss retries=%s backoff=%s %ss(max %ss) budget=%ss circuit=%s/%ss" % (
+            p.s.llm_provider, p.s.llm_model, p.s.llm_effort, p.s.answer_effort, p.s.llm_timeout, p.s.llm_retries, p.s.llm_retry_backoff, p.s.llm_retry_backoff_s,
+            p.s.llm_retry_backoff_max_s, p.s.llm_budget_s, p.s.llm_circuit_failures, p.s.llm_circuit_cooldown_s))
         for role, r in st["roles"].items():
             c = r["configured"]
-            print("  %-8s -> %s/%s effort=%s available=%s%s  [%s]" % (role, c["provider"], c["model"], c["effort"], r["available"],
-                                                                     " (role override)" if r["overridden"] else " (global)", st["catalog"]["roles"].get(role, "")))
-        print("변경: python -m llmwiki models set rerank_provider=ollama rerank_model=llama3.1 answer_model=claude-opus-5 embed_provider=voyage embed_model=voyage-3.5")
+            pol = r.get("policy") or {}
+            circ = r.get("circuit") or {}
+            print("  %-8s -> %s/%s effort=%s available=%s%s  timeout=%ss retries=%s backoff=%s%s%s  [%s]" % (
+                role, c["provider"], c["model"], c["effort"], r["available"], " (role override)" if r["overridden"] else " (global)",
+                pol.get("timeout_s"), pol.get("retries"), pol.get("backoff_s"), (" budget=%ss" % pol["budget_s"]) if pol.get("budget_s") else "",
+                (" CIRCUIT OPEN" if circ.get("open_until", 0) > time.time() else ""), st["catalog"]["roles"].get(role, "")))
+        print("변경: models set rerank_provider=ollama rerank_model=llama3.1 answer_model=claude-opus-5 answer_timeout_s=120 answer_retries=2 embed_provider=voyage · 정책 표: models policy · 카탈로그: models list")
         return 0
 
     if ns.cmd == "requests":
@@ -1569,8 +1764,34 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         print("\n파일: %s   (변경: tuning set 키=값 · config 항목은 config set)" % tn.TUNING_PATH)
         return 0
 
+    if ns.cmd == "optimize":
+        from . import optimize as _opt
+        try:
+            rid = None if str(ns.target).lower() in ("last", "", "none") else int(ns.target)
+        except (TypeError, ValueError):
+            print("ERROR: optimize 의 대상은 요청 번호(정수) 또는 last 입니다 (받은 값: %s)" % ns.target)
+            return 1
+        b = _opt.bundle_markdown(p, rid, None if ns.focus == "all" else ns.focus)
+        if ns.out:
+            from . import atomicio as _aio
+            _aio.write_text(ns.out, b["markdown"])
+            _out({k: v for k, v in b.items() if k != "markdown"}, as_json,
+                 "최적화 자료 묶음: %s (%d자, request #%s, 초점 %s)\n  이 파일을 통째로 LLM 에게 주고 C 절의 요청에 답하게 하세요."
+                 % (ns.out, b["chars"], b.get("request_id"), b["focus"]))
+        else:
+            print(b["markdown"])
+        return 0
+
     if ns.cmd == "arch":
         from .architecture import registry, render_text
+        if getattr(ns, "action", "show") == "doc":
+            from . import optimize as _opt
+            from . import atomicio as _aio
+            from .config import ROOT as _R
+            out = ns.out or os.path.join(_R, "docs", "OPTIMIZATION_GUIDE.md")
+            _aio.write_text(out, _opt.guide_markdown(p.s))
+            _out({"written": out}, as_json, "written: %s" % out)
+            return 0
         reg = registry()
         if ns.flow:
             reg["flows"] = {k: v for k, v in reg["flows"].items() if k == ns.flow}
@@ -1592,6 +1813,14 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 base = "http://%s:%d" % (host, int(p.s.web_port))
             _out(client_config_snippets(base, token), True)
             return 0
+        if getattr(ns, "doctor", False):
+            from .mcp import doctor as _doctor
+            rep = _doctor(p, check_sources=bool(getattr(ns, "check_sources", False)))
+            if as_json:
+                _out(rep, True)
+            else:
+                print(_mcp_doctor_text(rep))
+            return 0 if rep["ok"] else 1
         if url:
             return bridge_stdio_to_http(url, token, timeout=int(getattr(p.s, "llm_timeout", 600) or 600))
         transport = ns.transport or getattr(p.s, "mcp_transport", "stdio") or "stdio"
@@ -1608,6 +1837,272 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         return 0
     print("unknown command: %s" % ns.cmd)
     return 1
+
+
+def _server_client(ns, p):
+    """server/schedule trigger 명령용 HTTP 클라이언트: URL(--url > config web_host/web_port), 인증(--token > LLMWIKI_API_KEY > --user/--password 로그인)."""
+    import socket
+    import urllib.request
+    import urllib.error
+    url = ns.url
+    if not url:
+        host = p.s.web_host if p.s.web_host not in ("0.0.0.0", "::", "") else "127.0.0.1"
+        url = "http://%s:%d" % (host, int(p.s.web_port))
+    url = url.rstrip("/")
+    token = ns.token or os.environ.get("LLMWIKI_API_KEY") or ""
+    cookie = ""
+    if not token and getattr(ns, "cli_user", None):
+        pw = getattr(ns, "cli_password", None) or os.environ.get("LLMWIKI_PASSWORD") or ""
+        req = urllib.request.Request(url + "/api/auth/login", data=json.dumps({"username": ns.cli_user, "password": pw}).encode("utf-8"),
+                                     headers={"Content-Type": "application/json", "X-Requested-With": "llmwiki-cli"}, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            cookie = (r.headers.get("Set-Cookie") or "").split(";")[0]
+
+    def call(method: str, path: str, body=None):
+        hdrs = {"Content-Type": "application/json", "X-Requested-With": "llmwiki-cli"}
+        if token:
+            hdrs["Authorization"] = "Bearer " + token
+        if cookie:
+            hdrs["Cookie"] = cookie
+        req = urllib.request.Request(url + path, data=json.dumps(body).encode("utf-8") if body is not None else None, headers=hdrs, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, json.loads(r.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode("utf-8") or "{}")
+            except Exception:
+                return e.code, {"error": "HTTP %s" % e.code}
+        except Exception as e:
+            return 599, {"error": "서버에 연결할 수 없습니다 (%s): %s — serve 가 실행 중인지, --url 이 맞는지 확인" % (url, e)}
+    return url, call
+
+
+def _cmd_server(ns, p, as_json: bool) -> int:
+    url, call = _server_client(ns, p)
+    a = list(ns.args or [])
+    act = ns.action
+    if act == "status":
+        code, j = call("GET", "/api/admin/server")
+        if code != 200:
+            code2, j2 = call("GET", "/api/activity")
+            if code2 == 200:
+                j = {"activity": j2, "note": "admin 이 아니라 활동 목록만 (server status 전체는 admin 키/계정 필요)"}
+                code = 200
+        if code != 200:
+            _out(j, as_json, "ERROR %s: %s" % (code, j.get("error")))
+            return 1
+        if as_json:
+            _out(j, True)
+            return 0
+        if "counters" in j:
+            lim = j["limits"]["concurrency"]
+            print("서버 %s (pid %s) uptime %.0fs · 실행 %d · 대기 %d · 락 %s · 처리량 %.1f/min (최근 %.0f분, 오류 %d)" % (
+                url, j.get("pid"), j["uptime_s"], j["running"], j["queued"], json.dumps(j["lock"]), j["throughput_per_min"], j["window_min"], j["errors_in_window"]))
+            print("제한: parallel_reads=%s per_user=%s per_ip=%s queue=%s/%ss reads_during_build=%s · rate/min user=%s ip=%s query=%s · maintenance=%s" % (
+                lim["max_parallel_reads"], lim["max_parallel_per_user"], lim["max_parallel_per_ip"], lim["queue_max"], lim["queue_timeout_s"], lim["reads_during_build"],
+                j["limits"]["rate_limit"]["per_user_per_min"], j["limits"]["rate_limit"]["per_ip_per_min"], j["limits"]["rate_limit"]["query_per_user_per_min"],
+                j["limits"]["access"]["maintenance_mode"]))
+            for k, v in (j.get("latency") or {}).items():
+                print("  지연 %-8s n=%d avg=%.0fms p50=%.0f p95=%.0f max=%.0f" % (k, v["n"], v["avg_ms"], v["p50_ms"], v["p95_ms"], v["max_ms"]))
+            print("카운터: " + json.dumps(j.get("counters"), ensure_ascii=False))
+            open_c = {k: v for k, v in (j.get("circuits") or {}).items() if v.get("open")}
+            if open_c:
+                print("회로 차단 중: " + ", ".join(open_c))
+            print("클라이언트 (최근 %d):" % len(j.get("clients") or []))
+            for c in (j.get("clients") or [])[:15]:
+                print("  %-26s active=%s total=%s rejected=%s errors=%s last=%s %s" % (c["key"], c["active"], c["total"], c["rejected"], c["errors"],
+                                                                                   time.strftime("%H:%M:%S", time.localtime(c["last_seen"])), c.get("agent", "")[:30]))
+            act_ = j.get("activity") or {}
+        else:
+            act_ = j.get("activity") or {}
+        for sect in ("running", "queued", "external"):
+            rows = act_.get(sect) or []
+            if rows:
+                print("%s (%d):" % (sect, len(rows)))
+                for r in rows:
+                    print("  %-18s %-8s %-40s %s %s %.0fs %s" % (r.get("token"), r.get("kind"), (r.get("label") or "")[:40], r.get("user") or "-", r.get("origin") or "",
+                                                                 r.get("elapsed_s") or 0, ("· " + r["stage"]) if r.get("stage") else ""))
+        return 0
+    if act == "requests":
+        code, j = call("GET", "/api/activity?history=%d" % 30)
+        if code != 200:
+            _out(j, as_json, "ERROR %s: %s" % (code, j.get("error")))
+            return 1
+        if as_json:
+            _out(j, True)
+            return 0
+        for sect in ("running", "queued", "external", "recent"):
+            rows = j.get(sect) or []
+            print("%s (%d)" % (sect, len(rows)))
+            for r in rows:
+                print("  %-18s %-9s %-8s %-36s %-12s %6.1fs %s%s" % (r.get("token"), r.get("status"), r.get("kind"), (r.get("label") or "")[:36], (r.get("user") or "-")[:12],
+                                                                     r.get("elapsed_s") or 0, r.get("stage") or "", (" ✖ " + r["error"][:60]) if r.get("error") else ""))
+        print("취소: server cancel <token>")
+        return 0
+    if act == "cancel":
+        if not a:
+            print("usage: server cancel <token>")
+            return 1
+        code, j = call("DELETE", "/api/activity/%s" % a[0])
+        _out(j, as_json, ("cancel requested: %s" % a[0]) if j.get("ok") else ("ERROR: %s" % j.get("error")))
+        return 0 if j.get("ok") else 1
+    if act == "limits":
+        if a and a[0] == "set":
+            vals = {}
+            for kv in a[1:]:
+                k, _, v = kv.partition("=")
+                vals[k.strip()] = v.strip()
+            code, j = call("POST", "/api/admin/server", {"action": "set_limits", "values": vals, "save": True})
+        else:
+            code, j = call("GET", "/api/admin/server")
+            j = {"limits": j.get("limits"), "config_path": j.get("config_path")} if code == 200 else j
+        if code != 200:
+            _out(j, as_json, "ERROR %s: %s" % (code, j.get("error")))
+            return 1
+        _out(j, True)
+        return 0
+    if act == "block":
+        if len(a) < 3 or a[0] not in ("add", "remove") or a[1] not in ("ip", "user", "allow_ip"):
+            print("usage: server block add|remove ip|user|allow_ip <값>")
+            return 1
+        code, j = call("POST", "/api/admin/server", {"action": "block", "kind": a[1], "value": a[2], "add": a[0] == "add"})
+        _out(j, as_json, "ERROR: %s" % j.get("error") if code != 200 else "%s list: %s" % (a[1], j.get("list")))
+        return 0 if code == 200 else 1
+    if act == "sessions":
+        body = {"action": "sessions", "sub": "list"}
+        if a and a[0] == "revoke" and len(a) > 1:
+            body = {"action": "sessions", "sub": "revoke", "sid": a[1]}
+        elif a and a[0] == "revoke-user" and len(a) > 1:
+            body = {"action": "sessions", "sub": "revoke_user", "user": a[1]}
+        code, j = call("POST", "/api/admin/server", body)
+        if code != 200:
+            _out(j, as_json, "ERROR %s: %s" % (code, j.get("error")))
+            return 1
+        if as_json:
+            _out(j, True)
+            return 0
+        for s_ in j.get("sessions") or []:
+            print("  %-18s %-14s %-8s %-15s created=%s last=%s %s" % (s_["sid"], s_["user"], s_["role"], s_.get("ip"), time.strftime("%m-%d %H:%M", time.localtime(s_["created"])),
+                                                                     time.strftime("%m-%d %H:%M", time.localtime(s_["last_seen"])), (s_.get("agent") or "")[:30]))
+        print("(server.json sessions.enforce=true 일 때 revoke 가 즉시 로그아웃시킨다)")
+        return 0
+    if act == "maintenance":
+        on = bool(a) and a[0].lower() in ("on", "1", "true")
+        code, j = call("POST", "/api/admin/server", {"action": "maintenance", "enabled": on, "message": " ".join(a[1:]) if len(a) > 1 else ""})
+        _out(j, as_json, "maintenance_mode=%s" % on if code == 200 else "ERROR: %s" % j.get("error"))
+        return 0 if code == 200 else 1
+    if act == "kick":
+        if not a:
+            print("usage: server kick <user>")
+            return 1
+        code, j = call("POST", "/api/admin/server", {"action": "kick", "user": a[0]})
+        _out(j, as_json, "cancelled %s requests of %s" % (j.get("cancelled"), a[0]) if code == 200 else "ERROR: %s" % j.get("error"))
+        return 0 if code == 200 else 1
+    if act == "circuits":
+        if a and a[0] == "reset":
+            code, j = call("POST", "/api/admin/server", {"action": "circuit_reset", "key": a[1] if len(a) > 1 else None})
+        else:
+            code, j = call("GET", "/api/admin/server")
+            j = {"circuits": j.get("circuits")} if code == 200 else j
+        _out(j, True)
+        return 0 if code == 200 else 1
+    if act == "log-level":
+        if not a:
+            print("usage: server log-level DEBUG|INFO|WARNING|ERROR")
+            return 1
+        code, j = call("POST", "/api/admin/server", {"action": "log_level", "level": a[0], "save": False})
+        _out(j, as_json, "server log_level=%s (이번 실행만; 영구는 config set log_level=…)" % j.get("log_level") if code == 200 else "ERROR: %s" % j.get("error"))
+        return 0 if code == 200 else 1
+    return 1
+
+
+def _cmd_schedule(ns, p, as_json: bool) -> int:
+    from . import scheduler as _sc
+    act = ns.action
+    if act == "add":
+        if not ns.task:
+            print("usage: schedule add --task '<json>'")
+            return 1
+        try:
+            t = json.loads(ns.task)
+            _sc.upsert_task(t)
+        except (ValueError, KeyError) as e:
+            print("ERROR:", e)
+            return 1
+        print("saved: %s → %s" % (t.get("name"), _sc.schedule_path()))
+        return 0
+    if act == "remove":
+        ok = _sc.remove_task(ns.name or "")
+        print("removed" if ok else "no such task: %s" % ns.name)
+        return 0 if ok else 1
+    if act in ("enable", "disable"):
+        ok = _sc.set_enabled(ns.name or "", act == "enable")
+        print("%s: %s" % (act, ns.name) if ok else "no such task: %s" % ns.name)
+        return 0 if ok else 1
+    if act == "validate":
+        d = _sc.load_schedule()
+        bad = 0
+        for t in d.get("tasks", []):
+            try:
+                _sc.validate_task(t)
+                print("  OK   %s" % t.get("name"))
+            except Exception as e:
+                bad += 1
+                print("  FAIL %s: %s" % (t.get("name"), e))
+        if d.get("error"):
+            print("  FAIL %s" % d["error"])
+            bad += 1
+        return 1 if bad else 0
+    if act == "history":
+        rows = _sc.read_history(ns.n)
+        if as_json:
+            _out(rows, True)
+            return 0
+        for r in rows:
+            print("  %s %-20s %-9s %6.0fms %s" % (time.strftime("%m-%d %H:%M:%S", time.localtime(r.get("ts", 0))), r.get("name"), r.get("status"), r.get("ms") or 0,
+                                                 (r.get("error") or "")[:80] or json.dumps(r.get("result"), ensure_ascii=False, default=str)[:80]))
+        return 0
+    if act == "run":
+        t = next((x for x in _sc.load_schedule().get("tasks", []) if x.get("name") == ns.name), None)
+        if not t:
+            print("no such task: %s" % ns.name)
+            return 1
+        sch = _sc.Scheduler(p, None)
+        tok = sch.run_now(ns.name, by="cli")
+        with _pg.cli_monitor("cli-schedule-%s" % ns.name, "schedule", "schedule %s" % ns.name, enabled=False):
+            pass
+        while ns.name in sch.running:
+            time.sleep(0.5)
+        rec = sch.history(1)[0] if sch.history(1) else {}
+        _out(rec, as_json, "%s: %s (%.0f ms) %s" % (ns.name, rec.get("status"), rec.get("ms") or 0, rec.get("error") or json.dumps(rec.get("result"), ensure_ascii=False, default=str)[:300]))
+        return 0 if rec.get("status") == "done" else 1
+    if act == "trigger":
+        url, call = _server_client(ns, p)
+        code, j = call("POST", "/api/schedule", {"action": "run", "name": ns.name})
+        _out(j, as_json, "triggered: job %s" % j.get("job") if code == 200 else "ERROR: %s" % j.get("error"))
+        return 0 if code == 200 else 1
+    rows = _sc.list_tasks_static()
+    if act == "show":
+        rows = [r for r in rows if r.get("name") == ns.name]
+        if not rows:
+            print("no such task: %s" % ns.name)
+            return 1
+        _out(rows[0], True)
+        return 0
+    if as_json:
+        _out(rows, True)
+        return 0
+    print("스케줄 (%s) — 서버(serve)가 실행 중일 때 동작; 서버 없이 한 번 실행: schedule run <name>" % _sc.schedule_path())
+    for r in rows:
+        when = r.get("cron") or ("at %s %s" % (r.get("at"), ",".join(r.get("days") or []) or "daily") if r.get("at") else "every %s" % r.get("every"))
+        print("  %s %-20s %-22s %-12s next=%s last=%s %s%s" % ("✔" if r.get("enabled", True) else "✘", r.get("name"), when, (r.get("action") or {}).get("type"),
+                                                            time.strftime("%m-%d %H:%M", time.localtime(r["next_run"])) if r.get("next_run") else "-",
+                                                            (time.strftime("%m-%d %H:%M", time.localtime(r["last_run"])) + " " + str(r.get("last_status"))) if r.get("last_run") else "-",
+                                                            ("INVALID: " + r["invalid"]) if r.get("invalid") else "", (" ✖ " + r["last_error"][:60]) if r.get("last_error") else ""))
+    if not rows:
+        print("  (작업 없음) 예시: setup/schedule.example.json → schedule.json, docs/SCHEDULER.md")
+    return 0
 
 
 _CAPTURED = False   # Web 콘솔(run_captured)에서 실행 중이면 True — 진행 모니터의 stderr 출력을 끈다
@@ -1633,9 +2128,7 @@ def run_captured(argv: List[str], settings: Settings, pipe, actor: str = "web") 
 
 
 def main() -> None:
-    if hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
+    # 터미널 인코딩부터 정리한다 (한글·기호 깨짐 / UnicodeEncodeError 방지 — llmwiki/console.py 설명 참조)
+    from . import console as _console
+    _console.setup()
     sys.exit(run())

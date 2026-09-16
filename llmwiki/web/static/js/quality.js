@@ -73,23 +73,52 @@
       '<h3>소견</h3>' + (f.findings || []).map((x) => `<div class="finding ${esc(x.severity)}"><b>${esc(x.stage)}</b> ${esc(x.problem)}${x.evidence ? `<div class="muted small mono">${esc(String(x.evidence).slice(0, 300))}</div>` : ''}${x.source ? ' <span class="pill">' + esc(x.source) + '</span>' : ''}</div>`).join('') +
       '<h3>제안</h3>' + ((f.suggestions || []).map((s) => `<div class="sugg"><span class="pill">${esc(s.kind)}</span> ${esc(s.detail)} <span class="muted">conf ${fmt(s.confidence, 2)}</span></div>`).join('') || '<div class="muted small">없음</div>');
   }
+  // 목록에서 고른 행 / 마지막 질의 / 가장 최근 기록 순으로 request id 를 찾는다.
+  // 예전에는 입력칸이 비면 '진단 실행' 이 아무 반응 없이 끝나 눌러도 안 되는 것처럼 보였다 (2026-09-16).
+  let FX_ROWS = [], FX_SEL = null;
+  function fxRequestId(quiet) {
+    const typed = ($('#fx-req').value || '').trim();
+    const id = typed || (FX_SEL && FX_SEL.request_id) || STATE.lastRequestId
+      || ((FX_ROWS.find((r) => r.request_id) || {}).request_id) || '';
+    if (!id) {
+      if (!quiet) toast('진단할 request id 가 없습니다 — 아래 목록에서 한 줄을 고르거나 번호를 입력하세요');
+      return null;
+    }
+    if (!typed) $('#fx-req').value = id;        // 무엇을 썼는지 보이게 채워 준다
+    return parseInt(id, 10);
+  }
   async function loadForensics() {
     const s = await api('/api/forensics/summary');
     $('#fx-summary').innerHTML = `<div class="stat"><b>${s.n}</b>기록</div>` + Object.keys(s.by_verdict || {}).map((k) => `<div class="stat"><b>${s.by_verdict[k]}</b>${esc(k)}</div>`).join('') + `<div class="stat"><b>${esc(JSON.stringify(s.suggestion_kinds || {}))}</b>제안 종류</div><div class="stat"><b>${esc((s.top_topics || []).slice(0, 6).map((t) => t[0] + '(' + t[1] + ')').join(', '))}</b>주제</div><div class="stat"><b>${esc((s.problem_stages || []).slice(0, 5).map((t) => t[0] + '(' + t[1] + ')').join(', '))}</b>문제 단계</div>`;
     const rows = await api('/api/forensics?limit=60');
     $('#fx-list').innerHTML = '<table><tr><th>#</th><th>시각</th><th>req</th><th>판정</th><th>g</th><th>출처</th><th>질의</th><th>소견</th></tr>' + rows.map((r) => `<tr data-id="${r.id}"><td>${r.id}</td><td class="muted small">${dt(r.ts)}</td><td>${r.request_id || '-'}</td><td><span class="pill ${r.verdict === 'sufficient' ? 'ok' : r.verdict === 'weak' ? 'warn' : 'bad'}">${esc(r.verdict)}</span></td><td class="num">${r.groundedness == null ? '-' : fmt(r.groundedness, 2)}</td><td class="small">${esc(r.origin || '')}</td><td class="small">${esc((r.query || '').slice(0, 50))}</td><td class="num">${(r.findings || []).length}</td></tr>`).join('') + '</table>' + (rows.length ? '' : '<div class="muted">기록 없음</div>');
-    $$('#fx-list tr[data-id]').forEach((tr) => tr.onclick = () => { $$('#fx-list tr').forEach((x) => x.classList.remove('sel')); tr.classList.add('sel'); const f = rows.find((x) => String(x.id) === tr.dataset.id); $('#fx-detail').innerHTML = renderForensic(f); });
+    FX_ROWS = rows;
+    $$('#fx-list tr[data-id]').forEach((tr) => tr.onclick = () => {
+      $$('#fx-list tr').forEach((x) => x.classList.remove('sel')); tr.classList.add('sel');
+      const f = rows.find((x) => String(x.id) === tr.dataset.id);
+      FX_SEL = f || null;
+      if (f && f.request_id) $('#fx-req').value = f.request_id;   // 고른 행을 버튼들이 바로 쓸 수 있게
+      $('#fx-detail').innerHTML = renderForensic(f);
+    });
   }
   $('#btn-fx-refresh').onclick = loadForensics;
-  $('#btn-fx-run').onclick = async () => { const id = $('#fx-req').value; if (!id) return; $('#fx-detail').innerHTML = '진단 중…'; $('#fx-detail').innerHTML = renderForensic(await api('/api/forensic?request_id=' + id + '&rerun=1')); loadForensics(); };
-  $('#btn-fx-llm').onclick = async () => { const id = $('#fx-req').value || (STATE.lastRequestId || ''); if (!id) { toast('request id 필요'); return; } $('#fx-detail').innerHTML = 'LLM 분석 중…'; const r = await api('/api/forensic/llm', { request_id: parseInt(id, 10) }); if (!r.available) { $('#fx-detail').innerHTML = '<div class="banner warn">forensic 역할 LLM 이 없습니다 (Settings › 모델).</div>'; return; } const merged = Object.assign({}, r.heuristic, { request_id: id, findings: (r.heuristic.findings || []).concat(((r.llm || {}).findings || []).map((f) => Object.assign({ source: 'llm', severity: 'warn' }, f))), suggestions: (r.heuristic.suggestions || []).concat(((r.llm || {}).suggestions || []).map((s) => Object.assign({ source: 'llm' }, s))) }); $('#fx-detail').innerHTML = renderForensic(merged); };
+  $('#btn-fx-run').onclick = async () => {
+    const id = fxRequestId();
+    if (id === null) return;
+    $('#fx-detail').innerHTML = '진단 중…';
+    const r = await api('/api/forensic?request_id=' + id + '&rerun=1');
+    $('#fx-detail').innerHTML = renderForensic(r);
+    if (r && !r.error) toast('request #' + id + ' 진단 완료');
+    loadForensics();
+  };
+  $('#btn-fx-llm').onclick = async () => { const id = fxRequestId(); if (id === null) return; $('#fx-detail').innerHTML = 'LLM 분석 중…'; const r = await api('/api/forensic/llm', { request_id: parseInt(id, 10) }); if (!r.available) { $('#fx-detail').innerHTML = '<div class="banner warn">forensic 역할 LLM 이 없습니다 (Settings › 모델).</div>'; return; } const merged = Object.assign({}, r.heuristic, { request_id: id, findings: (r.heuristic.findings || []).concat(((r.llm || {}).findings || []).map((f) => Object.assign({ source: 'llm', severity: 'warn' }, f))), suggestions: (r.heuristic.suggestions || []).concat(((r.llm || {}).suggestions || []).map((s) => Object.assign({ source: 'llm' }, s))) }); $('#fx-detail').innerHTML = renderForensic(merged); };
   $('#btn-fx-consolidate').onclick = async () => { const r = await api('/api/memory', { action: 'consolidate' }); toast('consolidate: 제안 ' + (r.proposals || []).length + '건'); };
   $('#btn-fx-expect').onclick = async () => {
-    const id = $('#fx-req').value || (STATE.lastRequestId || '');
     const docs = $('#fx-docs').value.trim(), terms = $('#fx-terms').value.trim();
     if (!docs && !terms) { toast('기대 문서 ID 또는 용어를 입력하세요'); return; }
+    const id = fxRequestId(true);      // 없으면 0 = 마지막 질의 기준 (서버가 알아서 고른다)
     $('#fx-detail').innerHTML = '기대 결과 포렌식 실행 중…';
-    const rep = await api('/api/forensic/expect', { request_id: id ? parseInt(id, 10) : 0, docs, terms, note: $('#fx-note').value.trim(), propose: $('#fx-propose').checked });
+    const rep = await api('/api/forensic/expect', { request_id: id || 0, docs, terms, note: $('#fx-note').value.trim(), propose: $('#fx-propose').checked });
     $('#fx-detail').innerHTML = LW.renderExpect ? LW.renderExpect(rep) : `<pre class="pre">${esc(rep.text || JSON.stringify(rep, null, 1))}</pre>`;
     loadForensics();
   };

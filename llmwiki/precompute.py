@@ -46,6 +46,10 @@ def get_cached(store, key: str) -> Optional[Dict[str, Any]]:
 
 
 def put_cached(store, key: str, q: str, result: Dict[str, Any], source: str = "query") -> None:
+    # 반복 루프로 망가진 답변은 저장하지 않는다. 한 번 들어가면 그 질문은 리빌드 전까지
+    # 계속 같은 고장 답변을 1ms 만에 돌려주게 된다 (2026-09-16).
+    if result.get("repeat_loop"):
+        return
     slim = {k: v for k, v in result.items() if k not in ("proposals",)}
     store.conn.execute("INSERT OR REPLACE INTO answer_cache(key,build_version,query,result,ts,hits,source) VALUES(?,?,?,?,?,COALESCE((SELECT hits FROM answer_cache WHERE key=?),0),?)",
                        (key, store.build_version(), q, json.dumps(slim, ensure_ascii=False, default=str), time.time(), key, source))
@@ -58,7 +62,34 @@ def cache_status(store) -> Dict[str, Any]:
     return {"entries": int(rows["n"] or 0), "current_version": int(rows["cur"] or 0), "hits": int(rows["hits"] or 0), "build_version": v}
 
 
-def clear_cache(store, stale_only: bool = False) -> int:
+def find_broken(store) -> List[Dict[str, Any]]:
+    """캐시에 들어앉은 '고장난 답변'(같은 구절 반복 루프)을 찾는다.
+
+    반복 루프 탐지를 넣기 전에 저장된 항목은 그대로 남아 있어서, 그 질문은 리빌드 전까지
+    계속 같은 고장 답변을 1ms 만에 돌려준다. `precompute clear --broken` 으로 그것만 지운다.
+    """
+    from .answer import find_repeat_loop
+    out: List[Dict[str, Any]] = []
+    for r in store.conn.execute("SELECT key, query, result, build_version, hits FROM answer_cache"):
+        try:
+            res = json.loads(r["result"])
+        except Exception:
+            out.append({"key": r["key"], "query": r["query"], "reason": "JSON 파손"})
+            continue
+        info = find_repeat_loop(str(res.get("answer") or ""))
+        if info:
+            out.append({"key": r["key"], "query": r["query"], "build_version": r["build_version"],
+                        "hits": r["hits"], "times": info["times"], "phrase": info["phrase"], "reason": "반복 루프"})
+    return out
+
+
+def clear_cache(store, stale_only: bool = False, broken_only: bool = False) -> int:
+    if broken_only:
+        n = 0
+        for k in {b["key"] for b in find_broken(store)}:
+            n += store.conn.execute("DELETE FROM answer_cache WHERE key=?", (k,)).rowcount
+        store.conn.commit()
+        return n
     if stale_only:
         cur = store.conn.execute("DELETE FROM answer_cache WHERE build_version != ?", (store.build_version(),))
     else:

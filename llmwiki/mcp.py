@@ -30,7 +30,29 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 PROTOCOL_VERSION = "2025-06-18"
+# 클라이언트가 요청한 버전이 이 안에 있으면 그대로 돌려준다(협상). 없으면 우리 최신을 돌려주고 클라이언트가 판단한다.
+SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "llmwiki", "version": "0.5.0"}
+
+# 도구 힌트 (MCP annotations) — 붙는 LLM 이 "이 도구가 무엇을 바꾸는가" 를 스스로 판단한다.
+#   readOnlyHint   : 색인·설정을 바꾸지 않음
+#   destructiveHint: 되돌릴 수 없는 변경 (우리 도구에는 없음 — 제안은 사람 승인 전까지 큐에만 쌓인다)
+#   idempotentHint : 같은 인자로 다시 불러도 같은 상태
+#   openWorldHint  : 외부 시스템(다른 RAG)에 나간다
+ANNOTATIONS: Dict[str, Dict[str, Any]] = {
+    "wiki_query": {"title": "위키에 질문", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_search": {"title": "채널 검색 디버그", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_related": {"title": "유사 문서·연결", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_doc": {"title": "문서 전문", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_entity": {"title": "엔티티 상세", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_propose": {"title": "제안 등록 (사람 승인 필요)", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+    "wiki_feedback": {"title": "답변 피드백", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+    "wiki_forensic": {"title": "기대 결과 포렌식", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_status": {"title": "색인·프로바이더 상태", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_analysis": {"title": "상세 분석 리포트", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_sources": {"title": "붙어 있는 외부 소스", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
+    "wiki_external_search": {"title": "외부 RAG 직접 검색", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
+}
 
 TOOLS: List[Dict[str, Any]] = [
     {"name": "wiki_query", "description": "사내 LLM Wiki 에 질문하고 인용([C#]) 이 붙은 구조화 답변·근거 문단·근거 판정(groundedness)을 받는다 (FTS+Vector+Graph 하이브리드). "
@@ -171,17 +193,68 @@ def federation_allowed() -> bool:
         return True
 
 
+def _annotated(t: Dict[str, Any]) -> Dict[str, Any]:
+    """built-in 도구에 MCP annotations 를 붙인다 (플러그인은 자기 spec 의 것을 그대로 쓴다)."""
+    a = ANNOTATIONS.get(t["name"])
+    if not a or t.get("annotations"):
+        return t
+    out = dict(t)
+    out["title"] = a.get("title") or t["name"]
+    out["annotations"] = {k: v for k, v in a.items() if k != "title"}
+    out["annotations"]["title"] = out["title"]
+    return out
+
+
 def list_tools(pipe, federate: bool = True) -> List[Dict[str, Any]]:
     """tools/list = built-in + 플러그인 + (federate 이면) 페더레이션."""
     s = getattr(pipe, "s", None)
     load_plugins(s)
-    tools = list(TOOLS) + [sp for sp, _ in _PLUGIN_TOOLS.values()]
+    tools = [_annotated(t) for t in TOOLS] + [sp for sp, _ in _PLUGIN_TOOLS.values()]
     if federate and federation_allowed():
         try:
             tools += [{k: v for k, v in t.items() if not k.startswith("_")} for t in federated_tools(s)]
-        except Exception:
-            pass
-    return tools
+        except Exception as e:      # 페더레이션이 죽어도 우리 도구는 계속 보여야 한다 (원인은 wiki_sources 로 확인)
+            _FED_CACHE.setdefault("_list", {})["error"] = str(e)[:200]
+    # 이름 중복은 클라이언트가 어느 것을 부를지 알 수 없다 — 뒤에 온 것을 버리고 알린다
+    seen: Dict[str, int] = {}
+    out = []
+    for t in tools:
+        n = str(t.get("name") or "")
+        if not n or n in seen:
+            _FED_CACHE.setdefault("_list", {})["duplicate"] = n
+            continue
+        seen[n] = 1
+        out.append(t)
+    return out
+
+
+def validate_args(spec: Dict[str, Any], args: Dict[str, Any]) -> Optional[str]:
+    """inputSchema 의 required / type / enum 만 확인한다 (전체 JSON Schema 검증이 아니라, LLM 이 자주 틀리는 것만).
+
+    빈 질문으로 wiki_query 를 부르면 예전에는 조용히 빈 결과가 나왔다 — 붙는 LLM 이 왜 실패했는지 알 수 없었다.
+    """
+    sch = spec.get("inputSchema") or {}
+    props = sch.get("properties") or {}
+    types = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list, "object": dict}
+    for req in sch.get("required") or []:
+        v = args.get(req)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "필수 인자 '%s' 가 없습니다. inputSchema: %s" % (req, json.dumps(sch, ensure_ascii=False)[:400])
+    for key, val in (args or {}).items():
+        p = props.get(key)
+        if not isinstance(p, dict) or val is None:
+            continue
+        want = types.get(str(p.get("type") or ""))
+        if want and not isinstance(val, want):
+            if want is not bool and isinstance(val, bool):
+                return "인자 '%s' 는 %s 여야 합니다 (받은 값: %r)" % (key, p.get("type"), val)
+            if want in (int, (int, float)) and isinstance(val, str) and val.strip().lstrip("-").replace(".", "", 1).isdigit():
+                continue          # "8" 처럼 문자열로 보내는 클라이언트는 받아 준다 (아래에서 숫자로 캐스팅)
+            if not isinstance(val, want):
+                return "인자 '%s' 는 %s 여야 합니다 (받은 값: %r)" % (key, p.get("type"), val)
+        if p.get("enum") and val not in p["enum"]:
+            return "인자 '%s' 는 %s 중 하나여야 합니다 (받은 값: %r)" % (key, p["enum"], val)
+    return None
 
 
 def _text(s: str) -> Dict[str, Any]:
@@ -203,6 +276,9 @@ def call_extension(pipe, name: str, args: Dict[str, Any], federate: bool = True)
     s = getattr(pipe, "s", None)
     load_plugins(s)
     if name in _PLUGIN_TOOLS:
+        bad = validate_args(_PLUGIN_TOOLS[name][0], dict(args or {}))
+        if bad:
+            return _err("invalid arguments for %s: %s" % (name, bad))
         r = _PLUGIN_TOOLS[name][1](pipe, dict(args or {}))
         return _text(str(r)) if not isinstance(r, dict) else (r if "content" in r else _proxy_result(r))
     if FED_SEP in name:
@@ -224,43 +300,28 @@ def call_extension(pipe, name: str, args: Dict[str, Any], federate: bool = True)
 
 
 def _query_with(pipe, question: str, k: Optional[int], mode: str, doc_types: Optional[List[str]], preset: Optional[str]):
-    from .config import Settings
-    saved = pipe.s.to_dict()
-    prev = None
-    try:
-        if k:
-            pipe.s.top_k_final = int(k)
-        names = []
-        if preset:
-            names.append(preset)
-        if mode == "deep":
-            names.append("deep_research")
-        elif mode == "fast":
-            names.append("speed")
-        if names:
-            from . import presets as _presets
-            prev = _presets.apply(pipe.s, names, save=False)["prev"]
-            pipe.reload_tuning(from_file=False)
+    """요청 범위(설정 사본·튜닝 오버레이) 안에서 질의 — 다른 클라이언트의 동시 호출과 격리된다."""
+    names = [preset] if preset else []
+    ov = {"top_k_final": int(k)} if k else None
+    with pipe.request_scope(overrides=ov, presets=names, mode=mode or ""):
         if doc_types:
             from . import tuning as _tn
-            _tn.T.values["doc_type_boost"] = ",".join("%s:1.3" % d for d in doc_types)
+            _tn.T.values["doc_type_boost"] = ",".join("%s:1.3" % d for d in doc_types)   # 오버레이에만 기록
         res, tr = pipe.query(question, log=True)
-    finally:
-        if prev is not None:
-            from . import presets as _presets
-            _presets.restore(pipe.s, prev)
-        ns = Settings.from_dict(saved)
-        for kk, vv in ns.to_dict().items():
-            if kk != "toggles":
-                setattr(pipe.s, kk, vv)
-        pipe.s.toggles = ns.toggles
-        from . import tuning as _tn
-        _tn.T.values.pop("doc_type_boost", None)
-        pipe.reload_tuning(from_file=False)
     return res, tr
 
 
+def _err(msg: str) -> Dict[str, Any]:
+    return {"content": [{"type": "text", "text": msg}], "isError": True}
+
+
 def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> Dict[str, Any]:
+    args = dict(args or {})
+    spec = next((t for t in TOOLS if t["name"] == name), None)
+    if spec is not None:
+        bad = validate_args(spec, args)
+        if bad:
+            return _err("invalid arguments for %s: %s" % (name, bad))
     ext = call_extension(pipe, name, args, federate=federate)
     if ext is not None:
         return ext
@@ -276,12 +337,15 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
     if name == "wiki_sources":
         from . import mcp_client as _mc
         rows = [_mc.source_summary(n, c) for n, c in _mc.load_sources().items()]
+        fed = federated_tools(pipe.s, refresh=bool(args.get("check")))
         if args.get("check"):
             st = {r["name"]: r for r in _mc.test_sources(pipe.s, [r["name"] for r in rows if r["enabled"]])}
             for r in rows:
                 r["status"] = st.get(r["name"])
         info = {"sources": rows, "external_rag": bool(pipe.s.toggles.external_rag), "mcp_federation": bool(getattr(pipe.s.toggles, "mcp_federation", False)),
-                "mcp_sources": bool(pipe.s.toggles.mcp_sources), "plugins": load_plugins(pipe.s)}
+                "mcp_sources": bool(pipe.s.toggles.mcp_sources), "plugins": load_plugins(pipe.s),
+                "federated_tools": [t["name"] for t in fed],
+                "federation_errors": {k: v.get("error") for k, v in _FED_CACHE.items() if isinstance(v, dict) and v.get("error")}}
         out = _text(json.dumps(info, ensure_ascii=False, indent=1, default=str))
         out["structuredContent"] = info
         return out
@@ -426,7 +490,7 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         return _text(json.dumps({"stats": pipe.store.stats(), "providers": {k: v for k, v in pipe.provider_status().items() if k not in ("catalog", "agents")},
                                  "doc_types": pipe.store.doc_type_counts(), "provenance": pipe.store.provenance_counts()},
                                 ensure_ascii=False, indent=1, default=str))
-    return {"content": [{"type": "text", "text": "unknown tool %s" % name}], "isError": True}
+    return _err("unknown tool %s — 사용 가능: %s" % (name, ", ".join(t["name"] for t in list_tools(pipe, federate=federate))))
 
 
 def handle(pipe, msg: Dict[str, Any], federate: bool = True) -> Optional[Dict[str, Any]]:
@@ -435,7 +499,10 @@ def handle(pipe, msg: Dict[str, Any], federate: bool = True) -> Optional[Dict[st
     method = msg.get("method")
     params = msg.get("params") or {}
     if method == "initialize":
-        return {"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION,
+        want = str(params.get("protocolVersion") or "")
+        # 우리가 지원하는 버전이면 그대로, 아니면 우리 최신을 돌려준다 (클라이언트가 계속할지 판단한다 — 스펙 권고)
+        agreed = want if want in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION
+        return {"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": agreed,
                                                         "capabilities": {"tools": {"listChanged": False}},
                                                         "serverInfo": SERVER_INFO,
                                                         "instructions": "사내 LLM Wiki. wiki_query 로 질문(인용 [C#] 포함 답변) → 결과가 부족하면 wiki_forensic(request_id, expected_docs/terms) 로 원인 분석, wiki_feedback 으로 피드백, wiki_propose 로 제안."}}
@@ -451,8 +518,15 @@ def handle(pipe, msg: Dict[str, Any], federate: bool = True) -> Optional[Dict[st
         except Exception as e:  # 도구 오류는 isError 로
             res = {"content": [{"type": "text", "text": "error: %s" % e}], "isError": True}
         return {"jsonrpc": "2.0", "id": mid, "result": res}
-    if method in ("resources/list", "prompts/list"):
-        return {"jsonrpc": "2.0", "id": mid, "result": {"resources": [], "prompts": []}}
+    # capabilities 에 선언하지 않았지만 그냥 부르는 클라이언트가 있다 — 빈 목록으로 답해 준다 (오류로 멈추지 않게)
+    if method == "resources/list":
+        return {"jsonrpc": "2.0", "id": mid, "result": {"resources": []}}
+    if method == "resources/templates/list":
+        return {"jsonrpc": "2.0", "id": mid, "result": {"resourceTemplates": []}}
+    if method == "prompts/list":
+        return {"jsonrpc": "2.0", "id": mid, "result": {"prompts": []}}
+    if method == "logging/setLevel":
+        return {"jsonrpc": "2.0", "id": mid, "result": {}}
     if mid is None:
         return None
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "method not found: %s" % method}}
@@ -509,6 +583,23 @@ def serve_stdio(pipe) -> None:
 
 
 # ---------------------------------------------------------------- Streamable HTTP (JSON 응답 모드)
+def _scrub_surrogates(v: Any, depth: int = 0) -> Any:
+    """JSON-RPC 본문에서 UTF-8 로 인코딩할 수 없는 문자열(짝 없는 서러게이트)을 걸러 낸다."""
+    if depth > 12:
+        return v
+    if isinstance(v, str):
+        try:
+            v.encode("utf-8")
+            return v
+        except UnicodeEncodeError:
+            return v.encode("utf-8", "replace").decode("utf-8", "replace")
+    if isinstance(v, dict):
+        return {_scrub_surrogates(k, depth + 1): _scrub_surrogates(x, depth + 1) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_scrub_surrogates(x, depth + 1) for x in v]
+    return v
+
+
 def handle_http(pipe, method: str, body: bytes, headers: Any, session_id: Optional[str] = None) -> Tuple[int, Dict[str, str], bytes]:
     """POST /mcp 본문(JSON-RPC 단건/배열) → (status, headers, body). GET → 405(SSE 스트림 미제공), DELETE → 200.
     인증·권한은 호출자(Web 서버)가 이미 끝냈다 (read 등급)."""
@@ -517,7 +608,9 @@ def handle_http(pipe, method: str, body: bytes, headers: Any, session_id: Option
     if method == "DELETE":
         return 200, {"Content-Type": "application/json"}, b"{}"
     try:
-        data = json.loads(body.decode("utf-8") or "null")
+        # errors="replace": JSON 은 짝 없는 서러게이트를 표현할 수 있지만 파이썬은 그것을 UTF-8 로
+        # 인코딩하지 못한다. 안으로 들여보내면 SQLite 기록·응답 직렬화가 전부 실패한다.
+        data = _scrub_surrogates(json.loads(body.decode("utf-8", "replace") or "null"))
     except Exception as e:
         return 400, {"Content-Type": "application/json"}, json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error: %s" % e}}).encode("utf-8")
     msgs = data if isinstance(data, list) else [data]
@@ -592,6 +685,87 @@ def http_post_mcp(url: str, msg: Any, token: str = "", session: Optional[str] = 
         return e.code, {k: v for k, v in e.headers.items()}, e.read()
     except Exception as e:
         return 599, {}, str(e).encode("utf-8")
+
+
+# ---------------------------------------------------------------- 자가 점검 (bring-up)
+def doctor(pipe, check_sources: bool = False) -> Dict[str, Any]:
+    """MCP 설정을 한 번에 점검한다 — `python -m llmwiki mcp --doctor`.
+
+    붙이려는 LLM 이 여럿이고 외부 RAG 까지 얹는 환경에서, "무엇이 안 붙는가" 를 서버 쪽에서 먼저 답하기 위한 것.
+    확인: 도구 목록과 스키마 · 플러그인 적재 · 외부 소스 선언과 연결 · 페더레이션 이름 · 인증(누가 붙을 수 있는가) · 전송 설정.
+    """
+    from . import mcp_client as _mc
+    s = pipe.s
+    checks: List[Dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str, hint: str = "", warn: bool = False) -> None:
+        checks.append({"check": name, "ok": bool(ok), "level": "warn" if (warn and not ok) else ("ok" if ok else "error"),
+                       "detail": detail, "hint": hint})
+
+    tools = list_tools(pipe)
+    builtin = [t["name"] for t in TOOLS]
+    add("도구 목록", len(tools) >= len(builtin), "%d개 (built-in %d)" % (len(tools), len(builtin)))
+    bad_schema = [t["name"] for t in tools if not isinstance(t.get("inputSchema"), dict) or t["inputSchema"].get("type") != "object"]
+    add("inputSchema", not bad_schema, "모든 도구가 object 스키마" if not bad_schema else "스키마 이상: %s" % bad_schema,
+        "플러그인 spec 의 inputSchema 를 {\"type\":\"object\",\"properties\":{…}} 형태로 고치세요")
+    no_desc = [t["name"] for t in tools if not str(t.get("description") or "").strip()]
+    add("도구 설명", not no_desc, "모두 있음" if not no_desc else "설명 없음: %s" % no_desc,
+        "설명이 없으면 붙는 LLM 이 그 도구를 고르지 못합니다", warn=True)
+
+    pl = load_plugins(s, force=True)
+    add("플러그인", not pl["errors"], "%s — 파일 %d개, 도구 %s" % (pl["dir"], len(pl["files"]), pl["tools"] or "없음"),
+        "오류: %s" % pl["errors"] if pl["errors"] else "")
+
+    srcs = _mc.load_sources()
+    on = {k: v for k, v in srcs.items() if v.get("enabled")}
+    add("외부 소스 선언", True, "%d개 선언, %d개 enabled (%s)" % (len(srcs), len(on), ", ".join(on) or "-"))
+    for name, cfg in on.items():
+        tr = str(cfg.get("transport") or "stdio")
+        target = cfg.get("url") or cfg.get("base_url") or " ".join(str(x) for x in (cfg.get("command") or []))
+        ok = bool(target)
+        add("소스 %s 설정" % name, ok, "%s → %s" % (tr, target or "(대상 없음)"),
+            "transport 가 stdio 면 command, http 면 url, rest 면 base_url 이 필요합니다")
+    if check_sources:
+        for r in _mc.test_sources(s, list(on)):
+            add("소스 %s 연결" % r["name"], r["ok"], "%s %sms tools=%s" % (r["transport"], r["ms"], r.get("tools") or r.get("error", "")),
+                "`python -m llmwiki mcp-source test %s` 로 재현" % r["name"])
+
+    retr = [n for n, c in srcs.items() if c.get("enabled") and c.get("retrieve")]
+    add("검색 채널(external_rag)", not retr or bool(s.toggles.external_rag),
+        "retrieve 소스 %s · 토글 external_rag=%s" % (retr or "없음", s.toggles.external_rag),
+        "retrieve 매핑이 있는데 토글이 꺼져 있으면 질의에 섞이지 않습니다 (`config set toggles.external_rag=true`)", warn=True)
+
+    exposed = [n for n, c in srcs.items() if c.get("enabled") and c.get("expose")]
+    fed = federated_tools(s, refresh=True) if s.toggles.mcp_federation else []
+    fed_err = {k: v.get("error") for k, v in _FED_CACHE.items() if isinstance(v, dict) and v.get("error")}
+    add("페더레이션", not exposed or bool(s.toggles.mcp_federation),
+        "expose 소스 %s · 토글 mcp_federation=%s · 중계 도구 %s" % (exposed or "없음", s.toggles.mcp_federation, [t["name"] for t in fed] or "없음"),
+        "expose 가 선언됐는데 토글이 꺼져 있으면 tools/list 에 나오지 않습니다", warn=True)
+    add("페더레이션 연결", not fed_err, "오류 없음" if not fed_err else json.dumps(fed_err, ensure_ascii=False),
+        "소스가 살아 있는지 `mcp-source test <name>` 로 확인하세요")
+    add("재귀 방지", True, "이 프로세스는 %s" % ("최상위 (페더레이션 가능)" if federation_allowed() else "페더레이션 하위 (자기 페더레이션 안 함)"))
+
+    try:
+        from . import auth as _auth
+        sec = _auth.load_security()
+        anon = sec.get("anonymous_role") or ""
+        nkeys = len(sec.get("api_keys") or [])
+        add("인증", bool(anon or nkeys or sec.get("users")),
+            "anonymous_role=%s · API 키 %d개 · 계정 %d개" % (anon or "(없음)", nkeys, len(sec.get("users") or [])),
+            "원격 LLM 은 Authorization: Bearer <API 키> 로 붙습니다 — `python -m llmwiki apikey add <이름> --role class2`")
+        if not anon and not nkeys:
+            add("원격 접속 수단", False, "익명 역할도 API 키도 없음 — HTTP 로는 아무도 붙을 수 없습니다",
+                "`apikey add` 로 키를 만들거나 security.json 의 anonymous_role 을 정하세요", warn=True)
+    except Exception as e:
+        add("인증", False, "security 설정을 읽지 못함: %s" % e, "", warn=True)
+
+    add("전송", True, "stdio: `python -m llmwiki mcp` · http: serve 의 POST /mcp (mcp_host=%s mcp_port=%s) · 브리지: mcp --connect <url>"
+        % (getattr(s, "mcp_host", "-"), getattr(s, "mcp_port", "-")))
+
+    errors = [c for c in checks if c["level"] == "error"]
+    warns = [c for c in checks if c["level"] == "warn"]
+    return {"ok": not errors, "errors": len(errors), "warnings": len(warns), "checks": checks,
+            "tools": [t["name"] for t in tools], "protocol": PROTOCOL_VERSION, "supported_protocols": list(SUPPORTED_PROTOCOLS)}
 
 
 def client_config_snippets(base_url: str, token: str = "") -> Dict[str, Any]:

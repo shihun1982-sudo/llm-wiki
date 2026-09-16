@@ -5,9 +5,38 @@
 
   // ---------------- MODELS ----------------
   function sel(id, opts, cur, allowEmpty) { return `<select id="${id}">${allowEmpty ? '<option value="">(상속)</option>' : ''}${opts.map((o) => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`; }
-  const PROVIDERS = ['auto', 'anthropic', 'openai', 'ollama', 'headless:opencode', 'headless:claude', 'headless:codex', 'headless:mock', 'mock', 'none'];
+  let PROVIDERS = ['auto', 'anthropic', 'openai', 'ollama', 'headless:opencode', 'headless:claude', 'headless:codex', 'headless:mock', 'mock', 'none'];
+  let CATALOG = { models: [], embed: [], providers: PROVIDERS, embed_providers: [] };
+  // 역할별 정책 편집 열. 비워 두면 전역값(또는 단계 기본값)을 상속한다.
+  const POLICY_COLS = [['timeout_s', '타임아웃(초)'], ['retries', '재시도'], ['backoff_s', '대기(초)'],
+                       ['budget_s', '총예산(초)'], ['max_tokens', '출력토큰']];
+  // 모델 드롭다운: models.json 카탈로그(사람이 추가/삭제) + 현재 값 + '직접 입력'. 역할이 주어지면 그 역할용 모델만 (roles 가 빈 항목은 전 역할).
+  function modelSelect(id, cur, role, allowInherit, placeholderText) {
+    const list = (CATALOG.models || []).filter((m) => m.enabled !== false && (!role || !(m.roles || []).length || (m.roles || []).indexOf(role) >= 0));
+    const ids = list.map((m) => m.id);
+    let opts = (allowInherit ? `<option value="">(상속${placeholderText ? ': ' + esc(placeholderText) : ''})</option>` : '');
+    opts += list.map((m) => `<option value="${esc(m.id)}"${m.id === cur ? ' selected' : ''}>${esc(m.id)} — ${esc(m.provider)}${m.label ? ' · ' + esc(m.label) : ''}</option>`).join('');
+    if (cur && ids.indexOf(cur) < 0) opts += `<option value="${esc(cur)}" selected>${esc(cur)} — (카탈로그에 없음)</option>`;
+    opts += '<option value="__custom__">직접 입력…</option>';
+    return `<select id="${id}" data-model-select="1">${opts}</select>`;
+  }
+  function wireModelSelects(root) {
+    $$('[data-model-select]', root || document).forEach((s2) => {
+      if (s2.dataset.wired) return; s2.dataset.wired = '1';
+      s2.addEventListener('change', () => {
+        if (s2.value !== '__custom__') return;
+        const v = (prompt('모델 id 를 직접 입력하세요 (카탈로그에 없어도 동작합니다; Settings › 카탈로그에 추가해 두면 목록에 나옵니다)', '') || '').trim();
+        if (!v) { s2.value = ''; return; }
+        const o = document.createElement('option'); o.value = v; o.textContent = v + ' — (직접 입력)'; s2.insertBefore(o, s2.lastElementChild); s2.value = v;
+      });
+    });
+  }
   async function loadModels() {
     const j = await api('/api/models'); const p = j.providers, s = j.settings, cat = p.catalog; STATE.providers = p;
+    CATALOG = j.catalog_models || (await api('/api/models/catalog')) || CATALOG;
+    PROVIDERS = CATALOG.providers || PROVIDERS;
+    STATE.rolePolicy = j.policy || {};
+    STATE.roleAttrs = j.role_attrs || [];
     const embModels = [].concat.apply([], Object.keys(cat.embed).map((k) => cat.embed[k])).filter((m) => !m.startsWith('('));
     $('#embed-form').innerHTML = `<label>provider ${sel('m-embed-provider', ['auto', 'hash', 'voyage', 'openai', 'ollama', 'st'], s.embed_provider)}</label>` +
       `<label>model <input id="m-embed-model" list="dl-embed" value="${esc(s.embed_model)}" placeholder="hash: 비움 · voyage-3.5 · bge-m3 · nomic-embed-text"><datalist id="dl-embed">${embModels.map((m) => `<option value="${esc(m)}">`).join('')}</datalist></label>` +
@@ -16,7 +45,7 @@
       `<label>embed_batch <input id="m-embed-batch" type="number" value="${s.embed_batch}" style="width:70px"> max <input id="m-embed-batch-max" type="number" value="${s.embed_batch_max}" style="width:70px"></label>` +
       `<div class="muted small">현재: <b>${p.embedder.name}</b> model=${esc(p.embedder.model)} dim=${p.embedder.dim} available=${p.embedder.available} · auto = VOYAGE_API_KEY 있으면 voyage → Ollama 에 bge-m3/nomic 있으면 ollama → hash.</div>`;
     $('#llm-form').innerHTML = `<label>llm_provider ${sel('m-llm-provider', PROVIDERS, s.llm_provider)}</label>` +
-      `<label>llm_model <input id="m-llm-model" list="dl-llm-models" value="${esc(s.llm_model)}"></label>` +
+      `<label>llm_model ${modelSelect('m-llm-model', s.llm_model, '', false)}</label>` +
       `<label>llm_effort ${sel('m-llm-effort', cat.effort, s.llm_effort)} · answer_effort ${sel('m-answer-effort', cat.effort, s.answer_effort)}</label>` +
       `<label>ollama_url <input id="m-ollama-url" value="${esc(s.ollama_url)}"></label><label>ollama_model <input id="m-ollama-model" value="${esc(s.ollama_model)}"></label>` +
       `<label><input type="checkbox" id="m-fallbacks" ${s.llm_fallbacks ? 'checked' : ''}> llm_fallbacks (Anthropic server-side refusal fallback)</label>`;
@@ -25,28 +54,74 @@
       `<label>openai_extra_headers <input id="m-openai-extra" value="${esc(JSON.stringify(s.openai_extra_headers || {}))}" placeholder='{"X-Tenant":"modem"}' style="width:260px"> <small>JSON</small></label>` +
       `<label>openai_embed_base_url <input id="m-openai-embed-url" value="${esc(s.openai_embed_base_url || '')}" placeholder="(비우면 openai_base_url)"> openai_embed_model <input id="m-openai-embed" value="${esc(s.openai_embed_model)}" placeholder="text-embedding-3-small / bge-m3"></label>` +
       `<label>anthropic_base_url <input id="m-anthropic-url" value="${esc(s.anthropic_base_url || '')}" placeholder="(비우면 api.anthropic.com) https://gateway.corp"> <small>키: ANTHROPIC_API_KEY(x-api-key) 또는 ANTHROPIC_AUTH_TOKEN(Bearer PAT)</small></label>` +
-      `<label>llm_timeout <input id="m-llm-timeout" type="number" value="${s.llm_timeout || 600}" style="width:80px"> <small>초/호출 — 멈춘 서버를 빨리 감지하려면 줄임</small></label>` +
+      `<label>llm_timeout <input id="m-llm-timeout" type="number" value="${s.llm_timeout || 600}" style="width:80px"> retries <input id="m-llm-retries" type="number" value="${s.llm_retries}" style="width:60px"> backoff ${sel('m-llm-backoff', ['exponential', 'linear'], s.llm_retry_backoff || 'exponential')} <input id="m-llm-backoff-s" type="number" step="0.5" value="${s.llm_retry_backoff_s}" style="width:60px">초 <small>역할별로 다르게 하려면 오른쪽 표의 '재시도·타임아웃 열 보기'</small></label>` +
+      `<label>llm_budget_s <input id="m-llm-budget" type="number" value="${s.llm_budget_s || 0}" style="width:70px" title="한 호출의 재시도 포함 총 시간 예산(0=무제한). 넘으면 대체 경로(추출식 답변)로"> 회로차단 <input id="m-llm-circuit" type="number" value="${s.llm_circuit_failures}" style="width:50px" title="연속 실패 n회 → cooldown 동안 즉시 실패"> / <input id="m-llm-cooldown" type="number" value="${s.llm_circuit_cooldown_s}" style="width:60px">초</label>` +
       `<label>rerank_url <input id="m-rerank-url" value="${esc(s.rerank_url)}" placeholder="http://host:8000/v1/rerank"> <small>비우면 api 리랭크 비활성</small></label>` +
       `<label>rerank_api_model <input id="m-rerank-model" value="${esc(s.rerank_api_model || '')}" placeholder="BAAI/bge-reranker-v2-m3"> style ${sel('m-rerank-style', ['cohere', 'voyage'], s.rerank_api_style)} <small>rerank_method(튜닝)=auto 면 URL 있을 때 api 우선</small></label>`;
     $('#models-note').innerHTML = `Python ${p.python} / SQLite ${p.sqlite}. headless 에이전트: ${Object.keys(p.agents || {}).map(esc).join(', ')} (agents.json).`;
-    const llmModels = [].concat(cat.llm.anthropic, cat.llm.openai || [], cat.llm.ollama).filter((m) => !String(m).startsWith('('));
-    $('#roles-table').innerHTML = '<table class="roles"><tr><th>역할</th><th>용도</th><th>provider</th><th>model</th><th>effort</th><th>실제 인스턴스</th><th>상태</th><th></th></tr>' + j.roles.map((role) => {
+    const showPol = $('#roles-show-policy') && $('#roles-show-policy').checked;
+    const polHead = showPol ? POLICY_COLS.map((c) => `<th title="비우면 전역값 상속">${c[1]}</th>`).join('') : '';
+    $('#roles-table').innerHTML = '<table class="roles"><tr><th>역할</th><th>용도</th><th>provider</th><th>model</th><th>effort</th>' + polHead + '<th>실제 인스턴스</th><th>상태</th><th></th></tr>' + j.roles.map((role) => {
       const r = p.roles[role]; const cfg = (s.llm_roles || {})[role] || {};
       const inh = `(상속: 전역 ${esc(s.llm_provider)})`;
-      return `<tr data-role="${role}"><td><b>${role}</b></td><td class="muted small">${esc(cat.roles[role] || '')}</td><td><input id="r-${role}-provider" list="dl-providers" value="${esc(cfg.provider || '')}" placeholder="${inh}" title="비우면 전역 llm_provider(${esc(s.llm_provider)})를 상속" style="width:150px"></td><td><input id="r-${role}-model" list="dl-llm-models" value="${esc(cfg.model || '')}" placeholder="(상속: ${esc(s.llm_model)})" title="비우면 전역 llm_model(${esc(s.llm_model)})을 상속"></td><td>${sel('r-' + role + '-effort', cat.effort, cfg.effort || '', true)}</td><td class="small">${esc(r.name)}/${esc(r.model)}<br><span class="muted">effort=${r.configured.effort}</span></td><td>${r.available ? '<span class="ok">available</span>' : '<span class="bad" title="' + esc(r.reason || '') + '">unavailable</span>'}${r.available ? '' : '<br><span class="reason small">' + esc(r.reason || '') + '</span>'}<br><span class="muted small">calls ${r.stats.calls || 0} · tok ${fmtK((r.stats.input_tokens || 0) + (r.stats.output_tokens || 0))}</span></td><td><button class="mini secondary" data-test="${role}" title="이 행에 입력한(아직 저장 안 한) provider/model 로 연결 테스트">테스트</button></td></tr>`;
+      const eff = (j.policy || {})[role] || {};
+      const polCells = showPol ? POLICY_COLS.map((c) => `<td><input id="r-${role}-${c[0]}" type="number" step="${c[0] === 'backoff_s' ? '0.5' : '1'}" value="${esc(cfg[c[0]] == null ? '' : cfg[c[0]])}" placeholder="${esc(eff[c[0]] == null ? '' : eff[c[0]])}" style="width:72px" title="비우면 전역값(${esc(eff[c[0]])}) 상속"></td>`).join('') : '';
+      const circ = (r.circuit || {});
+      const circTxt = circ.open_until && circ.open_until * 1000 > Date.now() ? `<br><span class="bad" title="연속 실패로 잠시 건너뜁니다">회로 차단</span>` : '';
+      return `<tr data-role="${role}"><td><b>${role}</b></td><td class="muted small">${esc(cat.roles[role] || '')}</td><td><input id="r-${role}-provider" list="dl-providers" value="${esc(cfg.provider || '')}" placeholder="${inh}" title="비우면 전역 llm_provider(${esc(s.llm_provider)})를 상속" style="width:140px"></td><td>${modelSelect('r-' + role + '-model', cfg.model || '', role, true, s.llm_model)}</td><td>${sel('r-' + role + '-effort', cat.effort, cfg.effort || '', true)}</td>${polCells}<td class="small">${esc(r.name)}/${esc(r.model)}<br><span class="muted">effort=${r.configured.effort} · ${(r.policy || {}).timeout_s}s × ${(r.policy || {}).retries + 1}</span></td><td>${r.available ? '<span class="ok">available</span>' : '<span class="bad" title="' + esc(r.reason || '') + '">unavailable</span>'}${r.available ? '' : '<br><span class="reason small">' + esc(r.reason || '') + '</span>'}${circTxt}<br><span class="muted small">calls ${r.stats.calls || 0} · tok ${fmtK((r.stats.input_tokens || 0) + (r.stats.output_tokens || 0))}${r.stats.retries ? ' · 재시도 ' + r.stats.retries : ''}${r.stats.errors ? ' · 실패 ' + r.stats.errors : ''}</span></td><td><button class="mini secondary" data-test="${role}" title="이 행에 입력한(아직 저장 안 한) provider/model 로 연결 테스트">테스트</button></td></tr>`;
     }).join('') + `</table><datalist id="dl-providers">${PROVIDERS.map((x) => `<option value="${x}">`).join('')}</datalist>` +
-      `<div class="muted small" style="margin-top:6px"><b>상속</b> = 비워 두면 위 "전역 LLM 기본값"(llm_provider / llm_model / llm_effort)을 그대로 씀. <b>auto</b> = ANTHROPIC_API_KEY 가 있으면 anthropic → 없으면 Ollama(ollama_url 에 ollama_model 이 받아져 있을 때) → 둘 다 없으면 none(추출식 답변). openai / headless 는 auto 가 고르지 않으므로 provider 에 직접 적는다. "테스트" 는 저장 전 입력값으로도 동작하며, 실제 적용은 "저장 &amp; 프로바이더 재로드".</div>`;
+      `<div class="muted small" style="margin-top:6px"><b>상속</b> = 비워 두면 위 "전역 LLM 기본값"(llm_provider / llm_model / llm_effort / llm_timeout …)을 그대로 씀. 역할별 타임아웃·재시도·backoff·총예산·<b>출력토큰(max_tokens)</b>은 '재시도·타임아웃 열 보기' 를 켜면 편집할 수 있고 <code>config.json llm_roles.&lt;role&gt;</code> 에 저장된다. 회색 글씨는 지금 상속 중인 값이다 — 비워 두면 그 값을 쓴다(출력토큰은 단계 기본값: 라우터 200 · 확장/리랭크 400 · 검증 1500 · 요약 800 · 포렌식 1200 · 리뷰/답변 3000 · 추출 4000). <b>auto</b> = ANTHROPIC_API_KEY 가 있으면 anthropic → 없으면 Ollama → 둘 다 없으면 none(추출식 답변). openai / headless 는 provider 에 직접 적는다. "테스트" 는 저장 전 입력값으로도 동작하며, 실제 적용은 "저장 &amp; 프로바이더 재로드". 최종 실패 시에는 추출식 답변·로컬 리랭크 등 대체 경로로 계속 동작합니다.</div>`;
+    wireModelSelects($('#roles-table')); wireModelSelects($('#llm-form'));
+    renderCatalog();
     $$('#roles-table [data-test]').forEach((b) => b.onclick = async () => {
       b.disabled = true;
       // 저장하지 않은 폼 값(전역 + 이 역할)을 요청 단위 오버라이드로 보내 실제 연결을 확인한다
       const role = b.dataset.test, ov = { llm_provider: $('#m-llm-provider').value, llm_model: $('#m-llm-model').value.trim(), ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), openai_base_url: $('#m-openai-url').value.trim(), openai_api_key_header: $('#m-openai-key-header').value, anthropic_base_url: $('#m-anthropic-url').value.trim() };
       const pv = $('#r-' + role + '-provider').value.trim(), m = $('#r-' + role + '-model').value.trim();
-      ov[role + '_provider'] = pv; ov[role + '_model'] = m;
+      ov[role + '_provider'] = pv; ov[role + '_model'] = m === '__custom__' ? '' : m;
       const r = await api('/api/models/test', { which: [role], overrides: ov }); b.disabled = false; renderTest(r);
     });
-    $('#dl-llm-models').innerHTML = llmModels.map((m) => `<option value="${esc(m)}">`).join('');
+    const dl = $('#dl-llm-models');
+    if (dl) dl.innerHTML = (CATALOG.models || []).filter((m) => m.enabled !== false).map((m) => `<option value="${esc(m.id)}">${esc(m.provider)}</option>`).join('');
     const ag = await api('/api/agents'); $('#agents-json').value = JSON.stringify(ag.agents, null, 2);
   }
+  // ---------------- 모델 카탈로그 (models.json) ----------------
+  function renderCatalog() {
+    const provSel = $('#cat-provider');
+    if (provSel && !provSel.children.length) provSel.innerHTML = (CATALOG.providers || PROVIDERS).map((x) => `<option>${esc(x)}</option>`).join('');
+    const t = $('#cat-table'); if (!t) return;
+    const rows = (CATALOG.models || []).concat((CATALOG.embed || []).map((m) => Object.assign({ kind: 'embed' }, m)));
+    t.innerHTML = '<table><tr><th>id</th><th>provider</th><th>설명</th><th>역할</th><th>사용</th><th></th></tr>' + rows.map((m) => `<tr><td class="mono small">${esc(m.id || '(hash)')}${m.kind === 'embed' ? ' <span class="pill">embed</span>' : ''}</td><td>${esc(m.provider)}</td><td class="small muted">${esc(m.label || '')}${m.notes ? ' — ' + esc(m.notes) : ''}</td><td class="small">${esc((m.roles || []).join(',') || '*')}</td><td>${m.enabled === false ? '✘' : '✔'}</td><td><button class="mini secondary" data-cat-del="${esc(m.id)}" data-cat-prov="${esc(m.provider)}">삭제</button></td></tr>`).join('') + '</table>' +
+      `<div class="muted small">현재 설정이 쓰는 모델: ${Object.keys(CATALOG.in_use || {}).map((r) => esc(r + '=' + CATALOG.in_use[r].model)).join(', ')}${(CATALOG.unknown_in_use || []).length ? ' · <span class="warntxt">카탈로그에 없음: ' + CATALOG.unknown_in_use.map((u) => esc(u.role + '=' + u.model)).join(', ') + '</span>' : ''}<br>파일: <code>${esc(CATALOG.path || '')}</code> · CLI: <code>models list</code> · <code>models catalog add &lt;id&gt; --provider …</code></div>`;
+    $$('#cat-table [data-cat-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('카탈로그에서 ' + b.dataset.catDel + ' 을(를) 삭제합니다. (설정에서 이미 쓰고 있어도 동작에는 영향 없음)')) return;
+      await api('/api/models/catalog', { action: 'remove', id: b.dataset.catDel, provider: b.dataset.catProv });
+      CATALOG = await api('/api/models/catalog'); renderCatalog(); loadModels();
+    });
+  }
+  if ($('#btn-cat-add')) $('#btn-cat-add').onclick = async () => {
+    const id = $('#cat-id').value.trim(); if (!id) { toast('모델 id 를 입력하세요'); return; }
+    const m = { id: id, provider: $('#cat-provider').value, label: $('#cat-label').value.trim() || id, roles: $('#cat-roles').value.split(',').map((x) => x.trim()).filter(Boolean), enabled: true };
+    if ($('#cat-embed').checked) m.kind = 'embed';
+    const j = await api('/api/models/catalog', { action: 'add', model: m });
+    if (j && j.ok) { toast('카탈로그에 추가됨'); $('#cat-id').value = ''; $('#cat-label').value = ''; CATALOG = j.catalog || CATALOG; renderCatalog(); loadModels(); }
+  };
+  if ($('#btn-cat-refresh')) $('#btn-cat-refresh').onclick = async () => { CATALOG = await api('/api/models/catalog'); renderCatalog(); toast('카탈로그 새로고침'); };
+  if ($('#btn-cat-discover')) $('#btn-cat-discover').onclick = async () => {
+    $('#cat-discover').textContent = '조회 중…';
+    const j = await api('/api/cli', { argv: ['models', 'discover', '--json'] });
+    let d = {}; try { d = JSON.parse(j.output || '{}'); } catch (e) { $('#cat-discover').textContent = j.output || '조회 실패'; return; }
+    $('#cat-discover').innerHTML = ['ollama', 'openai'].map((prov) => {
+      const rows = d[prov] || []; const err = (d.errors || {})[prov];
+      return `<div><b>${prov}</b> ${err ? '<span class="warntxt">' + esc(err) + '</span>' : rows.length + '개'}</div>` +
+        rows.map((m) => `<span class="chip ${m.in_catalog ? 'on' : ''}" data-add="${esc(m.id)}" data-prov="${prov}" title="${m.in_catalog ? '이미 카탈로그에 있음' : '클릭하면 카탈로그에 추가'}">${esc(m.id)}</span>`).join('');
+    }).join('');
+    $$('#cat-discover [data-add]').forEach((c) => c.onclick = async () => {
+      await api('/api/models/catalog', { action: 'add', model: { id: c.dataset.add, provider: c.dataset.prov, label: c.dataset.add, enabled: true } });
+      CATALOG = await api('/api/models/catalog'); renderCatalog(); toast('추가됨: ' + c.dataset.add);
+    });
+  };
+  if ($('#roles-show-policy')) $('#roles-show-policy').onchange = loadModels;
   function renderTest(r) {
     $('#models-test').innerHTML = '<table><tr><th>대상</th><th>provider/model</th><th>ok</th><th>ms</th><th>detail</th></tr>' + Object.keys(r).map((k) => { const x = r[k]; return `<tr><td><b>${k}</b></td><td>${esc(x.provider || x.url || '')}/${esc(x.model)}${x.dim ? ' d=' + x.dim : ''}</td><td>${x.ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'}</td><td class="num">${fmt(x.ms, 0)}</td><td class="small">${esc(x.detail || '')}${x.models ? '<br><span class="muted">models: ' + esc(x.models.slice(0, 12).join(', ')) + '</span>' : ''}${'live_ok' in x ? '<br><b>실제 호출:</b> ' + (x.live_ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>') + ' ' + fmt(x.live_ms, 0) + 'ms ' + esc(x.live_detail || '') : ''}</td></tr>`; }).join('') + '</table>';
   }
@@ -56,9 +131,20 @@
       ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), llm_fallbacks: $('#m-fallbacks').checked,
       openai_base_url: $('#m-openai-url').value.trim(), openai_api_key_header: $('#m-openai-key-header').value, openai_embed_base_url: $('#m-openai-embed-url').value.trim(), openai_embed_model: $('#m-openai-embed').value.trim(),
       anthropic_base_url: $('#m-anthropic-url').value.trim(), llm_timeout: parseInt($('#m-llm-timeout').value, 10) || 600,
+      llm_retries: parseInt($('#m-llm-retries').value, 10), llm_retry_backoff: $('#m-llm-backoff').value, llm_retry_backoff_s: parseFloat($('#m-llm-backoff-s').value),
+      llm_budget_s: parseInt($('#m-llm-budget').value, 10) || 0, llm_circuit_failures: parseInt($('#m-llm-circuit').value, 10), llm_circuit_cooldown_s: parseInt($('#m-llm-cooldown').value, 10),
       rerank_url: $('#m-rerank-url').value.trim(), rerank_api_model: $('#m-rerank-model').value.trim(), rerank_api_style: $('#m-rerank-style').value, llm_roles: {} };
     try { st.openai_extra_headers = JSON.parse($('#m-openai-extra').value.trim() || '{}'); } catch (e) { toast('openai_extra_headers JSON 오류 — 무시'); }
-    STATE.roles.forEach((role) => { const c = {}; const pv = $('#r-' + role + '-provider').value.trim(), m = $('#r-' + role + '-model').value.trim(), e = $('#r-' + role + '-effort').value; if (pv) c.provider = pv; if (m) c.model = m; if (e) c.effort = e; if (Object.keys(c).length) st.llm_roles[role] = c; });
+    STATE.roles.forEach((role) => {
+      const c = {}; const pv = $('#r-' + role + '-provider').value.trim(), mEl = $('#r-' + role + '-model'), m = mEl ? mEl.value.trim() : '', e = $('#r-' + role + '-effort').value;
+      if (pv) c.provider = pv;
+      if (m && m !== '__custom__') c.model = m;
+      if (e) c.effort = e;
+      POLICY_COLS.forEach((col) => { const el = $('#r-' + role + '-' + col[0]); if (el && el.value !== '') c[col[0]] = col[0] === 'backoff_s' ? parseFloat(el.value) : parseInt(el.value, 10); });
+      // 빈 칸으로 지우면 그 역할의 그 항목은 상속으로 되돌린다 (남아 있던 값 제거)
+      POLICY_COLS.forEach((col) => { const el = $('#r-' + role + '-' + col[0]); if (el && el.value === '' && c[col[0]] !== undefined) delete c[col[0]]; });
+      if (Object.keys(c).length) st.llm_roles[role] = c;
+    });
     return st;
   }
   $('#btn-models-save').onclick = async () => { const j = await api('/api/models/set', { settings: modelsSettings() }); $('#models-msg').textContent = '저장됨 · answer=' + j.providers.roles.answer.name + '/' + j.providers.roles.answer.model + ' · embed=' + j.providers.embedder.name; loadModels(); loadStatus(); };
@@ -200,6 +286,111 @@
   $('#btn-prompt-save').onclick = async () => { const j = await api('/api/prompts', { name: $('#prompt-name').textContent, content: $('#prompt-content').value }); $('#prompt-msg').textContent = '저장됨: ' + j.path; loadPrompts(); };
   $('#btn-prompt-reset').onclick = async () => { if (!confirm('기본값으로 되돌립니다.')) return; const j = await api('/api/prompts', { action: 'reset', name: $('#prompt-name').textContent }); $('#prompt-content').value = j.content; loadPrompts(); };
   loaders.prompts = loadPrompts;
+
+  // ---------------- SCHEDULE (schedule.json) ----------------
+  let SCH = { tasks: [], action_types: [], help: {} };
+  const ACTION_SAMPLE = {
+    build: { type: 'build', full: false },
+    fetch_url: { type: 'fetch_url', urls: ['https://intranet.example/notice.html'], dest: 'corpus/fetched', build_after: true },
+    python: { type: 'python', script: 'tools/my_job.py', args: [], timeout_s: 600 },
+    cli: { type: 'cli', argv: ['build', '--yes'] },
+    query: { type: 'query', q: '지난주 리뷰한 CL 요약', out: 'logs/schedule/digest.md' },
+    llm: { type: 'llm', role: 'answer', prompt_file: 'prompts/weekly_review.md', out: 'logs/schedule/review.md' },
+    headless: { type: 'headless', agent: 'opencode', prompt_file: 'prompts/weekly_review.md', out: 'logs/schedule/review.md' },
+    mcp_ingest: { type: 'mcp_ingest', sources: null, build_after: true },
+    maintenance: { type: 'maintenance', action: 'wal_checkpoint' },
+    http: { type: 'http', url: 'https://hooks.example/notify', method: 'POST', body: { text: 'llmwiki' } },
+    evolve: { type: 'evolve', op: 'review' },
+    memory: { type: 'memory', op: 'decay' },
+    precompute: { type: 'precompute', op: 'run', from_log: 20 },
+    eval: { type: 'eval', k: 5, out: 'logs/schedule/eval.md' },
+    trial: { type: 'trial', name: 'nightly', preset: 'quality', k: 5 },
+    snapshot: { type: 'snapshot', op: 'create', tag: 'auto:schedule', keep: 3 },
+    wiki: { type: 'wiki', min_degree: 1 },
+    forensic: { type: 'forensic', op: 'summary', out: 'logs/schedule/forensic.md' },
+    embed_report: { type: 'embed_report', out: 'logs/schedule/embed.md' },
+  };
+  function whenText(t) {
+    if (t.cron) return 'cron ' + t.cron;
+    if (t.at) return '매일 ' + t.at + ((t.days || []).length ? ' (' + t.days.join(',') + ')' : '');
+    return '매 ' + (t.every || '');
+  }
+  async function loadSchedule() {
+    const j = await api('/api/schedule?n=30');
+    if (!j || j.error) { $('#sch-table').innerHTML = `<div class="muted">${esc((j && j.error) || '조회 실패')}</div>`; return; }
+    SCH = j; $('#sch-path').textContent = j.path || '';
+    $('#sch-msg').innerHTML = j.running ? '' : '<span class="warntxt">스케줄러가 실행 중이 아닙니다 (serve 로 서버를 띄우면 동작). 목록 편집과 `schedule run` 은 지금도 가능합니다.</span>';
+    const ty = $('#sch-type');
+    if (ty && !ty.children.length) ty.innerHTML = (j.action_types || []).map((x) => `<option>${esc(x)}</option>`).join('');
+    $('#sch-table').innerHTML = (j.tasks || []).length
+      ? '<table><tr><th>사용</th><th>이름</th><th>시점</th><th>동작</th><th>다음 실행</th><th>마지막</th><th></th></tr>' + j.tasks.map((t) => {
+        if (t.invalid) return `<tr class="skip"><td>✘</td><td>${esc(t.name)}</td><td colspan="4" class="warntxt small">설정 오류: ${esc(t.invalid)}</td><td></td></tr>`;
+        return `<tr><td>${t.enabled === false ? '✘' : '✔'}</td><td><b>${esc(t.name)}</b>${t.running ? ' <span class="pill warn">실행 중</span>' : ''}${t.weight === 'exclusive' ? ' <span class="pill bad">배타</span>' : ''}</td><td class="small">${esc(whenText(t))}</td><td class="small">${esc((t.action || {}).type)}</td>` +
+          `<td class="small">${t.next_run ? dt(t.next_run) : '-'}</td><td class="small">${t.last_run ? dt(t.last_run) + ' <span class="pill ' + (t.last_status === 'done' ? 'ok' : t.last_status === 'cancelled' ? 'warn' : 'bad') + '">' + esc(t.last_status || '') + '</span> ' + fmt(t.last_ms, 0) + 'ms' : '-'}${t.last_error ? '<br><span class="bad small">' + esc(String(t.last_error).slice(0, 70)) + '</span>' : ''}</td>` +
+          `<td><button class="mini" data-run="${esc(t.name)}" title="지금 한 번 실행">▶</button><button class="mini secondary" data-edit="${esc(t.name)}">편집</button><button class="mini secondary" data-tog="${esc(t.name)}">${t.enabled === false ? '켜기' : '끄기'}</button><button class="mini secondary" data-del="${esc(t.name)}">삭제</button></td></tr>`;
+      }).join('') + '</table>'
+      : '<div class="muted">작업이 없습니다. "+ 작업 추가" 를 누르거나 setup/schedule.example.json 을 schedule.json 으로 복사하세요.</div>';
+    $$('#sch-table [data-run]').forEach((b) => b.onclick = async () => { const r = await api('/api/schedule', { action: 'run', name: b.dataset.run }); toast(r && r.ok ? '실행 시작 (진행 중 작업 탭에서 확인)' : ('실패: ' + ((r && r.error) || ''))); setTimeout(loadSchedule, 1500); });
+    $$('#sch-table [data-edit]').forEach((b) => b.onclick = () => openTask(b.dataset.edit));
+    $$('#sch-table [data-tog]').forEach((b) => b.onclick = async () => { const t = (SCH.tasks || []).find((x) => x.name === b.dataset.tog); await api('/api/schedule', { action: t.enabled === false ? 'enable' : 'disable', name: b.dataset.tog }); loadSchedule(); });
+    $$('#sch-table [data-del]').forEach((b) => b.onclick = async () => { if (!confirm('작업 ' + b.dataset.del + ' 을 삭제합니다.')) return; await api('/api/schedule', { action: 'remove', name: b.dataset.del }); loadSchedule(); });
+    $('#sch-history').innerHTML = (j.history || []).length
+      ? '<table><tr><th>시각</th><th>작업</th><th>결과</th><th>ms</th><th>내용</th></tr>' + j.history.map((h) => `<tr><td class="small">${dt(h.ts)}</td><td>${esc(h.name)}</td><td><span class="pill ${h.status === 'done' ? 'ok' : h.status === 'cancelled' ? 'warn' : 'bad'}">${esc(h.status)}</span></td><td class="num">${fmt(h.ms, 0)}</td><td class="small muted">${esc((h.error || JSON.stringify(h.result || {})).slice(0, 120))}</td></tr>`).join('') + '</table>'
+      : '<div class="muted">이력 없음</div>';
+  }
+  function showWhen() {
+    const k = $('#sch-when-kind').value;
+    ['every', 'at', 'cron'].forEach((x) => $('#sch-when-' + x).classList.toggle('hidden', x !== k));
+  }
+  function openTask(name) {
+    const t = (SCH.tasks || []).find((x) => x.name === name) || { name: '', enabled: true, every: '1h', action: ACTION_SAMPLE.build };
+    $('#sch-editor').classList.remove('hidden');
+    $('#sch-editor-title').textContent = name ? ('작업 편집: ' + name) : '새 작업';
+    $('#sch-editor').dataset.orig = name || '';
+    $('#sch-name').value = t.name || ''; $('#sch-enabled').checked = t.enabled !== false;
+    $('#sch-when-kind').value = t.cron ? 'cron' : t.at ? 'at' : 'every';
+    $('#sch-every').value = t.every || '1h'; $('#sch-at').value = t.at || '03:00'; $('#sch-days').value = (t.days || []).join(','); $('#sch-cron').value = t.cron || '0 3 * * *';
+    $('#sch-type').value = (t.action || {}).type || 'build';
+    $('#sch-timeout').value = t.timeout_s || 0; $('#sch-overlap').value = t.overlap || 'skip';
+    $('#sch-action').value = JSON.stringify(t.action || ACTION_SAMPLE.build, null, 2);
+    $('#sch-type-help').textContent = (SCH.help || {})[$('#sch-type').value] || '';
+    showWhen();
+  }
+  function taskFromForm() {
+    const t = { name: $('#sch-name').value.trim(), enabled: $('#sch-enabled').checked };
+    const k = $('#sch-when-kind').value;
+    if (k === 'every') t.every = $('#sch-every').value.trim();
+    else if (k === 'at') { t.at = $('#sch-at').value.trim(); const d = $('#sch-days').value.split(',').map((x) => x.trim()).filter(Boolean); if (d.length) t.days = d; }
+    else t.cron = $('#sch-cron').value.trim();
+    const to = parseInt($('#sch-timeout').value, 10); if (to > 0) t.timeout_s = to;
+    t.overlap = $('#sch-overlap').value;
+    t.action = JSON.parse($('#sch-action').value);
+    return t;
+  }
+  if ($('#btn-sch-refresh')) {
+    $('#btn-sch-refresh').onclick = loadSchedule;
+    $('#btn-sch-add').onclick = () => openTask('');
+    $('#btn-sch-cancel').onclick = () => $('#sch-editor').classList.add('hidden');
+    $('#sch-when-kind').onchange = showWhen;
+    $('#sch-type').onchange = () => { $('#sch-action').value = JSON.stringify(ACTION_SAMPLE[$('#sch-type').value] || { type: $('#sch-type').value }, null, 2); $('#sch-type-help').textContent = (SCH.help || {})[$('#sch-type').value] || ''; };
+    $('#btn-sch-save').onclick = async () => {
+      let t; try { t = taskFromForm(); } catch (e) { toast('동작 설정 JSON 오류: ' + e); return; }
+      if (!t.name) { toast('이름을 입력하세요'); return; }
+      const orig = $('#sch-editor').dataset.orig;
+      if (orig && orig !== t.name) await api('/api/schedule', { action: 'remove', name: orig });
+      const j = await api('/api/schedule', { action: 'add', task: t });
+      if (j && j.ok) { toast('저장됨'); $('#sch-editor').classList.add('hidden'); loadSchedule(); }
+    };
+    $('#btn-sch-test').onclick = async () => {
+      let t; try { t = taskFromForm(); } catch (e) { toast('동작 설정 JSON 오류: ' + e); return; }
+      if (!t.name) { toast('이름을 입력하세요'); return; }
+      await api('/api/schedule', { action: 'add', task: t });
+      const r = await api('/api/schedule', { action: 'run', name: t.name });
+      toast(r && r.ok ? '실행 시작 — 진행 중 작업 탭에서 확인' : ('실패: ' + ((r && r.error) || '')));
+      setTimeout(loadSchedule, 2000);
+    };
+  }
+  loaders.schedule = loadSchedule;
 
   // ---------------- CONFIG ----------------
   async function loadConfig() { const j = await api('/api/status'); $('#config-json').value = JSON.stringify(j.settings, null, 2); $('#config-paths').textContent = '파일 위치: ' + Object.keys(j.paths || {}).map((k) => k + '=' + j.paths[k]).join(' · '); }

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 from .config import ROOT, path_for
@@ -199,8 +200,9 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("doc_expand_max_chunks", "context", "int", 3, "문서 단위 확장: 문서당 추가할 최대 청크 수.", "문서 전체를 넣으려면 크게 (컨텍스트 상한 context_max_chars 는 그대로 적용).", "3", 1, 50),
     _p("doc_expand_min_score", "context", "float", 0.2, "문서 단위 확장: 이 점수(0~1) 이상인 청크만 추가. 점수 = 키워드 커버리지·벡터 유사도(모드별).",
        "낮추면 관련 없는 청크까지 들어와 토큰 낭비, 높이면 확장이 거의 안 됨. 0 이면 상한까지 무조건 추가.", "0.2", 0.0, 1.0),
-    _p("doc_expand_mode", "context", "choice", "hybrid", "문서 단위 확장 점수 방식: keyword(질의 키워드 커버리지) | vector(질의-청크 코사인, 부모 청크 대비 정규화) | hybrid(가중합).",
-       "hash 임베더에서는 keyword 비중이 안전. 의미 임베더면 vector/hybrid.", "hybrid", choices=["keyword", "vector", "hybrid"]),
+    _p("doc_expand_mode", "context", "choice", "hybrid", "문서 단위 확장 점수 방식: keyword(질의 키워드 커버리지) | vector(질의-청크 코사인, 부모 청크 대비 정규화) | hybrid(가중합) | full(근거가 나온 문서를 통째로 — 점수로 거르지 않고 문서 순서대로, doc_expand_max_chunks 와 context_max_chars 로만 제한).",
+       "hash 임베더에서는 keyword 비중이 안전. 의미 임베더면 vector/hybrid. full 은 근거 문서 전체를 읽히므로 품질↑·토큰↑ (doc_expand_max_chunks 를 함께 키운다).",
+       "hybrid", choices=["keyword", "vector", "hybrid", "full"]),
     _p("doc_expand_w", "context", "float", 0.5, "hybrid 모드에서 벡터 점수 가중 (키워드는 1-w).", "", "0.5", 0.0, 1.0),
     # ------------------------------------------------------------------ evidence / fallback
     _p("evidence_min_score", "evidence", "float", 0.015, "충분성 휴리스틱: 상위 fused 점수가 이 미만이면 weak.", "rrf 스케일(1/(60+r)): 단일 채널 1위 ≈0.0164, 채널 2개 합의 ≈0.03. 0.02 로 올리면 단일 채널 근거는 모두 weak.", "0.015", 0.0, 1.0),
@@ -216,6 +218,10 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("answer_length_target", "answer", "choice", "normal", "답변 상세도 목표: short(핵심만) | normal | long(근거 전체를 상세 설명). 프롬프트에 반영.",
        "long 은 evidence-rich 답변, 토큰↑.", "normal", choices=["short", "normal", "long"]),
     _p("answer_max_tokens", "answer", "int", 3000, "답변 LLM 출력 토큰 상한.", "", "3000", 100, 32000, source="config"),
+    _p("answer_repeat_guard", "answer", "bool", True, "답변이 같은 구절을 무한 반복하는 LLM 고장(반복 루프)을 잡아 잘라내고 경고를 붙인다.",
+       "끄면 반복된 답변이 그대로 나가고 캐시에도 저장된다.", "true"),
+    _p("answer_repeat_min_chars", "answer", "int", 12, "반복으로 판정할 최소 구절 길이(글자).", "너무 작으면 정상적인 짧은 반복도 잡는다.", "12", 4, 400),
+    _p("answer_repeat_times", "answer", "int", 4, "같은 구절이 연속으로 이 횟수 이상 나오면 반복 루프로 본다.", "표·목록에는 정상적인 반복이 있으므로 3 미만은 권하지 않는다.", "4", 3, 50),
     _p("answer_effort", "answer", "choice", "medium", "답변 LLM effort.", "high 는 추론↑ 지연·비용↑.", "medium", choices=["low", "medium", "high"], source="config"),
     _p("llm_effort", "answer", "choice", "low", "추출/리랭크/요약/리뷰 LLM effort (역할별 llm_roles 로 개별 지정 가능).", "", "low", choices=["low", "medium", "high"], source="config"),
     _p("extractive_sentences", "answer", "int", 6, "추출식 답변 문장 수.", "", "6", 1, 30),
@@ -270,20 +276,52 @@ def coerce(key: str, value: Any) -> Any:
 
 
 class Tuning:
-    """tuning.json 의 오버라이드 + 기본값. source=config 키는 Settings 가 진실이므로 여기서는 값을 갖지 않는다."""
+    """tuning.json 의 오버라이드 + 기본값. source=config 키는 Settings 가 진실이므로 여기서는 값을 갖지 않는다.
+
+    병렬 처리(2026-09-15): 요청 단위 오버레이. push_overlay() 를 부른 스레드는 그 뒤로 `values` 가 자기만의 사본(기본 = 현재 전역값 복사)을
+    가리키므로, 프리셋(--preset / mode=deep)·fusion compare·trial 이 요청 안에서 T.values 를 바꿔도 다른 스레드의 질의에 영향을 주지 않는다.
+    pop_overlay() 로 해제. 오버레이가 없는 스레드(CLI 단일 실행, 서버의 설정 저장)는 전역 값을 직접 다룬다.
+    """
+    _TL = threading.local()
 
     def __init__(self, values: Optional[Dict[str, Any]] = None):
-        self.values: Dict[str, Any] = {}
+        self._base: Dict[str, Any] = {}
         for k, v in (values or {}).items():
             if k in _INDEX and _INDEX[k]["source"] == "tuning":
                 try:
-                    self.values[k] = coerce(k, v)
+                    self._base[k] = coerce(k, v)
                 except (ValueError, TypeError):
                     pass
 
+    # ---- 요청 단위 오버레이 ----
+    @property
+    def values(self) -> Dict[str, Any]:
+        ov = getattr(Tuning._TL, "overlay", None)
+        return ov if ov is not None else self._base
+
+    @values.setter
+    def values(self, d: Dict[str, Any]) -> None:
+        if getattr(Tuning._TL, "overlay", None) is not None:
+            Tuning._TL.overlay = dict(d or {})
+        else:
+            self._base = dict(d or {})
+
+    def push_overlay(self) -> Dict[str, Any]:
+        """현재 스레드에 전역값 사본 오버레이를 만든다 (중첩 허용: 이전 오버레이를 반환하므로 pop_overlay(prev) 로 복원)."""
+        prev = getattr(Tuning._TL, "overlay", None)
+        Tuning._TL.overlay = dict(prev if prev is not None else self._base)
+        return prev
+
+    def pop_overlay(self, prev: Optional[Dict[str, Any]] = None) -> None:
+        Tuning._TL.overlay = prev
+
+    def has_overlay(self) -> bool:
+        return getattr(Tuning._TL, "overlay", None) is not None
+
     def get(self, key: str) -> Any:
-        if key in self.values:
-            return self.values[key]
+        vals = self.values
+        if key in vals:
+            return vals[key]
         return _INDEX[key]["default"]
 
     def set(self, key: str, value: Any) -> Any:
@@ -320,21 +358,21 @@ class Tuning:
         return out
 
 
-T = Tuning()   # 전역 현재값 (Pipeline.reload / load_tuning 이 갱신)
+T = Tuning()   # 전역 현재값 (Pipeline.reload / load_tuning 이 갱신). 객체는 하나로 유지하고 내용만 바꾼다 (다른 모듈이 참조를 들고 있음).
 
 
 def load_tuning(path: Optional[str] = None) -> Tuning:
-    global T
     path = path or TUNING_PATH
     vals: Dict[str, Any] = {}
     if os.path.exists(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            vals = {k: v for k, v in data.items() if not k.startswith("_")}
+            from . import atomicio
+            data = atomicio.read_json(path)
+            vals = {k: v for k, v in (data or {}).items() if not k.startswith("_")}
         except Exception:
             vals = {}
-    T = Tuning(vals)
+    fresh = Tuning(vals)
+    T._base = fresh._base       # 전역 값만 교체 (요청 오버레이는 각 스레드가 갖고 있으므로 건드리지 않음)
     return T
 
 
@@ -342,9 +380,8 @@ def save_tuning(t: Tuning, path: Optional[str] = None) -> str:
     path = path or TUNING_PATH
     data: Dict[str, Any] = {"_comment": "단계별 튜닝 파라미터 오버라이드. 키/기본값/설명은 docs/TUNING.md 또는 `python -m llmwiki tuning show`. 기본값과 같은 값은 저장하지 않습니다."}
     data.update(t.to_dict())
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return path
+    from . import atomicio
+    return atomicio.write_json(path, data)
 
 
 def render_doc(settings: Any = None, t: Optional[Tuning] = None) -> str:

@@ -174,6 +174,18 @@ python -m llmwiki apikey list | remove <id|name>
 ### 4.5 병행
 로그인 화면(`/login`)은 `local` 이 켜져 있고 사용자가 있으면 ID/비밀번호 폼을, `sso.enabled` 면 "SSO 로 로그인" 버튼을, `anonymous_role` 이 있으면 "게스트로 계속" 링크를 함께 보여 준다. 네 가지(로컬·SSO·API 키·게스트)가 같은 세션/역할 체계를 쓴다.
 
+## 4.1 권한 미리보기 (admin 이 다른 권한 화면을 확인)
+
+헤더의 `👁 권한 보기` 로 자기 역할을 **낮춰서** 화면과 동작을 확인한다(`POST /api/auth/preview {role}`).
+쿠키 `llmwiki_preview` 하나로 동작하며, `auth.apply_preview()` 가 `web/server.py: _user()` 한 곳에서 적용되므로
+화면뿐 아니라 **모든 권한 검사에 그대로 반영된다** — viewer 로 보는 중에는 빌드 요청이 403 이다.
+
+- **올릴 수는 없다.** 요청한 역할이 실제 역할보다 높으면 무시한다. 실제 viewer 가 `preview=admin` 을 보내거나
+  쿠키를 직접 위조해도 viewer 그대로다(실측 확인). 그래서 이 쿠키에는 서명을 두지 않았다 — 위조해 봐야 자기 권한을 줄일 뿐이다.
+- 미리보기 중에는 화면 맨 위에 노란 띠가 계속 뜨고, 전환·해제는 감사 로그에 남는다.
+- 회귀 테스트: `tests/test_concurrency_0915.py` 의 `RolePreviewTest` (낮추기만 · 위조 무시 · 쿠키 왕복).
+- 실제 로그인 흐름까지 보려면 `serve --host 0.0.0.0` 으로 인증을 켠다 — [WEB_UI.md](WEB_UI.md) §8.
+
 ## 5. CLI 권한 게이트
 
 CLI 는 서버 OS 계정으로 실행되므로 종전에는 admin 으로 봤다. 공용 서버에서 여러 사람이 셸을 쓰면:

@@ -4,8 +4,8 @@
 
 | 파일 | 용도 |
 |---|---|
-| `install.bat` / `install.sh` | 원클릭 설치: 패키지 설치 → config.json/.env/security.json/agents.json 생성(없을 때만) → 환경 진단 |
-| `check_env.py` | 환경 진단 (Python 버전, 패키지, SQLite FTS5, 설정, 키, Ollama, 코퍼스, **security.json admin/익명/API 키 · agents.json 재시도 · serve/mcp 기본 포트 · LLM 재시도**) — 더 자세한 점검은 `python -m llmwiki health` |
+| `install.bat` / `install.sh` | 원클릭 설치: 패키지 설치 → config.json/.env/security.json/agents.json/server.json/schedule.json/models.json 생성(없을 때만) → 환경 진단 |
+| `check_env.py` | 환경 진단 (Python 버전, 패키지, SQLite FTS5, 설정, 키, Ollama, 코퍼스, **security.json admin/익명/API 키 · agents.json 재시도 · serve/mcp 기본 포트 · LLM 재시도 · 동시성 한도 · 스케줄 작업 · 모델 카탈로그 · 터미널 인코딩**) — 더 자세한 점검은 `python -m llmwiki health` |
 | `config.example.json` | 사용자 설정 원본 — 코퍼스 경로, LLM/임베딩 모델, 역할별 모델, 토글, 운영 수치 |
 | `.env.example` | API 키와 `LLMWIKI_*` 환경변수 오버라이드 원본 |
 | `requirements-optional.txt` | 선택 패키지 (anthropic, sentence-transformers, kiwipiepy, pyyaml) |
@@ -18,6 +18,9 @@
 | (루트) `agents.json` | headless 에이전트(opencode 등) 명령 템플릿 + **재시도**(`timeout_s` 300 · `retries` 3 · `retry_backoff_s` · `retry_on`) — BRINGUP_GUIDE §4.3 |
 | `security.example.json` | `security.json` 원본 — users 비어 있음, 키마다 `_how` 설명. `install.*` 가 없을 때 복사. 첫 admin: `python -m llmwiki users add <id> --role admin` |
 | `agents.example.json` | `agents.json` 원본(재시도 정책 포함). `install.*` 가 없을 때 복사 |
+| `server.example.json` | `server.json` 원본 — **여러 사람이 동시에 쓸 때의 제어**: 동시 실행 슬롯·대기열·시간 제한·속도 제한·세션 수·IP/사용자 차단·점검 모드·모니터 공개 범위. 30명 기준 권장값과 계산 근거는 docs/CONCURRENCY.md |
+| `schedule.example.json` | `schedule.json` 원본 — **정해진 시각·주기에 돌릴 작업** 17가지 예시. 30분마다 증분 빌드 하나만 켜져 있고 나머지는 `enabled: false` 이므로, 필요한 것만 `schedule enable <name>` 으로 켠다. 전체 빌드·URL 수집·스크립트·CLI 명령·evolve·memory·precompute·eval·snapshot 등 — docs/SCHEDULER.md |
+| `models.example.json` | `models.json` 원본 — **쓸 수 있는 LLM/임베딩 모델 목록**. Web 설정의 역할별 드롭다운과 `models list` 가 이 목록을 보여 준다. 환경의 실제 제공 모델은 `python -m llmwiki models discover` 로 가져온다 |
 | `mcp_clients.example.json` | 외부 LLM 클라이언트(Claude Code/Desktop · Cursor · opencode · Codex)에 붙여 넣는 MCP 설정 블록 4종. 환경 값이 채워진 버전: `python -m llmwiki mcp --client-config` — docs/MCP.md |
 | `mcp_sources.example.json` | `mcp_sources.json` 원본 — **다른 RAG · MCP 서버 · REST 검색 API** 를 붙이는 소스 4종 예시(peer_wiki http · kb_rest rest · mango stdio · mock). 토글 `external_rag`(검색 채널)·`mcp_federation`(도구 노출) — docs/RAG_FEDERATION.md |
 | (루트) `plugins/mcp_tools/` | MCP 플러그인 도구 폴더(`_example_echo.py` 예시; 밑줄을 지우면 활성) — docs/RAG_FEDERATION.md §3 |

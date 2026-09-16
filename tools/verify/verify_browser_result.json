@@ -1,0 +1,346 @@
+{
+ "pages": {
+  "index": {
+   "dom_len": 65385,
+   "console_lines": 3,
+   "errors": [],
+   "tabs": 31,
+   "user_badge": true,
+   "title": "LLM Wiki · FTS + Vector + GraphRAG (self-evolving)",
+   "has_btn-q-expect": true,
+   "has_q-llm-report": true,
+   "has_build-channels": true,
+   "has_sec-perms": true,
+   "has_sec-keys": true,
+   "has_fx-docs": true,
+   "has_bc-fts": true,
+   "has_btn-pin-tab": true,
+   "has_q-queue": true,
+   "has_pinned-pane": true,
+   "has_server-badge": true,
+   "has_sch-table": true,
+   "has_srv-limits": true,
+   "has_act-running": true,
+   "has_cat-table": true,
+   "has_roles-show-policy": true,
+   "has_build-external": true
+  },
+  "login": {
+   "dom_len": 65385,
+   "console_lines": 3,
+   "errors": []
+  }
+ },
+ "tabs": [
+  {
+   "group": "ask",
+   "tab": "query",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 4144,
+   "static_len": 3842,
+   "ok": true
+  },
+  {
+   "group": "ask",
+   "tab": "search",
+   "active": true,
+   "rendered": false,
+   "errors": [],
+   "body_len": 752,
+   "static_len": 752,
+   "ok": true
+  },
+  {
+   "group": "corpus",
+   "tab": "build",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 112863,
+   "static_len": 2641,
+   "ok": true
+  },
+  {
+   "group": "corpus",
+   "tab": "embed",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 5779,
+   "static_len": 907,
+   "ok": true
+  },
+  {
+   "group": "corpus",
+   "tab": "contract",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 37180,
+   "static_len": 573,
+   "ok": true
+  },
+  {
+   "group": "corpus",
+   "tab": "sources",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1338,
+   "static_len": 1211,
+   "ok": true
+  },
+  {
+   "group": "knowledge",
+   "tab": "graph",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 7740,
+   "static_len": 1065,
+   "ok": true
+  },
+  {
+   "group": "knowledge",
+   "tab": "wiki",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 24687,
+   "static_len": 488,
+   "ok": true
+  },
+  {
+   "group": "knowledge",
+   "tab": "rules",
+   "active": true,
+   "rendered": false,
+   "errors": [],
+   "body_len": 317,
+   "static_len": 317,
+   "ok": true
+  },
+  {
+   "group": "quality",
+   "tab": "trials",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 4219,
+   "static_len": 995,
+   "ok": true
+  },
+  {
+   "group": "quality",
+   "tab": "eval",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1082,
+   "static_len": 423,
+   "ok": true
+  },
+  {
+   "group": "quality",
+   "tab": "forensics",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 17822,
+   "static_len": 1186,
+   "ok": true
+  },
+  {
+   "group": "evolve",
+   "tab": "evolve",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 26774,
+   "static_len": 1597,
+   "ok": true
+  },
+  {
+   "group": "evolve",
+   "tab": "memory",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 12631,
+   "static_len": 459,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "models",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 30421,
+   "static_len": 2475,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "presets",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 2248,
+   "static_len": 427,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "tuning",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 65068,
+   "static_len": 567,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "qrules",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1171,
+   "static_len": 1031,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "pins",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 840,
+   "static_len": 661,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "prompts",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1549,
+   "static_len": 614,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "schedule",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 10871,
+   "static_len": 2324,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "config",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1737,
+   "static_len": 443,
+   "ok": true
+  },
+  {
+   "group": "settings",
+   "tab": "security",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 27871,
+   "static_len": 2592,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "requests",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 18749,
+   "static_len": 801,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "activity",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 4085,
+   "static_len": 1135,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "server",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 14931,
+   "static_len": 2118,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "logs",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 86935,
+   "static_len": 1110,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "arch",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 20745,
+   "static_len": 1085,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "system",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 6903,
+   "static_len": 2094,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "qlog",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 19401,
+   "static_len": 224,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "console",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1089,
+   "static_len": 435,
+   "ok": true
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+{
+  "title": "자유 형식 문서 (형식이 정해지지 않은 자료 · 외부에서 가져온 문서)",
+  "extends": "common",
+  "id_pattern": "^NOTE-[A-Za-z0-9._-]+$",
+  "fields": {
+    "status": {
+      "type": "enum",
+      "values": ["draft", "active", "archived"],
+      "required": false
+    },
+    "source_path": {
+      "type": "string",
+      "required": false,
+      "desc": "원본 파일 경로 (tools/corpus_ingest.py 가 기록). 원본은 <out>/_originals/ 에 그대로 보관된다"
+    },
+    "source_format": {
+      "type": "string",
+      "required": false,
+      "desc": "원본 형식 (md/txt/html/pdf/json/code/…). pdf·docx 처럼 본문을 추출한 경우 extracted=true"
+    },
+    "extracted": {
+      "type": "string",
+      "required": false,
+      "desc": "true 면 본문이 원본에서 추출된 텍스트(레이아웃·이미지 없음)라는 뜻"
+    }
+  },
+  "sections": {
+    "recommended": [],
+    "required": []
+  }
+}

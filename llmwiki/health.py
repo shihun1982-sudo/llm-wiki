@@ -41,6 +41,17 @@ def run_health(pipe, quick: bool = False, for_build: bool = False) -> Dict[str, 
         return True, "sqlite %s, FTS5 ok" % sqlite3.sqlite_version
     checks.append(_check("sqlite_fts5", _fts5))
 
+    def _console():
+        from . import console as _c
+        d = _c.describe()
+        detail = "stdout=%s locale=%s%s%s mode=%s" % (
+            d.get("stdout_encoding"), d.get("locale_encoding"),
+            (" console_cp=%s" % d["codepage_now"]) if d.get("codepage_now") else "",
+            " (콘솔)" if d.get("console") else " (리디렉션)", d.get("mode"))
+        return bool(d.get("safe")), detail + ("" if d.get("safe") else " — 한글/기호를 출력할 수 없습니다")
+    checks.append(_check("console_encoding", _console, "warn",
+                         "config.json console_encoding=utf-8 (또는 native) · Windows 는 chcp 65001 · Linux 는 LANG=ko_KR.UTF-8 / C.UTF-8"))
+
     # ---- DB ----
     def _db():
         r = pipe.store.conn.execute("PRAGMA quick_check").fetchone()[0]

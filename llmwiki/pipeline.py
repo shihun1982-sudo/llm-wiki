@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from .answer import build_context, generate_answer
-from .config import Settings
+from .config import Settings, apply_overrides
 from .corpus import Document, chunk_document, iter_corpus, scan_changed
 from .evalset import aggregate, load_questions, score_result
 from .graph_build import build_graph_for_chunks, finalize_graph
@@ -50,26 +51,129 @@ from .buildlock import BuildLock, BuildLockedError
 BUILD_CHANNELS = ("fts", "vector", "graph")
 
 
+class _LlmCache(dict):
+    """역할별 LLM 인스턴스 캐시. 키는 (role, 역할설정, 전역서명) 튜플이라 요청마다 다른 모델을 써도 서로 덮어쓰지 않는다.
+    하위 호환/테스트: `pipe._llms["answer"] = obj` 처럼 **문자열 키로 대입하면 그 역할을 그 인스턴스로 고정**한다(목업 주입)."""
+
+    def __init__(self) -> None:
+        dict.__init__(self)
+        self.pins: Dict[str, Any] = {}
+
+    def __setitem__(self, k: Any, v: Any) -> None:
+        if isinstance(k, str):
+            self.pins[k] = v
+        else:
+            dict.__setitem__(self, k, v)
+
+    def __contains__(self, k: Any) -> bool:
+        return (k in self.pins) if isinstance(k, str) else dict.__contains__(self, k)
+
+    def get(self, k: Any, default: Any = None) -> Any:
+        return self.pins.get(k, default) if isinstance(k, str) else dict.get(self, k, default)
+
+    def pop(self, k: Any, default: Any = None) -> Any:
+        return self.pins.pop(k, default) if isinstance(k, str) else dict.pop(self, k, default)
+
+
+PROVIDER_SIG_KEYS = ("llm_provider", "llm_model", "llm_effort", "answer_effort", "llm_fallbacks", "ollama_url", "ollama_model",
+                     "openai_base_url", "openai_api_key_header", "openai_extra_headers", "anthropic_base_url",
+                     "llm_timeout", "llm_retries", "llm_retry_backoff_s", "llm_retry_backoff", "llm_retry_backoff_max_s", "llm_budget_s",
+                     "llm_http_retries", "llm_circuit_failures", "llm_circuit_cooldown_s")
+EMBED_SIG_KEYS = ("embed_provider", "embed_model", "embed_dim", "openai_embed_base_url", "openai_embed_model", "openai_base_url",
+                  "openai_api_key_header", "ollama_url", "embed_store_dtype")
+
+
 class Pipeline:
+    """파이프라인 하나가 서버 전체(모든 스레드)에 공유된다.
+
+    병렬 처리(2026-09-15):
+    - `s` 는 스레드 로컬: request_scope() 안에서는 그 요청만의 Settings 사본을 돌려주고, 밖에서는 전역(base) 설정. 요청 단위 오버라이드·프리셋이
+      다른 사용자의 질의에 섞이지 않는다. 설정을 영구 저장하는 경로(config/models set)는 reload() 가 사본을 전역으로 승격한다.
+    - LLM/임베더 인스턴스는 (역할, provider, model, 정책) 서명으로 캐시되어, 요청마다 다른 모델을 써도 reload 없이 공존한다.
+    - 튜닝(_tuning.T) 은 요청 오버레이, 저장소(Store) 는 스레드별 연결(request_scope 가 session 을 연다).
+    """
+
     def __init__(self, settings: Settings):
-        self.s = settings
+        self._tls = threading.local()
+        self._base_s = settings
         os.makedirs(settings.data_dir, exist_ok=True)
         try:
             _log.setup_from_settings(settings)
         except Exception:
             pass
-        self.tuning = _tuning.load_tuning()
+        _tuning.load_tuning()
         self._init_text_plugins()
-        self.store = Store(settings.db_path)
+        self.store = Store(settings.db_path, busy_timeout_s=float(getattr(settings, "db_busy_timeout_s", 30.0) or 30.0),
+                           pool_size=int(getattr(settings, "db_pool_size", 16) or 16))
         self._seen_version = self.store.build_version()
-        self._llms: Dict[str, Any] = {}
-        self._embedder = None
+        self._llms = _LlmCache()
+        self._embedders: Dict[str, Any] = {}
+        self._embedder_pin: Any = None       # pipe._embedder = obj 로 고정한 임베더 (테스트/목업)
+        self._prov_lock = threading.RLock()
         self._rules: Optional[RuleExtractor] = None
         self._qcache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._qcache_stats = {"hits": 0, "misses": 0}
+        self._qlock = threading.Lock()
         self._lock = threading.RLock()
         self.watcher: Dict[str, Any] = {"enabled": False, "last_scan": None, "last_result": None, "last_build": None,
                                         "builds": 0, "errors": 0}
+
+    # ---------- 요청 단위 설정 (스레드 로컬) ----------
+    @property
+    def s(self) -> Settings:
+        ov = getattr(self._tls, "settings", None)
+        return ov if ov is not None else self._base_s
+
+    @s.setter
+    def s(self, v: Settings) -> None:
+        if getattr(self._tls, "settings", None) is not None:
+            self._tls.settings = v
+        else:
+            self._base_s = v
+
+    @property
+    def base_settings(self) -> Settings:
+        return self._base_s
+
+    def in_request_scope(self) -> bool:
+        return getattr(self._tls, "settings", None) is not None
+
+    @property
+    def tuning(self):
+        return _tuning.T
+
+    @tuning.setter
+    def tuning(self, _v: Any) -> None:   # 구 코드 호환 (self.tuning = load_tuning())
+        pass
+
+    @contextlib.contextmanager
+    def request_scope(self, overrides: Optional[Dict[str, Any]] = None, presets: Optional[List[str]] = None, mode: str = ""):
+        """요청 하나의 격리 범위: 설정 사본(+overrides) · 튜닝 오버레이(+presets/mode) · 스레드 전용 DB 연결.
+        Web/MCP/CLI(콘솔)/스케줄러/워처가 모두 이걸로 감싼다. 중첩되면 바깥 사본을 바탕으로 다시 사본을 만든다."""
+        prev_s = getattr(self._tls, "settings", None)
+        base = prev_s if prev_s is not None else self._base_s
+        s_local = base.copy()
+        if overrides is not None and not isinstance(overrides, dict):
+            raise ValueError("overrides 는 객체(JSON object)여야 합니다 (받은 값: %s)" % type(overrides).__name__)
+        if overrides:
+            apply_overrides(s_local, overrides)
+        self._tls.settings = s_local
+        prev_ov = _tuning.T.push_overlay()
+        names = [x for x in (presets or []) if x]
+        if mode == "deep":
+            names.append("deep_research")
+        elif mode == "fast":
+            names.append("speed")
+        info = None
+        try:
+            if names:
+                from . import presets as _presets
+                info = _presets.apply(s_local, names, save=False)   # 토글/설정은 사본에, 튜닝은 오버레이에
+            with self.store.session():
+                yield s_local
+        finally:
+            _tuning.T.pop_overlay(prev_ov)
+            self._tls.settings = prev_s
 
     # ---------- lazy providers ----------
     @property
@@ -77,21 +181,87 @@ class Pipeline:
         """기본(전역) LLM — 역할 지정이 없는 호출용. 역할별은 llm_for(role)."""
         return self.llm_for("default")
 
+    def _llm_key(self, role: str) -> Tuple[Any, ...]:
+        s = self.s
+        rc = s.role_llm(role) if role != "default" else {"provider": s.llm_provider, "model": s.llm_model}
+        base = tuple((k, json.dumps(getattr(s, k, None), sort_keys=True, default=str)) for k in PROVIDER_SIG_KEYS)
+        return (role, json.dumps(rc, sort_keys=True, default=str), base)
+
     def llm_for(self, role: str):
-        if role not in self._llms:
-            self._llms[role] = make_llm(self.s, None if role == "default" else role)
-        return self._llms[role]
+        pinned = self._llms.pins.get(role)
+        if pinned is not None:
+            if getattr(pinned, "role", "default") != role:
+                pinned.role = role      # 고정 인스턴스도 역할을 달고 다녀야 실패 보고(llm_report)에 어느 역할인지 남는다
+            return pinned
+        key = self._llm_key(role)
+        llm = dict.get(self._llms, key)
+        if llm is None:
+            with self._prov_lock:
+                llm = dict.get(self._llms, key)
+                if llm is None:
+                    llm = make_llm(self.s, None if role == "default" else role)
+                    if len(self._llms) >= 64:   # 요청 단위 오버라이드가 다양해도 무한히 늘지 않게
+                        for k in list(self._llms.keys())[:16]:
+                            dict.pop(self._llms, k, None)
+                    dict.__setitem__(self._llms, key, llm)
+        return llm
+
+    def _embed_key(self) -> str:
+        s = self.s
+        return json.dumps({k: getattr(s, k, None) for k in EMBED_SIG_KEYS}, sort_keys=True, default=str)
 
     @property
     def embedder(self):
-        if self._embedder is None:
-            self._embedder = make_embedder(self.s)
-            if isinstance(self._embedder, HashEmbedder):
-                idf = self.store.kv_get("hash_idf")
-                if idf and len(idf) == self._embedder.dim:
-                    import numpy as np
-                    self._embedder._idf = np.asarray(idf, dtype="float32")
-        return self._embedder
+        if self._embedder_pin is not None:
+            return self._embedder_pin
+        key = self._embed_key()
+        emb = self._embedders.get(key)
+        if emb is None:
+            with self._prov_lock:
+                emb = self._embedders.get(key)
+                if emb is None:
+                    emb = make_embedder(self.s)
+                    if isinstance(emb, HashEmbedder):
+                        idf = self.store.kv_get("hash_idf")
+                        if idf and len(idf) == emb.dim:
+                            import numpy as np
+                            emb._idf = np.asarray(idf, dtype="float32")
+                    if len(self._embedders) >= 8:
+                        self._embedders.clear()
+                    self._embedders[key] = emb
+        return emb
+
+    @property
+    def _embedder(self):
+        """구 코드/테스트 호환: `pipe._embedder = obj` 는 임베더 고정, `= None` 은 고정 해제 + 캐시 비움."""
+        return self._embedder_pin if self._embedder_pin is not None else self._embedders.get(self._embed_key())
+
+    @_embedder.setter
+    def _embedder(self, v: Any) -> None:
+        if v is None:
+            self._embedder_pin = None
+            with self._prov_lock:
+                self._embedders.clear()
+        else:
+            self._embedder_pin = v
+
+    # ---------- 질의 캐시 (스레드 안전) ----------
+    def qcache_get(self, key: str) -> Optional[Dict[str, Any]]:
+        with self._qlock:
+            v = self._qcache.get(key)
+            if v is not None:
+                self._qcache.move_to_end(key)
+                self._qcache_stats["hits"] += 1
+            else:
+                self._qcache_stats["misses"] += 1
+            return v
+
+    def qcache_put(self, key: str, value: Dict[str, Any]) -> None:
+        with self._qlock:
+            self._qcache[key] = value
+            limit = max(1, int(self.s.query_cache_size or 1))
+            while len(self._qcache) > limit:
+                self._qcache.popitem(last=False)
 
     @property
     def rules(self) -> RuleExtractor:
@@ -115,16 +285,22 @@ class Pipeline:
     def reload_tuning(self, from_file: bool = True) -> None:
         """튜닝 변경을 파이프라인에 반영(토크나이저·규칙·임베더·질의 캐시 재초기화).
         from_file=False 면 tuning.json 을 다시 읽지 않고 메모리의 전역 T 를 그대로 쓴다 — 프리셋(--preset)·fusion compare·MCP 처럼
-        요청 단위로 T 를 바꾼 뒤 호출할 때 필수 (파일을 읽으면 방금 적용한 값이 지워진다)."""
-        self.tuning = _tuning.load_tuning() if from_file else _tuning.T
+        요청 단위로 T 를 바꾼 뒤 호출할 때 쓰던 호출인데, 이제 요청 오버레이(request_scope)가 그 역할을 하므로 오버레이 안에서는 아무것도 하지 않는다."""
+        if not from_file and _tuning.T.has_overlay():
+            return
+        if from_file:
+            _tuning.load_tuning()
         self._init_text_plugins()
         self._rules = None
-        self._embedder = None
-        self._qcache.clear()
+        with self._prov_lock:
+            self._embedders.clear()
+        with self._qlock:
+            self._qcache.clear()
 
     def _ensure_providers(self, prof: Profiler, roles: Tuple[str, ...]) -> None:
         """프로바이더 최초 생성 비용(ollama ping 0.4s×역할 등)을 숨기지 않고 'providers' 단계로 기록."""
-        need = [r for r in roles if r not in self._llms] + (["embedder"] if self._embedder is None else [])
+        need = [r for r in roles if (r not in self._llms.pins and self._llm_key(r) not in self._llms)] + \
+               (["embedder"] if (self._embedder_pin is None and self._embed_key() not in self._embedders) else [])
         if not need:
             return
         with prof.stage("providers", created=need) as st:
@@ -137,23 +313,37 @@ class Pipeline:
             st.note(**info)
 
     def reload(self) -> None:
-        self.tuning = _tuning.load_tuning()
+        """설정/튜닝/프로바이더 재적재. 요청 범위 안에서 불리면(예: Web 콘솔 `config set`, /api/config) 그 요청이 저장한 설정 사본을 전역으로 승격한다."""
+        local = getattr(self._tls, "settings", None)
+        if local is not None:
+            self._base_s = local.copy()
+        _tuning.load_tuning()
         self._init_text_plugins()
-        self._llms = {}
-        self._embedder = None
+        with self._prov_lock:
+            pins = dict(self._llms.pins)     # 고정된 목업 인스턴스는 유지 (테스트/특수 주입)
+            self._llms = _LlmCache()
+            self._llms.pins.update(pins)
+            self._embedders.clear()
         self._rules = None
         self.store.invalidate_caches()
-        self._qcache.clear()
+        with self._qlock:
+            self._qcache.clear()
         self._seen_version = self.store.build_version()
+        try:
+            _log.setup_from_settings(self._base_s)   # log_level 변경을 재시작 없이 반영
+        except Exception:
+            pass
 
     def sync_with_db(self) -> bool:
         """다른 프로세스(CLI 빌드, evolve apply)가 DB 를 바꿨으면 메모리 캐시(벡터 행렬·IDF·규칙·질의 캐시)를 버린다."""
         v = self.store.build_version()
         if v != getattr(self, "_seen_version", None):
-            self._embedder = None
+            with self._prov_lock:
+                self._embedders.clear()
             self._rules = None
             self.store.invalidate_caches()
-            self._qcache.clear()
+            with self._qlock:
+                self._qcache.clear()
             self._seen_version = v
             return True
         return False
@@ -398,19 +588,25 @@ class Pipeline:
             # ---- 3. chunk_index (+ 문서 계약: front matter → doc_meta, lint, 메타 토큰) ----
             doc_meta_changed: Dict[str, Dict[str, Any]] = {}
             with prof.stage("chunk_index", docs=len(changed), trigram=bool(t.fts_trigram), schema_lint=bool(t.schema_lint), fts=bool(t.build_fts)) as st:
+                # 전체 리빌드는 모든 문서를 다시 쓰므로 FTS 를 통째로 한 번 비운다.
+                # 문서·청크마다 지우면 chunk_id/doc_id 가 UNINDEXED 인 FTS5 를 매번 전체 스캔하게 되어
+                # 빌드 시간이 청크 수의 제곱으로 늘어난다 (trigram 을 켜면 특히 심하다).
+                fts_cleared = False
+                if not incremental:
+                    self.store.clear_fts(trigram=bool(t.fts_trigram and t.build_fts))
+                    fts_cleared = bool(t.build_fts)
+                    st.note(fts_cleared=True, trigram=bool(t.fts_trigram))
                 removed_touched: List[str] = []
                 for d in removed:
                     removed_touched.extend(self.store.entities_for_chunks(self.store.chunk_ids_of_docs([d])))
-                    self.store.delete_doc(d)
-                if not incremental and not t.fts_trigram and self.store._has_trigram():
-                    self.store.drop_trigram()
+                    self.store.delete_doc(d, fts_cleared=fts_cleared)
                 n_chunks = 0
                 largest = (0, "")
                 lint_err = lint_warn = 0
                 lint_by_type: Dict[str, int] = {}
                 inferred = 0
                 for d in changed:
-                    self.store.delete_doc(d.doc_id)
+                    self.store.delete_doc(d.doc_id, fts_cleared=fts_cleared)
                     chunks = chunk_document(d, s.chunk_max_chars, s.chunk_overlap_chars, _tuning.T.get("chunk_min_chars"))
                     fm = (d.meta or {}).get("fm") or {}
                     if d.kind == "wiki":
@@ -421,7 +617,8 @@ class Pipeline:
                         nm = _schema.normalize_meta(fm, d.doc_id, d.title, d.text, d.mtime)
                         lint = _schema.lint_document(fm, nm, d.text, bool(fm)) if t.schema_lint else []
                     extra = _schema.meta_tokens(nm)
-                    self.store.upsert_doc(d, chunks, tokenize_for_fts, extra_tokens=extra, trigram=bool(t.fts_trigram), fts=bool(t.build_fts))
+                    self.store.upsert_doc(d, chunks, tokenize_for_fts, extra_tokens=extra, trigram=bool(t.fts_trigram),
+                                          fts=bool(t.build_fts), fts_cleared=True)   # 바로 위 delete_doc 가 이미 지웠다
                     self.store.upsert_doc_meta(nm, lint)
                     doc_meta_changed[d.doc_id] = nm
                     ne = sum(1 for x in lint if x["level"] == "error")
@@ -508,13 +705,15 @@ class Pipeline:
                     gstats = build_graph_for_chunks(self.store, chunks, titles, prof, self.rules if t.rule_graph else None,
                                                     self.llm_for("extract") if t.llm_graph else None, t.llm_graph,
                                                     self.s.role_llm("extract")["effort"], s.llm_graph_budget, s.llm_graph_min_chars,
-                                                    doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report)
+                                                    doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report,
+                                                    extract_tokens=s.role_max_tokens('extract', 4000), summary_tokens=s.role_max_tokens('summary', 800))
                     touched = None if not incremental else sorted(set(gstats.pop("touched", [])) | set(removed_touched))
                     gstats.pop("touched", None)
                     do_comm = t.communities and (not incremental or t.incremental_communities)
                     fin = finalize_graph(self.store, prof, do_comm, self.llm_for("summary"), t.community_summary,
                                          self.s.role_llm("summary")["effort"], touched,
-                                         "" if do_comm or not t.communities else "incremental build (incremental_communities off)")
+                                         "" if do_comm or not t.communities else "incremental build (incremental_communities off)",
+                                         summary_tokens=s.role_max_tokens("summary", 800))
                     st.note(**gstats, **fin, scope="full" if not incremental else "changed docs (%d chunks)" % len(chunks),
                             provenance=self.store.provenance_counts())
                     result["graph"] = dict(gstats, **fin)
@@ -591,7 +790,8 @@ class Pipeline:
                                              "embed": {k: v for k, v in (result.get("embed") or {}).items() if k in ("embedded", "failed", "cache_hits", "status")}})
             result["build_version"] = self.store.bump_build_version()
             self._seen_version = result["build_version"]
-            self._qcache.clear()
+            with self._qlock:
+                self._qcache.clear()
 
             # ---- 8. warm_cache ----
             if t.warm_cache:
@@ -619,6 +819,16 @@ class Pipeline:
             else:
                 prof.skipped("precompute")
             result["stats"] = self.store.stats()
+        except _pg.Cancelled as e:
+            error = "cancelled: %s" % e
+            result["error"] = error
+            result["cancelled"] = True
+            try:
+                self.store.commit()   # 지금까지의 진행(체크포인트·임베딩 배치)은 보존 → 다음 build 가 이어서 한다
+            except Exception:
+                pass
+            _log.log("warning", "build cancelled: %s" % e, "build")
+            raise
         except Exception as e:
             error = "%s: %s" % (type(e).__name__, e)
             result["error"] = error
@@ -754,10 +964,11 @@ class Pipeline:
                         gstats = build_graph_for_chunks(self.store, chunks, titles, prof, self.rules if (t.rule_graph or force) else None,
                                                         self.llm_for("extract") if t.llm_graph else None, t.llm_graph,
                                                         self.s.role_llm("extract")["effort"], s.llm_graph_budget, s.llm_graph_min_chars,
-                                                        doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report)
+                                                        doc_meta=dmeta, explicit=bool(t.explicit_relations), report=report,
+                                                    extract_tokens=s.role_max_tokens('extract', 4000), summary_tokens=s.role_max_tokens('summary', 800))
                         gstats.pop("touched", None)
                         fin = finalize_graph(self.store, prof, bool(t.communities), self.llm_for("summary"), t.community_summary,
-                                             self.s.role_llm("summary")["effort"], None, "" if t.communities else "disabled")
+                                             self.s.role_llm("summary")["effort"], None, "" if t.communities else "disabled", summary_tokens=s.role_max_tokens("summary", 800))
                         st.note(**gstats, **fin, provenance=self.store.provenance_counts())
                         result["graph"] = dict(gstats, **fin)
                         report("graph rebuilt: entities touched=%s explicit=%s id_links=%s" % (gstats.get("touched_entities"), gstats.get("explicit_relations"), gstats.get("id_relations")))
@@ -794,7 +1005,8 @@ class Pipeline:
             self.store.kv_set("last_build", lb)
             result["build_version"] = self.store.bump_build_version()
             self._seen_version = result["build_version"]
-            self._qcache.clear()
+            with self._qlock:
+                self._qcache.clear()
             self.store.invalidate_caches()
             if t.warm_cache:
                 with prof.stage("warm_cache") as st:
@@ -805,6 +1017,16 @@ class Pipeline:
                     info["entities_indexed"] = len(self.store.entity_index())
                     st.note(**info)
             result["stats"] = self.store.stats()
+        except _pg.Cancelled as e:
+            error = "cancelled: %s" % e
+            result["error"] = error
+            result["cancelled"] = True
+            try:
+                self.store.commit()
+            except Exception:
+                pass
+            _log.log("warning", "channel build cancelled: %s" % e, "build")
+            raise
         except Exception as e:
             error = "%s: %s" % (type(e).__name__, e)
             result["error"] = error
@@ -900,10 +1122,8 @@ class Pipeline:
 
         # ---- query cache ----
         key = self._cache_key(q) if t.query_cache else None
-        if key and key in self._qcache:
-            self._qcache_stats["hits"] += 1
-            cached = self._qcache[key]
-            self._qcache.move_to_end(key)
+        cached = self.qcache_get(key) if key else None
+        if cached:
             with prof.stage("cache_hit", key=key[:12]) as st:
                 st.note(saved_ms=cached["result"].get("ms"), saved_tokens=cached["trace"].get("summary", {}).get("llm", {}).get("total_tokens", 0))
             trace = prof.finish()
@@ -911,8 +1131,6 @@ class Pipeline:
             res["request_id"] = self.store.log_request("query", "[cache] " + q, trace, {"cached_from": cached["result"].get("request_id")},
                                                        res.get("config"), None, keep=s.keep_requests)
             return res, trace
-        if key:
-            self._qcache_stats["misses"] += 1
 
         lists: Dict[str, List[Tuple[str, float]]] = {}
         weights = {"fts": 1.0, "vector": 1.0, "graph": 1.0}
@@ -1017,6 +1235,8 @@ class Pipeline:
                              "rerank_llm": self.llm_for("rerank").describe().get("model"), "embedder": self.embedder.name,
                              "tuning": self.tuning.to_dict(), "alt_queries": alt_queries},
                   "cached": False}
+        if ans.get("repeat_loop"):
+            result["repeat_loop"] = ans["repeat_loop"]        # 답변 상단 배너 + 캐시 제외용
         if log and t.evolve_capture:
             from .evolve import capture_query
             with prof.stage("evolve_capture") as st:
@@ -1033,21 +1253,22 @@ class Pipeline:
                                                       {"top_fused": final[0].fused if final else 0, "n_hits": len(final)}, trace)
         result["request_id"] = self.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)},
                                                       result["config"], None, keep=s.keep_requests)
-        if key:
-            self._qcache[key] = {"result": dict(result), "trace": trace}
-            while len(self._qcache) > max(1, s.query_cache_size):
-                self._qcache.popitem(last=False)
+        # 반복 루프로 망가진 답변은 캐시하지 않는다 — 한 번 캐시되면 그 질문은 계속 같은 고장 답변을 즉시 돌려준다
+        if key and not result.get("repeat_loop"):
+            self.qcache_put(key, {"result": dict(result), "trace": trace})
         return result, trace
 
     def cache_info(self) -> Dict[str, Any]:
         return {"query_cache": {"size": len(self._qcache), "max": self.s.query_cache_size, **self._qcache_stats},
                 "vector_matrix": self.store.vector_cache_info(),
                 "entity_index": {"loaded": self.store._ent_cache is not None,
-                                 "n": len(self.store._ent_cache[1]) if self.store._ent_cache else 0}}
+                                 "n": len(self.store._ent_cache[1]) if self.store._ent_cache else 0},
+                "llm_instances": len(self._llms), "embedder_instances": len(self._embedders), "db_pool": self.store.pool_info()}
 
     def clear_caches(self) -> None:
-        self._qcache.clear()
-        self._qcache_stats = {"hits": 0, "misses": 0}
+        with self._qlock:
+            self._qcache.clear()
+            self._qcache_stats = {"hits": 0, "misses": 0}
         self.store.invalidate_caches()
 
     # =====================================================================
@@ -1185,6 +1406,7 @@ class Pipeline:
             "watcher": dict(self.watcher, enabled=self.s.toggles.auto_build, interval=self.s.auto_build_interval),
             "files": {"db_mb": round(st["db_bytes"] / 1e6, 2), "wal_mb": round(os.path.getsize(wal) / 1e6, 2) if os.path.exists(wal) else 0},
             "corpus_dirs": self.s.corpus_dirs,
+            "console": (lambda: __import__("llmwiki.console", fromlist=["describe"]).describe())(),
             "toggles": self.s.toggles.__dict__,
             "perf_settings": {k: getattr(self.s, k) for k in ("rerank_candidates", "rerank_chunk_chars", "context_max_chars",
                                                                 "context_chunk_chars", "answer_max_tokens", "llm_graph_budget",

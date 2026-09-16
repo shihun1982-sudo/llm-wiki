@@ -22,6 +22,74 @@ def ANSWER_SYSTEM(length_target: str = "normal") -> str:   # prompts/answer_syst
     return _prompts.answer_system() + _LENGTH_HINT.get(length_target, "")
 
 
+# ---------------------------------------------------------------- 반복 루프(LLM 고장) 탐지
+_WS_RE = re.compile(r"\s+")
+
+
+def find_repeat_loop(text: str, min_chars: int = 12, min_times: int = 4) -> Optional[Dict[str, Any]]:
+    """같은 구절이 연속으로 되풀이되는 구간을 찾는다. 없으면 None.
+
+    작은 모델이 긴 컨텍스트를 받으면 한 구절을 수십 번 반복하고 토큰 상한까지 가는 고장이 흔하다.
+    (2026-09-16: llama3.1 이 'FIFO 임계값이 설정된 상태에서 RX DMA가 …' 를 수십 번 반복)
+    스트리밍을 쓰지 않으므로 클라이언트 누적 오류는 아니고, 모델 출력 자체가 그렇다.
+
+    되돌려주는 값: {"start": 반복이 시작된 위치, "period": 구절 길이, "times": 반복 횟수, "phrase": 구절}
+    """
+    if not text or min_times < 2:
+        return None
+    s = text.rstrip()
+    n = len(s)
+    if n < min_chars * min_times:
+        return None
+    # 1) 줄 단위 반복 (같은 줄이 계속 나오는 경우)
+    lines = s.split("\n")
+    i = 0
+    while i < len(lines):
+        cur = _WS_RE.sub(" ", lines[i]).strip()
+        if len(cur) >= min_chars:
+            j = i + 1
+            while j < len(lines) and _WS_RE.sub(" ", lines[j]).strip() == cur:
+                j += 1
+            if j - i >= min_times:
+                start = sum(len(x) + 1 for x in lines[:i + 1])     # 첫 줄은 남긴다
+                return {"start": start, "period": len(cur), "times": j - i, "phrase": cur[:120], "kind": "line"}
+            i = j
+        else:
+            i += 1
+    # 2) 한 줄(또는 문단) 안에서 같은 구절이 반복되는 경우 — 끝부분의 주기를 찾는다
+    tail = s[-8000:]
+    m = len(tail)
+    for p in range(min_chars, min(1200, m // min_times) + 1):
+        seg = tail[m - p:]
+        if seg != tail[m - 2 * p:m - p]:
+            continue
+        times = 2
+        while (times + 1) * p <= m and tail[m - (times + 1) * p:m - times * p] == seg:
+            times += 1
+        if times >= min_times:
+            # 앞쪽으로 더 거슬러 올라가 반복이 시작된 지점을 찾는다 (tail 밖까지)
+            start_in_s = n - times * p
+            while start_in_s - p >= 0 and s[start_in_s - p:start_in_s] == seg:
+                start_in_s -= p
+                times += 1
+            return {"start": start_in_s + p,        # 한 번은 남기고 그 뒤를 자른다
+                    "period": p, "times": times, "phrase": _WS_RE.sub(" ", seg).strip()[:120], "kind": "phrase"}
+    return None
+
+
+def guard_repeat(text: str, min_chars: int = 12, min_times: int = 4) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """반복 루프를 잘라내고 무슨 일이 있었는지 알리는 문구를 붙인다. (정리된 텍스트, 탐지정보)"""
+    info = find_repeat_loop(text, min_chars, min_times)
+    if not info:
+        return text, None
+    cut = text[:info["start"]].rstrip()
+    note = ("\n\n> ⚠ **답변이 잘렸습니다** — 모델이 같은 구절을 %d번 되풀이하는 상태(반복 루프)에 빠져 그 지점부터 잘라냈습니다.\n"
+            "> 되풀이된 구절: `%s…`\n"
+            "> 작은 모델에서 컨텍스트가 길 때 생깁니다. 다시 질의하거나, 더 큰 answer 모델을 쓰거나, "
+            "`token`/`speed` 프리셋으로 컨텍스트를 줄여 보세요." % (info["times"], info["phrase"][:80]))
+    return (cut + note), info
+
+
 def _trim_chunk(text: str, kws: List[str], max_chars: int) -> str:
     """질의 키워드를 포함한 문장을 우선 남기고(원래 순서 유지) max_chars 이내로 압축. 키워드 문장이 없으면 앞부분."""
     if len(text) <= max_chars:
@@ -267,7 +335,7 @@ def check_claims(answer: str, citations: List[Dict[str, Any]], chunks: Dict[str,
 
 
 def check_claims_llm(llm: BaseLLM, query: str, claims: List[Dict[str, Any]], citations: List[Dict[str, Any]], chunks: Dict[str, Any],
-                     effort: str = "low") -> Dict[str, Any]:
+                     effort: str = "low", max_tokens: int = 1500) -> Dict[str, Any]:
     from . import prompts as _prompts
     from .providers import parse_json
     lines = ["## 질문", query, "", "## 근거"]
@@ -279,7 +347,7 @@ def check_claims_llm(llm: BaseLLM, query: str, claims: List[Dict[str, Any]], cit
     fact = [cl for cl in claims if cl.get("factual")]
     for cl in fact:
         lines.append("(%d) %s" % (cl["i"], cl["text"]))
-    r = llm.complete(_prompts.get("claim_check"), "\n".join(lines), max_tokens=1500, effort=effort, json_mode=True)
+    r = llm.complete(_prompts.get("claim_check"), "\n".join(lines), max_tokens=max_tokens, effort=effort, json_mode=True)
     data = parse_json(r["text"]) or {}
     by_i = {int(x.get("i")): x for x in (data.get("claims") or []) if isinstance(x, dict) and str(x.get("i", "")).lstrip("-").isdigit()}
     changed = 0
@@ -553,11 +621,19 @@ def generate_answer(query: str, ctx: Dict[str, Any], llm: Optional[BaseLLM], use
             try:
                 r = llm.complete(sys_p, prompt, max_tokens=max_tokens, effort=effort)
                 text = r["text"].strip()
+                repeat = None
+                if _tuning.T.get("answer_repeat_guard"):
+                    text, repeat = guard_repeat(text, int(_tuning.T.get("answer_repeat_min_chars")),
+                                                int(_tuning.T.get("answer_repeat_times")))
                 cited = sorted(set(int(n) for n in re.findall(r"\[C(\d+)\]", text)))
                 st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), cited=cited, model=r.get("model"),
-                        answer_chars=len(text))
+                        answer_chars=len(text), repeat_loop=repeat)
                 st.sample(response=text[:6000])
-                return {"answer": text, "mode": "llm", "cited": cited, "model": r.get("model")}
+                out = {"answer": text, "mode": "llm", "cited": cited, "model": r.get("model")}
+                if repeat:
+                    # 반복 루프가 난 답변은 캐시에 넣지 않는다 (pipeline 이 이 표시를 본다)
+                    out["repeat_loop"] = repeat
+                return out
             except LLMError as e:
                 st.note(error=str(e)[:300], fallback="extractive")
     elif use_llm:

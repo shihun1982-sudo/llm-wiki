@@ -185,7 +185,8 @@ def summary(store, limit: int = 500) -> Dict[str, Any]:
             "suggestion_kinds": kinds, "problem_stages": sorted(stages.items(), key=lambda kv: -kv[1])}
 
 
-def llm_forensic(llm, query: str, trace: Dict[str, Any], diag: Dict[str, Any], effort: str = "low") -> Optional[Dict[str, Any]]:
+def llm_forensic(llm, query: str, trace: Dict[str, Any], diag: Dict[str, Any], effort: str = "low",
+                 max_tokens: int = 1200) -> Optional[Dict[str, Any]]:
     """옵션: LLM 이 프로파일 요약을 보고 추가 소견/제안 (forensic 역할)."""
     from .providers import parse_json, LLMError
     from . import prompts as _prompts
@@ -197,7 +198,7 @@ def llm_forensic(llm, query: str, trace: Dict[str, Any], diag: Dict[str, Any], e
             lines.append("- %s %s %.0fms %s" % (f["name"], "" if f["enabled"] else "(skipped)", f["ms"], json.dumps(meta, ensure_ascii=False)[:300]))
     lines += ["", "## 휴리스틱 소견", json.dumps(diag["findings"], ensure_ascii=False)[:2000]]
     try:
-        r = llm.complete(_prompts.get("forensic"), "\n".join(lines), max_tokens=1200, effort=effort, json_mode=True)
+        r = llm.complete(_prompts.get("forensic"), "\n".join(lines), max_tokens=max_tokens, effort=effort, json_mode=True)
     except LLMError:
         return None
     data = parse_json(r["text"]) or {}

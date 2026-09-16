@@ -13,7 +13,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from .answer import build_context, generate_answer, check_claims, check_claims_llm, apply_claim_policy, refine_answer
+from .answer import build_context, generate_answer, check_claims, check_claims_llm, apply_claim_policy, refine_answer, guard_repeat
 from .profiler import Profiler
 from .providers import parse_json, LLMError
 from . import providers as _providers
@@ -140,18 +140,14 @@ class QueryEngine:
 
         # ---- 캐시: query_cache (메모리) → precompute (영속) ----
         key = p._cache_key(q) if t.query_cache else None
-        if key and key in p._qcache:
-            p._qcache_stats["hits"] += 1
-            cached = p._qcache[key]
-            p._qcache.move_to_end(key)
+        cached = p.qcache_get(key) if key else None
+        if cached:
             with prof.stage("cache_hit", key=key[:12]) as st:
                 st.note(saved_ms=cached["result"].get("ms"), saved_tokens=cached["trace"].get("summary", {}).get("llm", {}).get("total_tokens", 0))
             trace = prof.finish()
             res = dict(cached["result"], cached=True, ms=trace["ms"], query_id=None, proposals=[], run_id=trace.get("run_id"))
             res["request_id"] = p.store.log_request("query", "[cache] " + q, trace, {"cached_from": cached["result"].get("request_id")}, res.get("config"), None, keep=s.keep_requests)
             return res, trace
-        if key:
-            p._qcache_stats["misses"] += 1
         pkey = None
         if t.precompute:
             from . import precompute as _pc
@@ -205,7 +201,8 @@ class QueryEngine:
                     rl = p.llm_for("expand")
                     if rl.available:
                         try:
-                            r = rl.complete(_prompts.get("router"), q, max_tokens=200, effort=s.role_llm("expand")["effort"], json_mode=True)
+                            r = rl.complete(_prompts.get("router"), q, max_tokens=s.role_max_tokens("router", 200),
+                                            effort=s.role_llm("expand")["effort"], json_mode=True)
                             data = parse_json(r["text"]) or {}
                             route_info["llm"] = {"intent": data.get("intent"), "doc_types": data.get("doc_types"), "time_sensitive": data.get("time_sensitive")}
                             for dt in (data.get("doc_types") or []):
@@ -228,7 +225,8 @@ class QueryEngine:
             if rl.available:
                 with prof.stage("query_expand", model=rl.model, n=T.get("query_expand_n"), decompose=t.query_decompose) as st:
                     try:
-                        r = rl.complete(_prompts.get("expand"), "N=%d\n%s" % (T.get("query_expand_n"), q_search), max_tokens=400,
+                        r = rl.complete(_prompts.get("expand"), "N=%d\n%s" % (T.get("query_expand_n"), q_search),
+                                        max_tokens=s.role_max_tokens("expand", 400),
                                         effort=s.role_llm("expand")["effort"], json_mode=True)
                         data = parse_json(r["text"]) or {}
                         if t.query_expand:
@@ -318,7 +316,8 @@ class QueryEngine:
         else:
             if t.evidence_compress and al.available and t.llm_answer:
                 ctx = self._compress(prof, q_search, ctx, chunks, p, s)
-            ans = generate_answer(q, ctx, al, t.llm_answer, prof, s.role_llm("answer")["effort"], chunks, final, max_tokens=s.answer_max_tokens,
+            ans = generate_answer(q, ctx, al, t.llm_answer, prof, s.role_llm("answer")["effort"], chunks, final,
+                                  max_tokens=s.role_max_tokens("answer", s.answer_max_tokens),
                                   meta=p.store.doc_meta_map(), graph=graph_res)
             if verdict == "weak" and ans["mode"] == "llm":
                 ans["answer"] = "> ⚠ 근거가 약합니다 (%s). 아래 답변은 제한된 근거에 기반합니다.\n\n" % "; ".join((ev or {}).get("reasons") or []) + ans["answer"]
@@ -332,7 +331,8 @@ class QueryEngine:
                     vl = p.llm_for("verify")
                     if vl.available:
                         try:
-                            li = check_claims_llm(vl, q, claims_info["claims"], ctx["citations"], chunks, s.role_llm("verify")["effort"])
+                            li = check_claims_llm(vl, q, claims_info["claims"], ctx["citations"], chunks,
+                                                  s.role_llm("verify")["effort"], max_tokens=s.role_max_tokens("verify", 1500))
                             claims_info.update({k: li[k] for k in ("supported", "partial", "unsupported", "groundedness")})
                             claims_info["llm"] = {"changed": li["changed"], "usage": li.get("usage")}
                             st.sample(llm_response=li.get("raw"))
@@ -343,7 +343,8 @@ class QueryEngine:
                 refined = False
                 if claims_info["unsupported"] and (policy == "refine" or t.answer_refine) and al.available:
                     try:
-                        rr = refine_answer(al, q, ctx, ans["answer"], claims_info["claims"], s.role_llm("answer")["effort"], s.answer_max_tokens)
+                        rr = refine_answer(al, q, ctx, ans["answer"], claims_info["claims"], s.role_llm("answer")["effort"],
+                                           s.role_max_tokens("answer", s.answer_max_tokens))
                         ans["answer"] = rr["answer"]
                         refined = True
                         ci2 = check_claims(ans["answer"], ctx["citations"], chunks, float(T.get("claim_support_min")))
@@ -364,6 +365,13 @@ class QueryEngine:
             prof.skipped("claim_check", "answer mode %s" % ans["mode"])
         else:
             prof.skipped("claim_check")
+        # 재작성(refine)·claim 정책이 답변을 다시 쓸 수 있으므로 마지막으로 한 번 더 반복 루프를 본다.
+        # 이미 잘린 답변에는 반복이 남아 있지 않으므로 두 번 실행해도 결과가 달라지지 않는다.
+        if ans["mode"] == "llm" and _tuning.T.get("answer_repeat_guard"):
+            ans["answer"], _rp = guard_repeat(ans["answer"], int(_tuning.T.get("answer_repeat_min_chars")),
+                                              int(_tuning.T.get("answer_repeat_times")))
+            if _rp:
+                ans["repeat_loop"] = _rp
         ans["cited"] = sorted(set(int(n) for n in __import__("re").findall(r"\[C(\d+)\]", ans["answer"])))
 
         # ---- LLM 실패 보고 (재시도 후에도 실패한 호출과 그때 탄 대체 경로) ----
@@ -388,6 +396,9 @@ class QueryEngine:
                        "tuning": _tuning.T.to_dict(), "alt_queries": alt_llm, "round": R["cfg"].to_dict()},
             "cached": False, "precomputed": False,
         }
+        if ans.get("repeat_loop"):
+            # 모델이 같은 구절을 되풀이한 고장 답변 — 상단 배너로 알리고 캐시에는 넣지 않는다
+            result["repeat_loop"] = ans["repeat_loop"]
         if log and t.evolve_capture:
             from .evolve import capture_query
             with prof.stage("evolve_capture") as st:
@@ -434,10 +445,10 @@ class QueryEngine:
             result["analysis"] = _an.run_for_result(p, result, trace)
             if result["analysis"].get("md"):
                 _log.log("info", "analysis report: %s" % result["analysis"]["md"], "query", request_id=result["request_id"])
-        if key and self.record_request:
-            p._qcache[key] = {"result": dict(result), "trace": trace}
-            while len(p._qcache) > max(1, s.query_cache_size):
-                p._qcache.popitem(last=False)
+        # 반복 루프로 망가진 답변은 캐시에 넣지 않는다 — 한 번 들어가면 그 질문은 리빌드 전까지
+        # 계속 같은 고장 답변을 1ms 만에 돌려준다 (2026-09-16).
+        if key and self.record_request and not result.get("repeat_loop"):
+            p.qcache_put(key, {"result": dict(result), "trace": trace})
         if pkey and t.precompute and ans["mode"] != "insufficient" and self.record_request:
             from . import precompute as _pc
             try:
@@ -451,7 +462,8 @@ class QueryEngine:
         rl = self.pipe.llm_for("expand")
         with prof.stage("query_expand", model=rl.model, n=T.get("query_expand_n"), reason="fallback") as st:
             try:
-                r = rl.complete(_prompts.get("expand"), "N=%d\n%s" % (T.get("query_expand_n"), q_search), max_tokens=400, effort=s.role_llm("expand")["effort"], json_mode=True)
+                r = rl.complete(_prompts.get("expand"), "N=%d\n%s" % (T.get("query_expand_n"), q_search),
+                                max_tokens=s.role_max_tokens("expand", 400), effort=s.role_llm("expand")["effort"], json_mode=True)
                 data = parse_json(r["text"]) or {}
                 alts = [x for x in (data.get("queries") or []) + (data.get("sub_queries") or []) if isinstance(x, str) and x.strip() and x.strip() != q_search][:5]
                 st.note(alt_queries=alts, usage=r.get("usage"))
@@ -470,7 +482,8 @@ class QueryEngine:
                 vl = p.llm_for("verify")
                 if vl.available:
                     try:
-                        llm_ev = _ev.assess_llm(vl, q_search, R["ctx"], s.role_llm("verify")["effort"])
+                        llm_ev = _ev.assess_llm(vl, q_search, R["ctx"], s.role_llm("verify")["effort"],
+                                                max_tokens=s.role_max_tokens("verify", 500))
                         st.sample(llm_response=llm_ev.get("raw"))
                     except (LLMError, ValueError) as e:
                         st.note(llm_error=str(e)[:200])
@@ -483,7 +496,8 @@ class QueryEngine:
         al = p.llm_for("answer")
         with prof.stage("evidence_compress", model=al.model, chars_before=ctx["chars"]) as st:
             try:
-                r = al.complete(_prompts.get("compress"), "## 질문\n%s\n\n## 문단\n%s" % (q_search, ctx["text"]), max_tokens=max(800, ctx["chars"] // 2), effort="low")
+                r = al.complete(_prompts.get("compress"), "## 질문\n%s\n\n## 문단\n%s" % (q_search, ctx["text"]),
+                                max_tokens=s.role_max_tokens("compress", max(800, ctx["chars"] // 2)), effort="low")
                 text = r["text"].strip()
                 if text and len(text) < ctx["chars"] and "[C1]" in text:
                     st.note(chars_after=len(text), saved=ctx["chars"] - len(text), usage=r.get("usage"))
@@ -573,7 +587,9 @@ class QueryEngine:
                 vs = None
                 if sim is not None:
                     vs = min(1.0, max(0.0, (sim / psim) if (psim and psim > 0) else sim))
-                if mode == "keyword" or vs is None:
+                if mode == "full":
+                    score = 1.0          # 점수로 거르지 않는다 — 문서 전체를 문서 순서대로
+                elif mode == "keyword" or vs is None:
                     score = kw
                 elif mode == "vector":
                     score = vs
@@ -581,7 +597,11 @@ class QueryEngine:
                     score = w * vs + (1.0 - w) * kw
                 scored.append((round(score, 4), int(r["ordinal"] or 0), cid, round(kw, 3), None if vs is None else round(vs, 3)))
             cand_total += len(scored)
-            pick = sorted([x for x in scored if x[0] >= min_score], key=lambda x: -x[0])[:max_chunks]
+            if mode == "full":
+                # 근거가 나온 문서는 통째로 읽는다. 순서를 지키되 max_chunks · context_max_chars 로만 제한.
+                pick = sorted(scored, key=lambda x: x[1])[:max_chunks]
+            else:
+                pick = sorted([x for x in scored if x[0] >= min_score], key=lambda x: -x[0])[:max_chunks]
             pick.sort(key=lambda x: x[1])    # 문서 순서(ordinal)로 컨텍스트에 넣는다
             for sc, _o, cid, kw, vs in pick:
                 out.append((cid, parent, sc))

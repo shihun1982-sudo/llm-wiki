@@ -19,7 +19,7 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                            rule_ex: Optional[RuleExtractor], llm: Optional[BaseLLM], use_llm: bool,
                            effort: str = "low", budget: int = 0, min_chars: int = 0,
                            doc_meta: Optional[Dict[str, Dict[str, Any]]] = None, explicit: bool = True,
-                           report=None) -> Dict[str, Any]:
+                           report=None, extract_tokens: int = 4000, summary_tokens: int = 800) -> Dict[str, Any]:
     """chunks: sqlite Row 목록. 해당 청크의 기존 그래프 산출물은 지우고 재추출.
     budget: 이번 빌드의 LLM 추출 호출 상한(0=무제한), min_chars: 이보다 짧은 청크는 LLM 추출 생략.
     doc_meta: doc_id → 정규화 메타 (doc_type/ext_id/related). explicit=True 면 front matter related.* 를 explicit 관계로 (문서당 첫 청크에서 1회).
@@ -100,7 +100,8 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                 if budget and stats["llm_calls"] >= budget:
                     stats["llm_skipped_budget"] += 1
                     continue
-                data = llm_extract(llm, c["text"], c["heading"] or "", known, effort, _tuning.T.get("llm_known_entities"))
+                data = llm_extract(llm, c["text"], c["heading"] or "", known, effort, _tuning.T.get("llm_known_entities"),
+                                   max_tokens=extract_tokens)
                 stats["llm_calls"] += 1
                 if not data:
                     stats["llm_failures"] += 1
@@ -170,7 +171,8 @@ def _resolve(store: Store, rule_ex: Optional[RuleExtractor], name: str) -> str:
 
 
 def finalize_graph(store: Store, prof: Profiler, do_communities: bool, llm: Optional[BaseLLM], summarize: bool,
-                   effort: str = "low", touched: Optional[List[str]] = None, skip_reason: str = "") -> Dict[str, Any]:
+                   effort: str = "low", touched: Optional[List[str]] = None, skip_reason: str = "",
+                   summary_tokens: int = 800) -> Dict[str, Any]:
     """degree 갱신 → 노드별 문서 참조(doc_refs) 비정규화 → (옵션) 커뮤니티 탐지/요약.
     touched 가 주어지면 doc_refs 는 해당 엔티티만 갱신(증분), None 이면 전체."""
     out: Dict[str, Any] = {}
@@ -201,7 +203,8 @@ def finalize_graph(store: Store, prof: Profiler, do_communities: bool, llm: Opti
                 summary = "핵심 엔티티: " + ", ".join(top)
                 src = "rule"
                 if summarize and llm and llm.available and len(members) >= 3:
-                    s = llm_summarize_community(llm, mem, sorted(rel_by_comm[cid], key=lambda r: -r["weight"]), effort)
+                    s = llm_summarize_community(llm, mem, sorted(rel_by_comm[cid], key=lambda r: -r["weight"]), effort,
+                                                max_tokens=summary_tokens)   # 역할별 llm_roles.summary.max_tokens
                     if s:
                         summary, src = s, "llm"
                         n_sum += 1

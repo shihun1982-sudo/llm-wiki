@@ -45,23 +45,41 @@ window.LW = (function () {
       const first = $('#su-phrase') || $('#su-pw') || $('#su-ok'); if (first) first.focus();
     });
   }
+  // 로그인 화면으로 보낼 때: 현재 그룹/탭을 해시로 남겨 돌아왔을 때 같은 자리로 복귀하고, replace 로 이동해 "뒤로가기 → 다시 /login" 튕김을 막는다.
+  function gotoLogin() {
+    if (STATE.leaving) return;
+    STATE.leaving = true;
+    location.replace('/login?next=' + encodeURIComponent(location.pathname + (location.hash || '')));
+  }
   async function api(path, body, _retry) {
     const opts = body === undefined ? { headers: { 'X-Requested-With': 'llmwiki' } } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'llmwiki' }, body: JSON.stringify(body) };
-    const r = await fetch(path, opts);
+    let r;
+    try { r = await fetch(path, opts); } catch (e) { const j = { error: '서버에 연결할 수 없습니다 (' + path + ')', offline: true }; toast(j.error); return j; }
     let j; try { j = await r.json(); } catch (e) { j = { error: 'invalid response ' + r.status }; }
     if (r.status === 401) {
       // 게스트(anonymous_role)가 상위 작업을 눌렀을 때는 화면을 버리지 않고 로그인 안내만 (need 가 있으면 어떤 역할이 필요한지 표시)
-      if (j && j.need && STATE.auth && STATE.auth.user && STATE.auth.user.via === 'anon') { toast('로그인 필요: ' + (j.need.op || path) + ' 은(는) ' + (j.need.role || '') + ' 이상 (게스트 ' + STATE.auth.user.role + ')'); if (confirm('이 작업은 로그인이 필요합니다 (' + (j.need.role || '') + ' 이상). 로그인 화면으로 이동할까요?')) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j; }
-      location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash); return j;
+      if (j && j.need && STATE.auth && STATE.auth.user && STATE.auth.user.via === 'anon') {
+        toast('로그인 필요: ' + (j.need.op || path) + ' 은(는) ' + (j.need.role || '') + ' 이상 (게스트 ' + STATE.auth.user.role + ')');
+        if (confirm('이 작업은 로그인이 필요합니다 (' + (j.need.role || '') + ' 이상). 로그인 화면으로 이동할까요?')) gotoLogin();
+        return Object.assign({ unauthorized: true, cancelled: true }, j);
+      }
+      gotoLogin();
+      return Object.assign({ unauthorized: true }, j);
     }
+    if (r.status === 429 || (r.status === 503 && j && j.code)) {   // 요청 관리자: 속도 제한 · 대기열/점검
+      const wait = j.retry_after_s ? ' (' + Math.ceil(j.retry_after_s) + '초 후 재시도)' : '';
+      toast((r.status === 429 ? '요청 제한: ' : '서버 혼잡: ') + (j.error || '') + wait);
+      return Object.assign({ busy: true }, j);
+    }
+    if (r.status === 499) { toast('취소됨'); return Object.assign({ cancelled: true }, j); }
     if (r.status === 428 && j && j.need && !_retry) {
       const extra = await stepUp(j.need, path);
       if (!extra) { toast('취소됨'); return { error: 'cancelled', cancelled: true }; }
       return api(path, Object.assign({}, body || {}, extra), true);
     }
     if (r.status === 428 && j && j.need && _retry) { toast('확인 실패: ' + (j.need.password ? '비밀번호가 올바르지 않습니다' : j.error)); return j; }
-    if (r.status === 403) { toast('권한 없음: ' + (j.error || '')); return j; }
-    if (j && j.error && !j.result && !Array.isArray(j)) { toast('오류: ' + j.error); console.error(j); }
+    if (r.status === 403) { toast('권한 없음: ' + (j.error || '')); return Object.assign({ forbidden: true }, j); }
+    if (j && j.error && !j.result && !Array.isArray(j)) { toast('오류: ' + j.error); console.error(path, j); }
     return j;
   }
   function switchTab(name) { const b = $$('.tabs button').find((x) => x.dataset.tab === name); if (b) b.click(); }
@@ -187,6 +205,14 @@ window.LW = (function () {
   // ---------------- status ----------------
   async function loadStatus() {
     const j = await api('/api/status');
+    // 401(로그인 이동)·네트워크 오류·점검 모드에서는 여기서 멈춘다. 예전에는 오류 객체로 계속 렌더하다 TypeError 가 나서
+    // 사이드바(buildSidebar)가 영영 만들어지지 않았고, 그게 "로그인 갔다 뒤로 오면 메뉴가 깨진다"의 실제 원인이었다.
+    if (!j || j.error || !j.providers || !j.stats) {
+      const ub = $('#user-badge');
+      if (ub && j && (j.unauthorized || j.busy)) ub.innerHTML = `<span class="warntxt">${esc(j.error || '접근할 수 없음')}</span> <a href="/login">로그인 →</a>`;
+      if (j && j.busy) { const ab = $('#alert-badge'); if (ab) { ab.classList.remove('hidden'); ab.classList.add('alert'); ab.textContent = '⚠ ' + (j.error || '서버 혼잡'); } }
+      return j || { error: 'no status' };
+    }
     STATE.status = j; STATE.settings = j.settings; STATE.toggleNames = j.toggle_names; STATE.toggleHelp = j.toggle_help || {}; STATE.settingHelp = j.setting_help || {}; STATE.providers = j.providers; STATE.roles = j.roles || []; STATE.toggleGroups = j.toggle_groups || []; STATE.presets = j.presets || [];
     const p = j.providers, s = j.stats;
     const ra = p.roles && p.roles.answer, rr = p.roles && p.roles.rerank;
@@ -194,23 +220,56 @@ window.LW = (function () {
     $('#stats-badge').textContent = `docs ${s.docs} · chunks ${s.chunks} · vec ${s.embeddings} · entities ${s.entities} · rels ${s.relations} · requests ${s.requests} · pending ${s.proposals_pending}`;
     const w = j.watcher || {};
     $('#watch-badge').textContent = `auto-build: ${w.enabled ? 'on (' + w.interval + 's)' : 'off'}${w.last_scan ? ' · last scan ' + ts(w.last_scan) : ''}`;
+    const sv = j.server || {};
+    const sb = $('#server-badge');
+    if (sb) {
+      const busy = (sv.running || 0) + (sv.queued || 0);
+      sb.className = 'badge' + (sv.maintenance ? ' alert' : busy > 0 ? ' busy' : '');
+      sb.textContent = `서버: 실행 ${sv.running || 0}${sv.queued ? ' · 대기 ' + sv.queued : ''}${sv.lock && sv.lock.writer ? ' · ' + sv.lock.writer : ''}${sv.maintenance ? ' · 점검 중' : ''}`;
+      sb.title = `동시 실행 상한 ${sv.max_parallel_reads} · 자세히: Observability › 서버 모니터` + (sv.scheduler ? `\n스케줄: ${sv.scheduler.tasks}개(활성 ${sv.scheduler.enabled})${sv.scheduler.next ? ' 다음 ' + sv.scheduler.next.name + ' ' + dt(sv.scheduler.next.at) : ''}` : '');
+      sb.onclick = () => { switchGroup('observability'); switchTab('server'); };
+    }
     STATE.auth = j.auth || null;
     const ub = $('#user-badge');
     if (ub) {
       const a = j.auth || {}, u = a.user || {};
       if (a.mode === 'off') { ub.innerHTML = `<span title="security.json mode=off/auto(loopback): 로그인 없음. 파괴적 작업은 확인 문구만 요구">🔓 로그인 없음 (local admin)</span>`; }
-      else if (u.via === 'anon') { ub.innerHTML = `<span title="로그인하지 않은 접속자 — security.json anonymous_role(${esc(u.role || '')}) 권한. 상위 작업은 로그인 필요">👥 게스트 <small>(${esc(u.role || '')})</small></span> <a href="/login?next=${encodeURIComponent(location.pathname + location.hash)}" title="로그인">로그인 →</a>`; }
-      else { ub.innerHTML = `<span title="via ${esc(u.via || '')} · 역할 순서 ${esc((a.roles || []).join(' < '))}">👤 ${esc(u.name || '?')} <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-logout" title="로그아웃">⎋</a>`; const lo = $('#btn-logout'); if (lo) lo.onclick = async (e) => { e.preventDefault(); await api('/api/auth/logout', {}); location.href = '/login'; }; }
+      else if (u.via === 'anon') { ub.innerHTML = `<span title="로그인하지 않은 접속자 — security.json anonymous_role(${esc(u.role || '')}) 권한. 상위 작업은 로그인 필요">👥 게스트 <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-login" title="로그인">로그인 →</a>`; const li = $('#btn-login'); if (li) li.onclick = (e) => { e.preventDefault(); gotoLogin(); }; }
+      else { ub.innerHTML = `<span title="via ${esc(u.via || '')} · 역할 순서 ${esc((a.roles || []).join(' < '))}">👤 ${esc(u.name || '?')} <small>(${esc(u.role || '')})</small></span> <a href="#" id="btn-logout" title="로그아웃">⎋</a>`; const lo = $('#btn-logout'); if (lo) lo.onclick = async (e) => { e.preventDefault(); await api('/api/auth/logout', {}); STATE.leaving = true; location.replace('/login'); }; }
       document.body.dataset.role = u.role || 'admin';
+      // 권한 미리보기 중이면 눈에 띄게 알린다 — 원래 권한으로 돌아오는 법도 함께
+      const pv = u.preview_of || '';
+      const sel = $('#preview-role'); if (sel) sel.value = pv ? (u.role || '') : '';
+      document.body.classList.toggle('previewing', !!pv);
+      let pb = $('#preview-bar');
+      if (pv) {
+        if (!pb) { pb = document.createElement('div'); pb.id = 'preview-bar'; document.body.insertBefore(pb, document.body.firstChild); }
+        pb.innerHTML = `👁 <b>${esc(u.role || '')}</b> 권한으로 보는 중 — 원래 권한은 <b>${esc(pv)}</b> 입니다.`
+          + ' <button class="mini" id="btn-preview-off">원래 권한으로</button>';
+        $('#btn-preview-off').onclick = async () => { await api('/api/auth/preview', { role: '' }); location.reload(); };
+      } else if (pb) { pb.remove(); }
     }
     const al = j.alerts || [];
     const ab = $('#alert-badge'); ab.classList.toggle('hidden', !al.length); ab.classList.toggle('alert', !!al.length); ab.textContent = al.length ? `⚠ alerts ${al.length}` : ''; ab.title = al.map((a) => `[${a.level}] ${a.check}: ${a.detail}`).join('\n'); ab.onclick = () => { switchGroup('corpus'); switchTab('build'); };
     if ($('#corpus-dirs')) $('#corpus-dirs').textContent = (j.settings.corpus_dirs || []).join('  |  ');
     if ($('#config-json') && !$('#config-json').value) $('#config-json').value = JSON.stringify(j.settings, null, 2);
-    if (!document.body.dataset.togglesInit) {
-      buildSidebar(j); setTogglesFrom(j.settings.toggles); document.body.dataset.togglesInit = '1';
-      const cat = (p.catalog && p.catalog.llm) || {}; $('#dl-llm-models').innerHTML = [].concat(cat.anthropic || [], cat.openai || [], cat.ollama || []).filter((m) => !String(m).startsWith('(')).map((m) => `<option value="${esc(m)}">`).join('');
+    // 사이드바는 (a) 처음 · (b) 서버의 토글/프리셋 목록이 바뀜 · (c) 비어 있음(이전 렌더 실패/복원) 일 때만 다시 만든다.
+    // 예전의 body.dataset.togglesInit 가드는 한 번 실패하면 영영 복구되지 않아 메뉴가 빈 채로 남았다.
+    const box = $('#toggle-groups');
+    const sig = (j.toggle_names || []).join(',') + '|' + (j.presets || []).join(',');
+    if (box && (!box.children.length || document.body.dataset.togglesSig !== sig)) {
+      buildSidebar(j); setTogglesFrom(j.settings.toggles); document.body.dataset.togglesSig = sig; document.body.dataset.togglesInit = '1';
       const tp = $('#tr-preset'); if (tp) tp.innerHTML = '<option value="">(프리셋 없음)</option>' + (j.presets || []).map((x) => `<option>${esc(x)}</option>`).join('');
+    }
+    const dl = $('#dl-llm-models');
+    if (dl && !dl.children.length) {
+      const cat = (p.catalog && p.catalog.llm) || {};
+      dl.innerHTML = [].concat(cat.anthropic || [], cat.openai || [], cat.ollama || []).filter((m) => !String(m).startsWith('(')).map((m) => `<option value="${esc(m)}">`).join('');
+      api('/api/models/catalog').then((c) => {   // models.json 카탈로그가 있으면 그것으로 교체 (사람이 추가/삭제하는 목록)
+        const ms = (c && c.models) || []; if (!ms.length) return;
+        dl.innerHTML = ms.filter((m) => m.enabled !== false).map((m) => `<option value="${esc(m.id)}">${esc(m.provider + ' · ' + (m.label || ''))}</option>`).join('');
+        STATE.catalog = c;
+      }).catch(() => {});
     }
     return j;
   }
@@ -226,6 +285,21 @@ window.LW = (function () {
     if (n.logs && n.logs.length) parts.push(`<div class="mb"><b>logs</b><pre>${esc(n.logs.join('\n'))}</pre></div>`);
     if (n.error) parts.push(`<div class="mb err"><b>error</b><pre>${esc(n.error)}</pre></div>`);
     return parts.join('') || '<span class="muted">(no details)</span>';
+  }
+  // 단계 트리 툴바: 모두 펼치기 / 모두 접기 / 복사 (어느 화면에서든 같은 조작)
+  function traceToolbar(el, trace) {
+    const bar = document.createElement('div');
+    bar.className = 'row tr-tools';
+    bar.innerHTML = '<button class="mini secondary" data-tr="open">▼ 모든 단계 펼치기</button>' +
+      '<button class="mini secondary" data-tr="close">▲ 모두 접기</button>' +
+      '<button class="mini secondary" data-tr="copy">📋 trace 복사</button>' +
+      '<span class="muted small">단계 이름을 클릭하면 그 단계만 펼쳐집니다</span>';
+    el.insertBefore(bar, el.firstChild);
+    $('[data-tr="open"]', bar).onclick = () => $$('.tr-row', el).forEach((r) => r.classList.add('open'));
+    $('[data-tr="close"]', bar).onclick = () => $$('.tr-row', el).forEach((r) => r.classList.remove('open'));
+    $('[data-tr="copy"]', bar).onclick = async () => {
+      try { await navigator.clipboard.writeText(JSON.stringify(trace, null, 1)); toast('trace 를 클립보드에 복사했습니다'); } catch (e) { toast('복사 실패: ' + e); }
+    };
   }
   function renderTrace(el, trace, opts) {
     opts = opts || {};
@@ -250,6 +324,7 @@ window.LW = (function () {
     }).join('') + '</div>';
     $$('.tr-name', el).forEach((d) => d.onclick = () => d.parentElement.classList.toggle('open'));
     if (opts.openAll) $$('.tr-row', el).forEach((r) => r.classList.add('open'));
+    if (opts.controls !== false) traceToolbar(el, trace);
   }
   function flatten(trace) { const out = []; (function walk(n, d) { out.push(Object.assign({ depth: d }, n)); (n.children || []).forEach((c) => walk(c, d + 1)); })(trace, 0); return out; }
   function renderStageTable(el, trace, other) {
@@ -266,8 +341,25 @@ window.LW = (function () {
   }
   // ---------------- live progress (progress.py 스냅샷 렌더) ----------------
   // live = { status, path_labels[], stage_label, detail, done, total, pct, elapsed_s, stage_elapsed_s, llm:{active,provider,model,elapsed_s,calls}, log[] }
-  function fmtS(s) { s = Math.round(s || 0); return s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's'; }
-  function renderLive(el, live, extra) {
+  function fmtS(s) { s = Math.round(s || 0); return s >= 3600 ? Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm' : s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's'; }
+  // 걸린 시간 표시. 1초 미만은 ms 로 — '0.0s' 로 뭉개면 "실행이 안 된 것 아니냐"는 오해를 준다
+  // (답변 캐시 적중은 실제로 1ms 안팎이다).
+  function fmtDur(s) {
+    const v = Number(s);
+    if (!isFinite(v) || v < 0) return '-';
+    if (v === 0) return '0 ms';
+    if (v < 1) return Math.max(1, Math.round(v * 1000)) + ' ms';
+    if (v < 60) return v.toFixed(1) + 's';
+    return fmtS(v);
+  }
+  // 실행 중인 작업 취소 (본인 요청 또는 admin). token = progress token = job id = 요청 관리자 티켓.
+  async function cancelToken(token, reason) {
+    if (!token) return { ok: false };
+    const j = await api('/api/activity', { action: 'cancel', token: token, reason: reason || 'user' });
+    toast(j && j.ok ? '중지 요청됨 — 현재 단계가 끝나는 대로 멈춥니다' : ('중지 실패: ' + ((j && j.error) || '')));
+    return j;
+  }
+  function renderLive(el, live, extra, token) {
     if (!el) return;
     if (!live || !live.status) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     el.classList.remove('hidden');
@@ -275,22 +367,38 @@ window.LW = (function () {
     const path = (live.path_labels || []).join(' › ');
     const llm = live.llm || {};
     const pct = live.pct == null ? null : Math.max(0, Math.min(100, live.pct));
-    const bar = pct == null
-      ? (running ? `<div class="progress indet"><i></i><span>${esc(live.detail || '')}</span></div>` : '')
-      : `<div class="progress"><i style="width:${pct}%"></i><span>${live.done}/${live.total} · ${fmt(pct, 0)}%${live.detail ? ' · ' + esc(live.detail) : ''}</span></div>`;
+    const q = live.queue;
+    const eta = live.eta_s ? ` · 남은 시간 ≈ ${fmtS(live.eta_s)}` : '';
+    const bar = q
+      ? `<div class="progress indet"><i></i><span>대기열 ${q.position}번째 (대기 ${q.waiting}건) — 앞 작업이 끝나면 시작합니다</span></div>`
+      : pct == null
+        ? (running ? `<div class="progress indet"><i></i><span>${esc(live.detail || '진행 중…')}</span></div>` : '')
+        : `<div class="progress"><i style="width:${pct}%"></i><span>${live.done}/${live.total} · ${fmt(pct, 0)}%${eta}${live.detail ? ' · ' + esc(live.detail) : ''}</span></div>`;
     const llmTxt = llm.active ? `<span class="pill warn">LLM 응답 대기 ${esc(llm.provider || '')}/${esc(llm.model || '')} · ${fmtS(llm.elapsed_s)}</span>` : (llm.calls ? `<span class="pill">LLM 호출 ${llm.calls}회 · ${fmtS((llm.ms_total || 0) / 1000)}</span>` : '');
-    const head = running
-      ? `<span class="spin"></span><b>${esc(path || live.stage_label || live.label || '진행 중')}</b> <span class="muted small">단계 ${fmtS(live.stage_elapsed_s)} · 전체 ${fmtS(live.elapsed_s)}</span> ${llmTxt}`
-      : `<b>${live.status === 'done' ? '✔ 완료' : '✖ ' + esc(live.status)}</b> <span class="muted small">${fmtS(live.elapsed_s)}${live.detail ? ' · ' + esc(live.detail) : ''}</span>`;
-    // 로그: 기본은 최근 3줄, 클릭하면 누적 전체(펼침 상태는 폴링으로 다시 그려도 유지)
+    const cancelBtn = (running && token) ? `<button class="mini danger live-cancel" title="이 작업을 중지합니다 (현재 단계가 끝나는 대로 멈춤)">${live.cancel_requested ? '중지 중…' : '■ 중지'}</button>` : '';
     const log = live.log || [];
-    const expanded = el.dataset.expanded === '1';
+    const copyBtn = log.length ? '<button class="mini secondary live-copy" title="이 진행 로그를 클립보드에 복사 (디버깅·문의용)">📋 로그 복사</button>' : '';
+    const head = running
+      ? `<span class="spin"></span><b>${esc(path || live.stage_label || live.label || '진행 중')}</b> <span class="muted small">단계 ${fmtS(live.stage_elapsed_s)} · 전체 ${fmtS(live.elapsed_s)}</span> ${llmTxt}${cancelBtn}${copyBtn}`
+      : `<b>${live.status === 'done' ? '✔ 완료' : live.status === 'cancelled' ? '■ 중지됨' : '✖ ' + esc(live.status)}</b> <span class="muted small">${fmtS(live.elapsed_s)}${live.detail ? ' · ' + esc(live.detail) : ''}</span>${copyBtn}<button class="mini secondary live-close" title="이 패널 닫기">✕</button>`;
+    // 로그: 기본은 최근 3줄, 클릭하면 누적 전체. 끝난 뒤에도 패널을 지우지 않는다 (완료 로그를 그대로 두고 복사할 수 있게 — 2026-09-15)
+    const expanded = el.dataset.expanded === '1' || (!running && el.dataset.expanded !== '0');
     const shown = expanded ? log : log.slice(-3);
     const logHtml = log.length ? `<div class="live-log muted small ${expanded ? 'expanded' : ''}" title="클릭: ${expanded ? '접기' : '누적 로그 전체 보기'}">${esc(shown.join('\n'))}<span class="log-toggle">${expanded ? '▲ 접기' : (log.length > 3 ? `▼ 전체 보기 (${log.length}줄)` : '')}</span></div>` : '';
-    el.innerHTML = `<div class="live-head">${head}${extra || ''}</div>${running ? bar : ''}${logHtml}`;
+    el.innerHTML = `<div class="live-head">${head}${extra || ''}</div>${running || q ? bar : ''}${logHtml}`;
+    el._log = log;
+    const cb = $('.live-cancel', el);
+    if (cb) cb.onclick = async () => { cb.disabled = true; cb.textContent = '중지 중…'; await cancelToken(token, 'web'); };
+    const cp = $('.live-copy', el);
+    if (cp) cp.onclick = async () => {
+      const txt = (live.label ? live.label + '\n' : '') + (el._log || []).join('\n');
+      try { await navigator.clipboard.writeText(txt); toast('로그 %d줄을 복사했습니다'.replace('%d', (el._log || []).length)); } catch (e) { toast('복사 실패: ' + e); }
+    };
+    const cl = $('.live-close', el);
+    if (cl) cl.onclick = () => { el.classList.add('hidden'); el.innerHTML = ''; };
     const lg = $('.live-log', el);
     if (lg) {
-      lg.onclick = () => { el.dataset.expanded = expanded ? '0' : '1'; renderLive(el, live, extra); if (!expanded) { const n = $('.live-log', el); if (n) n.scrollTop = n.scrollHeight; } };
+      lg.onclick = () => { el.dataset.expanded = expanded ? '0' : '1'; renderLive(el, live, extra, token); if (!expanded) { const n = $('.live-log', el); if (n) n.scrollTop = n.scrollHeight; } };
       if (expanded) lg.scrollTop = lg.scrollHeight;
     }
   }
@@ -299,7 +407,7 @@ window.LW = (function () {
     let busy = false, stopped = false;
     const tick = async () => {
       if (busy || stopped) return; busy = true;
-      try { const r = await fetch('/api/progress/' + token); const live = await r.json(); if (!stopped) renderLive(el, live.status === 'unknown' ? { status: 'running', label: '요청 접수 대기…' } : live); } catch (e) { /* 서버 재시작 등 — 조용히 */ }
+      try { const r = await fetch('/api/progress/' + token); const live = await r.json(); if (!stopped) renderLive(el, live.status === 'unknown' ? { status: 'running', label: '요청 접수 대기…' } : live, '', token); } catch (e) { /* 서버 재시작 등 — 조용히 */ }
       busy = false;
     };
     const t = setInterval(tick, interval || 500); tick();
@@ -311,8 +419,11 @@ window.LW = (function () {
     if (!el || !el.classList.contains('live')) { el = document.createElement('div'); el.className = 'live hidden'; logEl.parentNode.insertBefore(el, logEl); }
     return el;
   }
+  // 이 브라우저가 직접 폴링 중인 job 토큰 — '서버에서 진행 중' 목록에서 빼서 같은 작업이 두 번 보이지 않게 한다
+  const MY_JOBS = new Set();
   async function pollJob(id, logEl, onDone, onTick) {
     const liveEl = liveElFor(logEl);
+    MY_JOBS.add(id);
     let busy = false;   // 응답이 늦어도 폴링이 겹쳐 쌓이지 않게
     const t = setInterval(async () => {
       if (busy) return; busy = true;
@@ -321,27 +432,251 @@ window.LW = (function () {
       busy = false;
       if (!j || j.error === 'no such job') { clearInterval(t); renderLive(liveEl, null); if (logEl) logEl.textContent = 'job not found: ' + id; return; }
       if (logEl) logEl.textContent = (j.log || []).join('\n') + (j.status === 'running' ? '\n… (진행 중 — 위 진행 표시가 멈춰 있으면 LLM/임베딩 응답 대기 중입니다. elapsed ' + fmtS(j.elapsed_s) + ')' : '\n[' + j.status + ' · ' + fmtS(j.elapsed_s) + ']' + (j.error ? '\n' + j.error : ''));
-      renderLive(liveEl, j.live && j.live.status ? j.live : { status: j.status, label: j.kind, elapsed_s: j.elapsed_s });
+      renderLive(liveEl, j.live && j.live.status ? j.live : { status: j.status, label: j.kind, elapsed_s: j.elapsed_s }, '', id);
       if (onTick) onTick(j);
-      if (j.status !== 'running') { clearInterval(t); setTimeout(() => renderLive(liveEl, null), 4000); onDone(j); loadStatus(); }
+      // 끝나도 진행 패널을 지우지 않는다 — 완료/실패/중지 상태와 전체 로그를 남겨 두고 사용자가 직접 닫거나 복사한다
+      if (j.status !== 'running') { clearInterval(t); MY_JOBS.delete(id); onDone(j); loadStatus(); }
     }, 700);
   }
 
   // ---------------- navigation ----------------
+  // 현재 그룹/탭을 주소의 해시(#group/tab)에 replaceState 로 기록한다. 그래야 (1) 로그인 왕복(?next=/#settings/models) 뒤 같은 자리로 돌아오고
+  // (2) 새로고침·bfcache 복원에서도 화면이 유지된다. 히스토리는 오염시키지 않으므로 '뒤로가기'는 로그인 이전 페이지로 바로 간다.
+  function navState() {
+    const g = $('.groups button.active'), nav = $('.tabs:not(.hidden)');
+    const t = nav ? $('button.active', nav) : null;
+    return { group: g ? g.dataset.group : 'ask', tab: t ? t.dataset.tab : '' };
+  }
+  function writeHash() {
+    const s = navState(); const h = '#' + s.group + (s.tab ? '/' + s.tab : '');
+    if (location.hash === h) return;
+    try { history.replaceState(null, '', location.pathname + location.search + h); } catch (e) { location.hash = h; }
+  }
+  function selectTab(b, silent) {
+    const nav = b.parentElement;
+    $$('button', nav).forEach((x) => x.classList.remove('active')); b.classList.add('active');
+    $$('.tabs button').forEach((x) => { if (x.parentElement !== nav) x.classList.remove('active'); });
+    $$('.tab').forEach((t) => { if (!t.classList.contains('pinned')) t.classList.remove('active'); });
+    const sec = $('#tab-' + b.dataset.tab); if (sec && !sec.classList.contains('pinned')) sec.classList.add('active');
+    writeHash(); updateCli();
+    renderPinList();
+    if (!silent && loaders[b.dataset.tab]) { try { loaders[b.dataset.tab](); } catch (e) { console.error('tab loader', b.dataset.tab, e); } }
+  }
+  function selectGroup(b, tabKey) {
+    $$('.groups button').forEach((x) => x.classList.remove('active')); b.classList.add('active');
+    $$('.tabs').forEach((n) => n.classList.toggle('hidden', n.dataset.group !== b.dataset.group));
+    const nav = $(`.tabs[data-group="${b.dataset.group}"]`);
+    const want = tabKey ? $$('button', nav).find((x) => x.dataset.tab === tabKey) : null;
+    const act = want || $('button.active', nav) || $('button', nav);
+    if (act) selectTab(act);
+  }
+  function applyHash() {
+    const parts = (location.hash || '').replace(/^#/, '').split('/');
+    const g = parts[0] || '', t = parts[1] || '';
+    const gb = $$('.groups button').find((x) => x.dataset.group === g);
+    if (gb) { selectGroup(gb, t); return true; }
+    if (t || g) { const tb = $$('.tabs button').find((x) => x.dataset.tab === (t || g)); if (tb) { const grp = $$('.groups button').find((x) => x.dataset.group === tb.parentElement.dataset.group); if (grp) { selectGroup(grp, tb.dataset.tab); return true; } } }
+    return false;
+  }
+  // ---------------- 탭 고정 (복수 메뉴 동시 보기) ----------------
+  // 고정한 탭의 <section> 을 #pinned-pane 으로 옮겨 항상 보이게 한다. 예: 서버 모니터 + 로그를 고정해 두고 Ask 에서 질의.
+  const PINS = [];
+  // 배치 상태: cols(자동/1~4열) · height(패널 높이) · wide(2칸 차지) · collapsed(제목만)
+  const PINVIEW = { cols: 'auto', height: 'm', wide: {}, collapsed: {} };
+  const COLS = ['auto', '1', '2', '3', '4'];
+  const HEIGHTS = { s: '260px', m: '420px', l: '620px', auto: '' };
+  function tabLabel(key) { const b = $$('.tabs button').find((x) => x.dataset.tab === key); return b ? b.textContent : key; }
+  function groupOf(key) { const b = $$('.tabs button').find((x) => x.dataset.tab === key); return b ? (b.parentElement.dataset.group || '') : ''; }
+  function groupIcon(key) { const g = $$('.groups button').find((x) => x.dataset.group === groupOf(key)); return g ? (g.textContent.trim().split(/\s+/)[0] || '') : ''; }
+  function isPinned(key) { return PINS.indexOf(key) >= 0; }
+  function tabVisible(key) { const s = $('#tab-' + key); return !!s && (s.classList.contains('active') || s.classList.contains('pinned')); }
+
+  function savePinView() {
+    try {
+      localStorage.setItem('llmwiki.pins', JSON.stringify(PINS));
+      localStorage.setItem('llmwiki.pinview', JSON.stringify(PINVIEW));
+    } catch (e) { /* ignore */ }
+  }
+  // 고정 패널 하나의 머리글: 제목 · 새로고침 · 넓게 · 접기 · 좌우 이동 · 해제
+  function pinHeadHtml(key) {
+    const wide = !!PINVIEW.wide[key], col = !!PINVIEW.collapsed[key];
+    return `<b><span class="pin-ico">${esc(groupIcon(key))}</span>${esc(tabLabel(key))}</b>
+      <span class="pin-acts">
+        <button class="pin-act" data-act="left"  data-k="${esc(key)}" title="왼쪽으로 이동">◀</button>
+        <button class="pin-act" data-act="right" data-k="${esc(key)}" title="오른쪽으로 이동">▶</button>
+        <button class="pin-act" data-act="reload" data-k="${esc(key)}" title="이 패널만 새로 고침">⟳</button>
+        <button class="pin-act${wide ? ' on' : ''}" data-act="wide" data-k="${esc(key)}" title="${wide ? '한 칸으로' : '두 칸 넓게'}">${wide ? '⇲' : '⇱'}</button>
+        <button class="pin-act" data-act="fold" data-k="${esc(key)}" title="${col ? '펼치기' : '제목만 남기고 접기'}">${col ? '▸' : '▾'}</button>
+        <button class="pin-act danger" data-act="unpin" data-k="${esc(key)}" title="고정 해제">✕</button>
+      </span>`;
+  }
+  function wirePinHead(hd, key) {
+    $$('.pin-act', hd).forEach((b) => b.onclick = (ev) => {
+      ev.stopPropagation();
+      const a = b.dataset.act;
+      if (a === 'unpin') return togglePin(key);
+      if (a === 'wide') { PINVIEW.wide[key] = !PINVIEW.wide[key]; if (!PINVIEW.wide[key]) delete PINVIEW.wide[key]; }
+      else if (a === 'fold') { PINVIEW.collapsed[key] = !PINVIEW.collapsed[key]; if (!PINVIEW.collapsed[key]) delete PINVIEW.collapsed[key]; }
+      else if (a === 'reload') { if (loaders[key]) { try { loaders[key](); toast(tabLabel(key) + ' 새로 고침'); } catch (e) { console.error(e); } } return; }
+      else if (a === 'left' || a === 'right') {
+        const i = PINS.indexOf(key), j = a === 'left' ? i - 1 : i + 1;
+        if (i < 0 || j < 0 || j >= PINS.length) return;
+        PINS[i] = PINS[j]; PINS[j] = key;
+      }
+      applyPinView();
+    });
+  }
+  // PINS 순서대로 DOM 을 다시 배열하고 열 수·높이·넓게·접기를 반영한다.
+  function applyPinView() {
+    const pane = $('#pinned-pane'); if (!pane) return;
+    PINS.forEach((k) => { const s = $('#tab-' + k); if (s && s.parentElement === pane) pane.appendChild(s); });
+    pane.dataset.cols = PINVIEW.cols;
+    pane.style.setProperty('--pin-h', HEIGHTS[PINVIEW.height] || '');
+    pane.classList.toggle('free-height', PINVIEW.height === 'auto');
+    PINS.forEach((k) => {
+      const sec = $('#tab-' + k); if (!sec) return;
+      sec.classList.toggle('wide', !!PINVIEW.wide[k]);
+      sec.classList.toggle('folded', !!PINVIEW.collapsed[k]);
+      const hd = $(':scope > .pin-head', sec);
+      if (hd) { hd.innerHTML = pinHeadHtml(k); wirePinHead(hd, k); }
+    });
+    $$('#pin-cols button').forEach((b) => b.classList.toggle('active', b.dataset.cols === PINVIEW.cols));
+    $$('#pin-height button').forEach((b) => b.classList.toggle('active', b.dataset.h === PINVIEW.height));
+    renderPinList();
+  }
+  function renderPinList() {
+    const box = $('#tabpin-list');
+    if (box) {
+      box.innerHTML = PINS.map((k) => `<span class="pin-chip" data-goto="${esc(k)}" title="이 패널로 이동"><span class="pin-ico">${esc(groupIcon(k))}</span>${esc(tabLabel(k))}<i data-pin="${esc(k)}" title="고정 해제">✕</i></span>`).join('');
+      $$('#tabpin-list [data-pin]').forEach((c) => c.onclick = (e) => { e.stopPropagation(); togglePin(c.dataset.pin); });
+      $$('#tabpin-list [data-goto]').forEach((c) => c.onclick = () => {
+        const s = $('#tab-' + c.dataset.goto);
+        if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 900); }
+      });
+    }
+    const btn = $('#btn-pin-tab');
+    if (btn) { const cur = navState().tab; btn.textContent = isPinned(cur) ? '📌 고정 해제' : '📌 이 탭 고정'; btn.classList.toggle('on', isPinned(cur)); }
+    const clr = $('#btn-pin-clear'); if (clr) clr.classList.toggle('hidden', PINS.length === 0);
+    const seg = $('#pin-cols'), hseg = $('#pin-height');
+    if (seg) seg.classList.toggle('hidden', PINS.length < 2);
+    if (hseg) hseg.classList.toggle('hidden', PINS.length === 0);
+    savePinView();
+  }
+  function togglePin(key) {
+    const sec = $('#tab-' + key); const pane = $('#pinned-pane');
+    if (!sec || !pane) return;
+    const i = PINS.indexOf(key);
+    if (i >= 0) {
+      PINS.splice(i, 1);
+      delete PINVIEW.wide[key]; delete PINVIEW.collapsed[key];
+      sec.classList.remove('pinned', 'wide', 'folded');
+      const body = $(':scope > .pin-body', sec);
+      if (body) { while (body.firstChild) sec.appendChild(body.firstChild); body.remove(); }  // 감쌌던 내용을 되돌린다
+      const hdr = $(':scope > .pin-head', sec); if (hdr) hdr.remove();
+      $('main').insertBefore(sec, pane);          // 원래 위치(본문)로 되돌린다
+      sec.classList.remove('active');
+      // 지금 보고 있던 탭을 해제했으면 본문에 다시 띄운다 (빈 화면이 남지 않게)
+      if (navState().tab === key) { const b = $$('.tabs button').find((x) => x.dataset.tab === key); if (b) selectTab(b, true); }
+    } else {
+      PINS.push(key);
+      // 내용을 .pin-body 로 감싸 머리글만 고정하고 내용만 스크롤시킨다 (패널이 여러 개여도 제목이 보인다)
+      const body = document.createElement('div');
+      body.className = 'pin-body';
+      while (sec.firstChild) body.appendChild(sec.firstChild);
+      const hdr = document.createElement('div');
+      hdr.className = 'pin-head';
+      sec.appendChild(hdr); sec.appendChild(body);
+      sec.classList.add('pinned');
+      pane.appendChild(sec);
+      if (loaders[key]) { try { loaders[key](); } catch (e) { console.error(e); } }
+    }
+    applyPinView();
+  }
+  function clearPins() { PINS.slice().forEach(togglePin); }
+  function restorePins() {
+    let saved = [], view = null;
+    try { saved = JSON.parse(localStorage.getItem('llmwiki.pins') || '[]'); } catch (e) { saved = []; }
+    try { view = JSON.parse(localStorage.getItem('llmwiki.pinview') || 'null'); } catch (e) { view = null; }
+    if (!view) {                                   // 이전 버전(2열 on/off) 호환
+      let sp = '0'; try { sp = localStorage.getItem('llmwiki.split') || '0'; } catch (e) { /* ignore */ }
+      view = { cols: sp === '1' ? '2' : 'auto' };
+    }
+    setPinView(view);
+    (saved || []).filter((k) => $('#tab-' + k)).forEach((k) => { if (!isPinned(k)) togglePin(k); });
+    applyPinView();
+  }
+  function setPinView(v) {
+    if (!v || typeof v !== 'object') return;
+    if (COLS.indexOf(String(v.cols)) >= 0) PINVIEW.cols = String(v.cols);
+    if (v.height && HEIGHTS[v.height] !== undefined) PINVIEW.height = v.height;
+    if (v.wide && typeof v.wide === 'object') { Object.keys(PINVIEW.wide).forEach((k) => delete PINVIEW.wide[k]); Object.keys(v.wide).forEach((k) => { if (v.wide[k]) PINVIEW.wide[k] = true; }); }
+    if (v.collapsed && typeof v.collapsed === 'object') { Object.keys(PINVIEW.collapsed).forEach((k) => delete PINVIEW.collapsed[k]); Object.keys(v.collapsed).forEach((k) => { if (v.collapsed[k]) PINVIEW.collapsed[k] = true; }); }
+  }
   function initNav() {
-    $$('.groups button').forEach((b) => b.onclick = () => {
-      $$('.groups button').forEach((x) => x.classList.remove('active')); b.classList.add('active');
-      $$('.tabs').forEach((n) => n.classList.toggle('hidden', n.dataset.group !== b.dataset.group));
-      const nav = $(`.tabs[data-group="${b.dataset.group}"]`); const act = $('button.active', nav) || $('button', nav); if (act) act.click();
-    });
-    $$('.tabs button').forEach((b) => b.onclick = () => {
-      const nav = b.parentElement;
-      $$('button', nav).forEach((x) => x.classList.remove('active')); b.classList.add('active');
-      $$('.tabs button').forEach((x) => { if (x.parentElement !== nav) x.classList.remove('active'); });
-      $$('.tab').forEach((t) => t.classList.remove('active')); const sec = $('#tab-' + b.dataset.tab); if (sec) sec.classList.add('active');
-      updateCli();
-      if (loaders[b.dataset.tab]) loaders[b.dataset.tab]();
-    });
+    $$('.groups button').forEach((b) => b.onclick = () => selectGroup(b));
+    $$('.tabs button').forEach((b) => b.onclick = () => selectTab(b));
+    window.addEventListener('hashchange', () => applyHash());
+    const pb = $('#btn-pin-tab');
+    if (pb) pb.onclick = () => { const cur = navState().tab; if (cur) togglePin(cur); };
+    const cb = $('#btn-pin-clear'); if (cb) cb.onclick = () => clearPins();
+    $$('#pin-cols button').forEach((b) => b.onclick = () => { PINVIEW.cols = b.dataset.cols; applyPinView(); });
+    $$('#pin-height button').forEach((b) => b.onclick = () => { PINVIEW.height = b.dataset.h; applyPinView(); });
+  }
+
+  // ---------------- 계정별 설정 프로파일 ----------------
+  // 토글·프리셋·요청 오버라이드·테마·고정 탭을 내 계정에 저장한다 (서버 기본 설정은 건드리지 않는다 — /api/profile).
+  function currentProfile() {
+    const tg = {};
+    $$('[data-toggle]').forEach((cb) => { tg[cb.dataset.toggle] = cb.checked; });
+    const ov = {};
+    ['ov-llm', 'ov-embed', 'ov-k', 'ov-debug', 'ov-answer-model', 'ov-rerank-model'].forEach((id) => { const e = $('#' + id); if (e) ov[id] = e.value; });
+    let theme = 'light'; try { theme = localStorage.getItem('llmwiki.theme') || 'light'; } catch (e) { /* ignore */ }
+    const s = navState();
+    return { theme: theme, toggles: tg, presets: presetNames(), overrides: ov, pins: PINS.slice(),
+             pinview: { cols: PINVIEW.cols, height: PINVIEW.height,
+                        wide: Object.assign({}, PINVIEW.wide), collapsed: Object.assign({}, PINVIEW.collapsed) },
+             split: PINVIEW.cols === '2',          // 이전 버전과의 호환용
+             mode: ($('#q-mode') || {}).value || '', group: s.group, tab: s.tab };
+  }
+  function applyProfile(p) {
+    if (!p || typeof p !== 'object') return false;
+    try {
+      if (p.theme) { localStorage.setItem('llmwiki.theme', p.theme); const sel = $('#theme-select'); if (sel) { sel.value = p.theme; sel.onchange(); } }
+    } catch (e) { /* ignore */ }
+    if (p.toggles) $$('[data-toggle]').forEach((cb) => { if (cb.dataset.toggle in p.toggles) cb.checked = !!p.toggles[cb.dataset.toggle]; });
+    if (p.presets) $$('[data-preset]').forEach((cb) => { cb.checked = p.presets.indexOf(cb.dataset.preset) >= 0; });
+    if (p.overrides) Object.keys(p.overrides).forEach((id) => { const e = $('#' + id); if (e) e.value = p.overrides[id]; });
+    if (p.mode && $('#q-mode')) $('#q-mode').value = p.mode;
+    if (p.pinview) setPinView(p.pinview);
+    else if (typeof p.split === 'boolean') PINVIEW.cols = p.split ? '2' : 'auto';   // 이전 버전 프로파일
+    (p.pins || []).filter((k) => $('#tab-' + k) && !isPinned(k)).forEach(togglePin);
+    applyPinView();
+    if (p.presets && p.presets.length) applyPresets(); else { markPresetToggles(); updateCli(); }
+    return true;
+  }
+  async function saveProfile() {
+    const prof = currentProfile();
+    const j = await api('/api/profile', { action: 'save', profile: prof });
+    const msg = $('#profile-msg');
+    if (j && j.ok) { if (msg) msg.textContent = '내 설정을 저장했습니다 (' + (j.user || '') + ')'; toast('내 설정 저장됨'); }
+    else if (j && j.anonymous) {
+      try { localStorage.setItem('llmwiki.profile', JSON.stringify(prof)); } catch (e) { /* ignore */ }
+      if (msg) msg.textContent = '게스트라 이 브라우저에만 저장했습니다 (로그인하면 계정에 저장됩니다)';
+      toast('브라우저에 저장됨 (게스트)');
+    }
+    return j;
+  }
+  async function loadProfile(quiet) {
+    let prof = null;
+    const j = await api('/api/profile');
+    if (j && j.profile && Object.keys(j.profile).length) prof = j.profile;
+    if (!prof) { try { prof = JSON.parse(localStorage.getItem('llmwiki.profile') || 'null'); } catch (e) { prof = null; } }
+    const msg = $('#profile-msg');
+    if (!prof) { if (!quiet && msg) msg.textContent = '저장된 설정이 없습니다'; return null; }
+    applyProfile(prof);
+    if (msg) msg.textContent = '내 설정을 불러왔습니다' + (j && j.anonymous ? ' (브라우저)' : '');
+    if (!quiet) toast('내 설정 적용됨');
+    return prof;
   }
   // ---------------- theme ----------------
   async function initTheme() {
@@ -350,7 +685,7 @@ window.LW = (function () {
     const sel = $('#theme-select');
     sel.innerHTML = '<option value="auto">auto (시스템)</option>' + (reg.themes || []).map((t) => `<option value="${esc(t.key)}">${esc(t.title)}</option>`).join('');
     let saved = null; try { saved = localStorage.getItem('llmwiki.theme'); } catch (e) { /* ignore */ }
-    sel.value = saved || reg.default || 'auto';   // themes.json 의 default (dark) — 사용자가 고르면 localStorage 값이 우선
+    sel.value = saved || reg.default || 'light';   // themes.json 의 default (light) — 사용자가 고르면 localStorage 값이 우선
     const apply = () => {
       const v = sel.value; let key = v;
       if (v === 'auto') key = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? ((reg.auto || {}).dark || 'dark') : ((reg.auto || {}).light || 'light');
@@ -364,13 +699,117 @@ window.LW = (function () {
   function boot() {
     initNav();
     initTheme();
-    ['#ov-llm', '#ov-embed', '#ov-k', '#ov-debug', '#ov-answer-model', '#ov-rerank-model'].forEach((s) => $(s).addEventListener('change', updateCli));
+    ['#ov-llm', '#ov-embed', '#ov-k', '#ov-debug', '#ov-answer-model', '#ov-rerank-model'].forEach((s) => { const e = $(s); if (e) e.addEventListener('change', updateCli); });
     // 모델 입력(datalist): 값이 있으면 브라우저가 목록을 그 값으로 필터해 다시 고를 수 없으므로 × 로 비우거나, 포커스 시 전체 선택해 바로 덮어쓰게 한다
     $$('[data-clear]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.clear); i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); i.focus(); });
-    ['#ov-answer-model', '#ov-rerank-model'].forEach((s) => { const i = $(s); i.addEventListener('focus', () => i.select()); i.addEventListener('dblclick', () => { i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); }); });
+    ['#ov-answer-model', '#ov-rerank-model'].forEach((s) => { const i = $(s); if (!i) return; i.addEventListener('focus', () => i.select()); i.addEventListener('dblclick', () => { i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); }); });
     $('#btn-reset-toggles').onclick = () => setTogglesFrom(STATE.settings.toggles);
-    $('#btn-save-config').onclick = async () => { const ov = overrides(); const j = await api('/api/config', { settings: ov }); STATE.settings = j.settings; toast('config.json 저장됨'); loadStatus(); };
-    loadStatus().then(() => { updateCli(); (LW.onReady || []).forEach((f) => f()); });
+    // 사이드바의 '토글을 config.json 에 저장' 은 제거했다: 한 사람이 누르면 모든 사용자의 서버 기본값이 바뀌기 때문.
+    // 서버 기본값 변경은 Settings › config.json (admin 등급, 감사 로그에 기록) 에서만 한다.
+    // bfcache 로 되돌아왔을 때(뒤로가기): DOM 은 그대로지만 로그인 상태·서버 상태는 오래됐으므로 다시 읽는다.
+    window.addEventListener('pageshow', (e) => { if (e.persisted) { STATE.leaving = false; applyHash(); loadStatus().catch(() => {}); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !STATE.leaving && STATE.status) loadStatus().catch(() => {}); });
+    const pvs = $('#preview-role');
+    if (pvs) pvs.onchange = async () => { await api('/api/auth/preview', { role: pvs.value }); location.reload(); };
+    const ps = $('#btn-profile-save'); if (ps) ps.onclick = saveProfile;
+    const pl = $('#btn-profile-load'); if (pl) pl.onclick = () => loadProfile(false);
+    const pr = $('#btn-profile-reset'); if (pr) pr.onclick = async () => { await api('/api/profile', { action: 'reset' }); try { localStorage.removeItem('llmwiki.profile'); } catch (e) { /* ignore */ } const m = $('#profile-msg'); if (m) m.textContent = '저장한 설정을 지웠습니다'; toast('내 설정 삭제됨'); };
+    loadStatus().then((j) => {
+      if (!applyHash()) writeHash();
+      restorePins();
+      loadProfile(true).catch(() => {});      // 로그인 사용자의 저장된 화면 설정을 자동 적용
+      updateCli();
+      startQueueStrip();
+      (LW.onReady || []).forEach((f) => { try { f(j); } catch (e) { console.error(e); } });
+    }).catch((e) => { console.error('boot', e); toast('초기화 실패: ' + e); });
   }
-  return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, renderLive, watchProgress, fmtS, stepUp, boot, onReady: [] };
+
+  // ---------------- 질의 화면의 '지금 서버에서' 한 줄 요약 ----------------
+  // 내 요청이 대기열에 있는지, 다른 사람의 빌드가 도는지, 임베딩이 몇 %인지 한눈에. 2초마다 갱신(락 없는 엔드포인트라 가볍다).
+  function renderQueueStrip(j) {
+    const el = $('#q-queue'); if (!el) return;
+    if (!j || j.error) { el.classList.add('hidden'); return; }
+    const run = j.running || [], q = j.queued || [], ext = j.external || [];
+    const all = run.concat(ext);
+    if (!all.length && !q.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    const me = j.me;
+    const item = (r) => {
+      const pct = r.pct == null ? '' : ` ${fmt(r.pct, 0)}%`;
+      const mine = me && r.user === me;
+      const llm = r.llm && r.llm.active ? ' · LLM 대기' : '';
+      return `<span class="qs-item ${mine ? 'mine' : ''}" title="${esc((r.label || '') + ' — ' + (r.user || '') + ' · ' + (r.origin || ''))}">` +
+        `${r.weight === 'exclusive' ? '🔒' : r.external ? '🖥' : '▶'} ${esc(r.kind || '')}${pct} <span class="muted">${LW.fmtS(r.elapsed_s)}${llm}</span>` +
+        `${(mine || j.admin) && r.token ? `<button class="qs-x" data-qcancel="${esc(r.token)}" title="중지">✕</button>` : ''}</span>`;
+    };
+    el.classList.remove('hidden');
+    el.innerHTML = `<span class="muted small">지금 서버에서</span> ${all.map(item).join('')}` +
+      (q.length ? ` <span class="qs-item wait">⏳ 대기 ${q.length}건</span>` : '') +
+      ` <a href="#observability/activity" class="muted small" title="진행 중 작업 전체 보기">전체 보기 →</a>`;
+    $$('#q-queue [data-qcancel]').forEach((b) => b.onclick = async () => { b.disabled = true; await cancelToken(b.dataset.qcancel, 'ask'); });
+  }
+  // ---------------- 헤더의 항상 보이는 활동 표시기 (HUD) ----------------
+  // 동시 실행 슬롯을 칸으로 그린다: 채워진 칸 = 실행 중, 초록 = 내 요청, 점선 = 대기.
+  // 어느 화면에 있든 "서버가 지금 바쁜가 / 내 요청은 어디쯤인가"를 눈으로 알 수 있게 한다.
+  function renderHud(j) {
+    const bars = $('#hud-bars'), txt = $('#hud-txt'), hud = $('#hud');
+    if (!bars || !txt || !hud) return;
+    if (!j || j.error) { bars.innerHTML = ''; txt.textContent = '—'; hud.classList.remove('busy', 'mine'); hud.title = '서버 활동을 읽지 못했습니다'; return; }
+    const run = (j.running || []).concat(j.external || []), q = j.queued || [], me = j.me;
+    const slots = Math.max(1, Math.min(12, Number((j.limits || {}).max_parallel_reads || 8)));
+    const isMine = (r) => !!(me && r.user === me);
+    const mineRun = run.filter(isMine).length, mineQ = q.filter(isMine).length;
+    const heavy = run.some((r) => r.weight === 'exclusive' || r.weight === 'soft');
+    // 실제 작업 하나 = 막대 하나. 실행 중을 먼저, 그 뒤에 대기열을 순서대로.
+    // 내 요청은 초록, 남의 요청은 파랑, 대기는 점선. 빈 슬롯은 옅은 칸으로 남겨 여유를 보여 준다.
+    const MAX = 14;
+    const cells = [];
+    const label = (r, st) => esc((r.kind || '') + ' ' + String(r.label || '').slice(0, 40) + ' · ' + st);
+    run.slice(0, MAX).forEach((r) => {
+      const pct = r.pct != null ? Math.max(8, Math.min(100, r.pct)) : 100;
+      cells.push(`<i class="on${isMine(r) ? ' mine' : ''}${r.weight === 'exclusive' || r.weight === 'soft' ? ' heavy' : ''}"`
+        + ` style="--f:${pct}%" title="${label(r, '실행 중 ' + LW.fmtDur(r.elapsed_s))}"></i>`);
+    });
+    for (let i = run.length; i < Math.min(slots, MAX); i++) cells.push('<i class="free" title="빈 슬롯"></i>');
+    q.slice(0, Math.max(0, MAX - cells.length)).forEach((r, i) => {
+      cells.push(`<i class="wait${isMine(r) ? ' mine' : ''}" title="${label(r, '대기 ' + (i + 1) + '번째')}"></i>`);
+    });
+    bars.innerHTML = cells.join('') + (run.length + q.length > MAX ? '<b class="hud-more">+</b>' : '');
+    txt.innerHTML = `${run.length}<small>/${slots}</small>` + (q.length ? ` <span class="hud-q">+${q.length}</span>` : '');
+    hud.classList.toggle('busy', run.length >= slots || heavy);
+    hud.classList.toggle('mine', mineRun + mineQ > 0);
+    const top = run.slice(0, 4).map((r) => `· ${r.kind || ''} ${(r.label || '').slice(0, 40)} (${LW.fmtDur(r.elapsed_s)})${isMine(r) ? ' ← 내 요청' : ''}`);
+    hud.title = `실행 중 ${run.length} / 슬롯 ${slots} · 대기 ${q.length}` +
+      (mineRun + mineQ ? ` · 내 요청 ${mineRun + mineQ}건` : '') +
+      (top.length ? '\n' + top.join('\n') : '') + '\n클릭하면 진행 중 작업';
+  }
+  // ---------------- 활동 폴링 한 곳으로 모으기 ----------------
+  // 예전에는 헤더 HUD · 질의 화면 요약 · '진행 중 작업' 탭 · 빌드 탭이 각자 2초마다 /api/activity 를 불렀다.
+  // 브라우저는 한 사이트에 동시 연결을 6개까지만 열기 때문에, 오래 걸리는 질의 몇 개가 연결을 물고 있으면
+  // 갱신 요청이 브라우저 안에서 줄을 서다가 한꺼번에 처리된다. 그래서 **한 번만 불러서 나눠 준다**.
+  const ACT_SUBS = new Set();
+  let ACT_TIMER = null, ACT_BUSY = false, ACT_LAST = null;
+  function onActivity(fn) { ACT_SUBS.add(fn); if (ACT_LAST) { try { fn(ACT_LAST); } catch (e) { /* ignore */ } } return () => ACT_SUBS.delete(fn); }
+  async function activityTick(force) {
+    if (ACT_BUSY) return ACT_LAST;              // 응답이 늦으면 건너뛴다 (요청이 쌓이지 않게)
+    if (!force && (document.hidden || STATE.leaving)) return ACT_LAST;
+    ACT_BUSY = true;
+    let j = null;
+    try { j = await api('/api/activity?history=25'); } catch (e) { /* 조용히 */ }
+    ACT_BUSY = false;
+    ACT_LAST = j;
+    ACT_SUBS.forEach((fn) => { try { fn(j); } catch (e) { console.error('activity sub', e); } });
+    return j;
+  }
+  function startQueueStrip() {
+    if (ACT_TIMER) clearInterval(ACT_TIMER);
+    onActivity((j) => {
+      renderHud(j);                             // HUD 는 어느 화면에서든 항상 갱신
+      if (!tabVisible('query') && !tabVisible('activity')) { const el = $('#q-queue'); if (el) el.classList.add('hidden'); return; }
+      renderQueueStrip(j);
+    });
+    ACT_TIMER = setInterval(() => activityTick(false), 2000);
+    activityTick(true);
+  }
+  return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, renderLive, watchProgress, fmtS, stepUp, cancelToken, gotoLogin, applyHash, togglePin, tabVisible, myJobs: MY_JOBS, saveProfile, loadProfile, boot, fmtDur,
+           onActivity, refreshActivity: () => activityTick(true), onReady: [] };
 })();

@@ -106,7 +106,7 @@
 | context | `doc_expand_top_docs` | int | 3 | 3 | 1~20 | 문서 단위 확장(doc_expand 토글): 리랭크 상위 청크가 속한 문서 중 앞에서 몇 개 문서를 확장할지. | 많을수록 여러 문서의 보조 청크가 들어와 근거 완전성↑ 토큰↑. | 3 (기본). 단일 문서 질문이 많으면 1~2. | tuning.json |  |
 | context | `doc_expand_max_chunks` | int | 3 | 3 | 1~50 | 문서 단위 확장: 문서당 추가할 최대 청크 수. | 문서 전체를 넣으려면 크게 (컨텍스트 상한 context_max_chars 는 그대로 적용). | 3 | tuning.json |  |
 | context | `doc_expand_min_score` | float | 0.2 | 0.2 | 0.0~1.0 | 문서 단위 확장: 이 점수(0~1) 이상인 청크만 추가. 점수 = 키워드 커버리지·벡터 유사도(모드별). | 낮추면 관련 없는 청크까지 들어와 토큰 낭비, 높이면 확장이 거의 안 됨. 0 이면 상한까지 무조건 추가. | 0.2 | tuning.json |  |
-| context | `doc_expand_mode` | choice | hybrid | hybrid | keyword, vector, hybrid | 문서 단위 확장 점수 방식: keyword(질의 키워드 커버리지) \| vector(질의-청크 코사인, 부모 청크 대비 정규화) \| hybrid(가중합). | hash 임베더에서는 keyword 비중이 안전. 의미 임베더면 vector/hybrid. | hybrid | tuning.json |  |
+| context | `doc_expand_mode` | choice | hybrid | hybrid | keyword, vector, hybrid, full | 문서 단위 확장 점수 방식: keyword(질의 키워드 커버리지) \| vector(질의-청크 코사인, 부모 청크 대비 정규화) \| hybrid(가중합) \| full(근거가 나온 문서를 통째로 — 점수로 거르지 않고 문서 순서대로, doc_expand_max_chunks 와 context_max_chars 로만 제한). | hash 임베더에서는 keyword 비중이 안전. 의미 임베더면 vector/hybrid. full 은 근거 문서 전체를 읽히므로 품질↑·토큰↑ (doc_expand_max_chunks 를 함께 키운다). | hybrid | tuning.json |  |
 | context | `doc_expand_w` | float | 0.5 | 0.5 | 0.0~1.0 | hybrid 모드에서 벡터 점수 가중 (키워드는 1-w). |  | 0.5 | tuning.json |  |
 | evidence | `evidence_min_score` | float | 0.015 | 0.015 | 0.0~1.0 | 충분성 휴리스틱: 상위 fused 점수가 이 미만이면 weak. | rrf 스케일(1/(60+r)): 단일 채널 1위 ≈0.0164, 채널 2개 합의 ≈0.03. 0.02 로 올리면 단일 채널 근거는 모두 weak. | 0.015 | tuning.json |  |
 | evidence | `evidence_min_channels` | int | 1 | 1 | 0~4 | 충분성 휴리스틱: 상위 후보가 등장한 채널 수가 이 미만이면 weak. | 2 로 올리면 채널 합의를 요구. | 1 | tuning.json |  |
@@ -119,6 +119,9 @@
 | evidence | `fallback_levels` | str | rules,expand,graph,wide | rules,expand,graph,wide |  | fallback 단계 순서 (rules \| expand \| graph \| wide \| mcp). | 값싼 단계부터. mcp 는 mcp_sources 토글 필요. | rules,expand,graph,wide | tuning.json |  |
 | answer | `answer_length_target` | choice | normal | long **(변경)** | short, normal, long | 답변 상세도 목표: short(핵심만) \| normal \| long(근거 전체를 상세 설명). 프롬프트에 반영. | long 은 evidence-rich 답변, 토큰↑. | normal | tuning.json |  |
 | answer | `answer_max_tokens` | int | 3000 | 4000 **(변경)** | 100~32000 | 답변 LLM 출력 토큰 상한. |  | 3000 | config.json |  |
+| answer | `answer_repeat_guard` | bool | True | True |  | 답변이 같은 구절을 무한 반복하는 LLM 고장(반복 루프)을 잡아 잘라내고 경고를 붙인다. | 끄면 반복된 답변이 그대로 나가고 캐시에도 저장된다. | true | tuning.json |  |
+| answer | `answer_repeat_min_chars` | int | 12 | 12 | 4~400 | 반복으로 판정할 최소 구절 길이(글자). | 너무 작으면 정상적인 짧은 반복도 잡는다. | 12 | tuning.json |  |
+| answer | `answer_repeat_times` | int | 4 | 4 | 3~50 | 같은 구절이 연속으로 이 횟수 이상 나오면 반복 루프로 본다. | 표·목록에는 정상적인 반복이 있으므로 3 미만은 권하지 않는다. | 4 | tuning.json |  |
 | answer | `answer_effort` | choice | medium | medium | low, medium, high | 답변 LLM effort. | high 는 추론↑ 지연·비용↑. | medium | config.json |  |
 | answer | `llm_effort` | choice | low | low | low, medium, high | 추출/리랭크/요약/리뷰 LLM effort (역할별 llm_roles 로 개별 지정 가능). |  | low | config.json |  |
 | answer | `extractive_sentences` | int | 6 | 6 | 1~30 | 추출식 답변 문장 수. |  | 6 | tuning.json |  |

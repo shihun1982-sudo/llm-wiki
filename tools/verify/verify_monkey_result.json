@@ -1,0 +1,171 @@
+{
+ "seed": 551902975,
+ "requests": 1205,
+ "elapsed_s": 296.4,
+ "codes": {
+  "200": 525,
+  "404": 160,
+  "400": 153,
+  "501": 55,
+  "405": 9,
+  "-1": 60,
+  "503": 243
+ },
+ "findings": [
+  {
+   "kind": "cli_error",
+   "argv": "--bogus-flag \u0000",
+   "error": "embedded null character"
+  }
+ ],
+ "alive": true,
+ "healthy_before": true,
+ "healthy_after": false,
+ "mid": [
+  [
+   true,
+   200,
+   9.6
+  ],
+  [
+   true,
+   200,
+   5.5
+  ],
+  [
+   true,
+   200,
+   7.9
+  ],
+  [
+   true,
+   200,
+   3.4
+  ],
+  [
+   true,
+   200,
+   11.6
+  ],
+  [
+   false,
+   -1,
+   180.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ]
+ ],
+ "drained": true,
+ "backlog_after": [
+  0,
+  0,
+  "writer:-/0"
+ ],
+ "capacity_note": {
+  "running": [],
+  "queued": [],
+  "queued_n": 0,
+  "external": 0,
+  "lock": null,
+  "limits": null,
+  "response": "{\"error\": \"\uc11c\ubc84\uac00 \ubc14\uc069\ub2c8\ub2e4: \ub300\uae30\uc5f4\uc774 \uac00\ub4dd \ucc3c\uc2b5\ub2c8\ub2e4 (64)\", \"code\": \"queue_full\", \"retry_after_s\": 10.0}"
+ }
+}

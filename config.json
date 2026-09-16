@@ -1,6 +1,6 @@
 {
   "corpus_dirs": [
-    "setup/sample_corpus_modem"
+    "corpus"
   ],
   "data_dir": "data",
   "wiki_dir": "wiki",
@@ -13,7 +13,7 @@
   "top_k_final": 10,
   "graph_hops": 1,
   "rrf_k": 60,
-  "llm_provider": "ollama",
+  "llm_provider": "openai",
   "llm_model": "llama3.1",
   "llm_effort": "low",
   "answer_effort": "medium",
@@ -25,7 +25,53 @@
   "embed_dim": 4096,
   "llm_roles": {
     "answer": {
-      "effort": "high"
+      "effort": "high",
+      "timeout_s": 240,
+      "retries": 2,
+      "budget_s": 600,
+      "max_tokens": 4000
+    },
+    "expand": {
+      "timeout_s": 30,
+      "retries": 1,
+      "budget_s": 70,
+      "max_tokens": 400
+    },
+    "rerank": {
+      "timeout_s": 60,
+      "retries": 1,
+      "budget_s": 130,
+      "max_tokens": 400
+    },
+    "verify": {
+      "timeout_s": 90,
+      "retries": 1,
+      "budget_s": 200,
+      "max_tokens": 1500
+    },
+    "extract": {
+      "timeout_s": 120,
+      "retries": 2,
+      "budget_s": 350,
+      "max_tokens": 4000
+    },
+    "summary": {
+      "timeout_s": 90,
+      "retries": 2,
+      "budget_s": 250,
+      "max_tokens": 800
+    },
+    "review": {
+      "timeout_s": 300,
+      "retries": 2,
+      "budget_s": 700,
+      "max_tokens": 3000
+    },
+    "forensic": {
+      "timeout_s": 120,
+      "retries": 1,
+      "budget_s": 260,
+      "max_tokens": 1800
     }
   },
   "rerank_candidates": 24,
@@ -36,7 +82,7 @@
   "llm_graph_budget": 0,
   "llm_graph_min_chars": 80,
   "query_cache_size": 200,
-  "auto_build_interval": 300,
+  "auto_build_interval": 30,
   "embed_batch": 64,
   "debug_level": 1,
   "keep_requests": 2000,
@@ -44,6 +90,8 @@
   "evolve_low_score_threshold": 0.05,
   "timezone": "Asia/Seoul",
   "week_start": "mon",
+  "console_encoding": "auto",
+  "console_set_codepage": true,
   "log_level": "INFO",
   "log_max_mb": 10,
   "log_backups": 10,
@@ -63,9 +111,17 @@
   "wal_checkpoint_mb": 64,
   "embed_store_dtype": "float32",
   "build_lock_timeout": 0,
+  "db_busy_timeout_s": 60.0,
+  "db_pool_size": 16,
   "llm_timeout": 600,
   "llm_retries": 3,
   "llm_retry_backoff_s": 2.0,
+  "llm_retry_backoff": "exponential",
+  "llm_retry_backoff_max_s": 60.0,
+  "llm_budget_s": 0,
+  "llm_http_retries": 2,
+  "llm_circuit_failures": 3,
+  "llm_circuit_cooldown_s": 60,
   "web_host": "127.0.0.1",
   "web_port": 8765,
   "mcp_transport": "stdio",
@@ -78,7 +134,7 @@
     "llm_graph": false,
     "embed": true,
     "communities": true,
-    "community_summary": false,
+    "community_summary": true,
     "wiki_pages": true,
     "incremental": true,
     "fts": true,
@@ -113,10 +169,12 @@
     "router_llm": false,
     "pins": true,
     "precompute": true,
-    "doc_vector": false,
+    "doc_vector": true,
     "feedback_boost": false,
     "forensic_auto": true,
-    "mcp_sources": false, "external_rag": false, "mcp_federation": false,
+    "mcp_sources": false,
+    "external_rag": false,
+    "mcp_federation": false,
     "embed_adaptive": true,
     "fts_trigram": false,
     "schema_lint": true,
@@ -125,12 +183,13 @@
     "verify_after_build": true,
     "memory_decay": true,
     "evolve_from_forensics": true,
-    "auto_build": false,
+    "auto_build": true,
     "health_check": true,
     "log_stages": true,
     "profile_expansion": false,
     "build_fts": true,
     "doc_expand": true,
-    "llm_failure_report": true
+    "llm_failure_report": true,
+    "analysis_mode": false
   }
 }

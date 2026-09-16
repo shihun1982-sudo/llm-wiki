@@ -29,17 +29,49 @@
     const s = j.summary || {};
     const mdUrl = '/api/analysis?request_id=' + s.request_id + '&format=md&focus=' + focus;
     let html = `<div class="req-head"><b>📊 상세 분석 리포트</b> request #${s.request_id} · ${fmt(s.total_ms, 0)} ms (LLM ${fmt(s.llm_ms, 0)} ms) · 토큰 ${fmtK((s.tokens || {}).total_tokens || 0)} · 판정 <span class="pill">${esc(s.verdict || '-')}</span> · groundedness ${s.groundedness == null ? '-' : fmt(s.groundedness, 2)} · 상세도 ${s.detail_level}${s.detail_level >= 2 ? '' : ' <span class="muted">(사이드바 토글 analysis_mode 를 켜고 다시 질의하면 debug·프롬프트 샘플 포함)</span>'}</div>` +
-      `<div class="row"><label>초점 <select id="qa-focus"><option value="all"${focus === 'all' ? ' selected' : ''}>전체</option><option value="quality"${focus === 'quality' ? ' selected' : ''}>품질</option><option value="speed"${focus === 'speed' ? ' selected' : ''}>속도</option><option value="tokens"${focus === 'tokens' ? ' selected' : ''}>토큰</option></select></label> <a class="button mini secondary" href="${mdUrl}" target="_blank">md 열기</a> <a class="button mini secondary" href="${mdUrl}&download=1">다운로드</a> <button class="mini secondary" id="qa-copy">클립보드 복사 (LLM 에게 붙여넣기)</button> <span class="muted small">파일: ${esc((j.paths || {}).md || '')}</span></div>`;
+      `<div class="row"><label>초점 <select id="qa-focus"><option value="all"${focus === 'all' ? ' selected' : ''}>전체</option><option value="quality"${focus === 'quality' ? ' selected' : ''}>품질</option><option value="speed"${focus === 'speed' ? ' selected' : ''}>속도</option><option value="tokens"${focus === 'tokens' ? ' selected' : ''}>토큰</option></select></label> <a class="button mini secondary" href="${mdUrl}" target="_blank">md 열기</a> <a class="button mini secondary" href="${mdUrl}&download=1">다운로드</a> <button class="mini secondary" id="qa-copy">클립보드 복사 (LLM 에게 붙여넣기)</button> <button class="mini" id="qa-insight-btn" title="이 리포트를 LLM 에게 읽히고 무엇을 바꾸면 좋아지는지 받아 옵니다">🧠 LLM 소견 받기</button> <button class="mini secondary" id="qa-insight-propose" title="LLM 소견을 Evolve 제안(HITL)으로 등록합니다">소견 → 제안 등록</button> <span class="muted small">파일: ${esc((j.paths || {}).md || '')}</span></div>` +
+      `<div class="row"><span class="muted small">다른 LLM 에게 통째로 줄 자료 — 최적화 가이드(손잡이 지도) + 지금 설정 + 이 질의의 실측 + 지시문을 한 파일로:</span> ` +
+      `<a class="button mini" href="/api/optimize/bundle?request_id=${s.request_id}&focus=${focus}" title="가이드+설정+실측을 한 파일(.md)로 내려받습니다">📦 최적화 자료 묶음 다운로드</a> ` +
+      `<button class="mini secondary" id="qa-bundle-copy" title="같은 내용을 클립보드로 복사합니다">묶음 복사</button> ` +
+      `<a class="button mini secondary" href="/api/optimize/guide" target="_blank" title="손잡이 지도만 보기 (docs/OPTIMIZATION_GUIDE.md 와 같은 내용)">손잡이 지도만 보기</a></div>`;
     for (const lens of ['quality', 'speed', 'tokens']) {
       if (focus !== 'all' && focus !== lens) continue;
       const rows = (s.top || {})[lens] || [];
       html += `<div><b>${{ quality: '품질', speed: '속도', tokens: '토큰' }[lens]}</b> ` + rows.map((f) => `${SEV[f.severity] || '•'} ${esc(f.title)}${(f.knobs || []).length ? ' <span class="muted">→ ' + f.knobs.map(esc).join(', ') + '</span>' : ''}`).join(' &nbsp;·&nbsp; ') + '</div>';
     }
+    html += '<div id="qa-insight"></div>';
     html += `<details><summary>리포트 전문 (마크다운)</summary><pre class="pre" id="qa-md">${esc(j.markdown || '')}</pre></details>`;
     el.innerHTML = html;
     $('#qa-focus').onchange = () => $('#btn-q-analysis').click();
     $('#qa-copy').onclick = async () => { try { await navigator.clipboard.writeText(j.markdown || ''); toast('복사됨'); } catch (e) { toast('복사 실패: ' + e); } };
+    $('#qa-bundle-copy').onclick = async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.textContent = '묶는 중…';
+      try {
+        const b = await api('/api/optimize/bundle?request_id=' + s.request_id + '&focus=' + focus + '&format=json');
+        if (!b || b.error) { toast('실패: ' + ((b || {}).error || '')); return; }
+        await navigator.clipboard.writeText(b.markdown || '');
+        toast('복사됨 — ' + fmtK(b.chars || 0) + '자 (LLM 대화창에 붙여넣기)');
+      } catch (err) { toast('복사 실패: ' + err); } finally { btn.disabled = false; btn.textContent = '묶음 복사'; }
+    };
+    $('#qa-insight-btn').onclick = () => runInsight(s.request_id, focus, false);
+    $('#qa-insight-propose').onclick = () => runInsight(s.request_id, focus, true);
   };
+  // 리포트를 LLM 에게 읽히고 '무엇을 바꾸면 좋아지는지' 를 받는다 (규칙 소견은 수치까지만 알려 준다)
+  async function runInsight(rid, focus, propose) {
+    const box = $('#qa-insight'); if (!box) return;
+    box.innerHTML = '<div class="muted small">LLM 이 리포트를 읽는 중…</div>';
+    const j = await api('/api/analysis/insight', { request_id: rid, focus: focus, propose: !!propose });
+    const rawBlock = j.raw ? `<details><summary class="muted small">LLM 원문 보기</summary><pre class="pre small">${esc(j.raw)}</pre></details>` : '';
+    if (!j || j.error) { box.innerHTML = `<div class="banner warn">${esc((j || {}).error || '실패')}</div>` + rawBlock; return; }
+    const ins = j.insights || [];
+    if (!ins.length) { box.innerHTML = `<div class="banner ok">LLM 소견: 바꿀 만한 것을 찾지 못했습니다. ${esc(j.verdict || '')}</div>` + rawBlock; return; }
+    box.innerHTML = `<div class="req-head"><b>🧠 LLM 소견</b> <span class="muted">${esc(j.model || '')}</span> ${esc(j.verdict || '')}</div>` +
+      '<table><tr><th></th><th>렌즈</th><th>문제</th><th>바꿀 설정</th><th>기대 효과</th><th>부작용</th></tr>' +
+      ins.map((x) => `<tr><td>${SEV[x.severity] || '•'}</td><td class="small">${esc(x.lens || '')}</td><td>${esc(x.problem || '')}</td>` +
+        `<td class="small"><code>${esc(x.change || ((x.key || '') + ' ' + (x.from == null ? '' : x.from) + ' → ' + (x.to == null ? '' : x.to)))}</code></td>` +
+        `<td class="small">${esc(x.effect || '')}</td><td class="small muted">${esc(x.risk || '')}</td></tr>`).join('') + '</table>' +
+      ((j.proposals || []).length ? `<div class="banner ok">제안 ${j.proposals.length}건 등록됨 — Evolve › 제안(HITL) 에서 검토·적용</div>` : '');
+  }
 
   function verdictPill(v) { return `<span class="pill ${v === 'sufficient' ? 'ok' : v === 'weak' ? 'warn' : 'bad'}">${esc(v || '-')}</span>`; }
   function boostChips(b) { return Object.keys(b || {}).map((k) => `<span class="boost" title="${k}">${k} ×${fmt(b[k], 2)}</span>`).join(''); }
@@ -56,8 +88,9 @@
       j = await api('/api/query', { q, overrides: overrides(), log: $('#q-log').checked, preset: presetNames().join(','), mode: $('#q-mode').value, progress_token: token });
     } finally { stopWatch(); }
     try {
-      if (!j.result) { LW.renderLive(liveEl, { status: 'error', detail: j.error || '응답 없음', elapsed_s: 0 }); return; }
-      LW.renderLive(liveEl, null);
+      if (!j.result) { LW.renderLive(liveEl, { status: j.cancelled ? 'cancelled' : 'error', detail: j.error || '응답 없음', elapsed_s: 0, log: liveEl._log || [] }, '', token); return; }
+      // 완료 상태와 단계 로그를 그대로 남긴다 (✕ 로 닫기 · 📋 로 복사)
+      LW.renderLive(liveEl, { status: 'done', elapsed_s: (j.result.ms || 0) / 1000, detail: j.result.answer_mode, log: liveEl._log || [] }, '', token);
       const r = j.result; STATE.lastQueryId = r.query_id || null; STATE.lastRequestId = r.request_id || null; STATE.lastResult = r;
       $('#query-out').classList.remove('hidden'); $('#q-forensic').classList.add('hidden'); $('#q-analysis').classList.add('hidden');
       if (r.analysis && r.analysis.md) { $('#q-analysis').classList.remove('hidden'); $('#q-analysis').innerHTML = `<div class="banner"><b>📊 analysis_mode</b> — 리포트 저장됨: <code>${esc(r.analysis.md)}</code> · ` + ['quality', 'speed', 'tokens'].map((l) => (((r.analysis.top || {})[l] || [])[0] ? `${{ quality: '품질', speed: '속도', tokens: '토큰' }[l]}: ${esc(((r.analysis.top || {})[l] || [])[0].title)}` : '')).filter(Boolean).join(' · ') + ' · <a href="#" id="qa-open">전문 보기</a></div>'; const o = $('#qa-open'); if (o) o.onclick = (e) => { e.preventDefault(); $('#btn-q-analysis').click(); }; }
@@ -77,6 +110,14 @@
       // LLM 실행 보고 (재시도 후 실패 → 대체 경로)
       const lr = $('#q-llm-report');
       if (r.llm_report && (r.llm_report.summary || []).length) { lr.classList.remove('hidden'); lr.innerHTML = '<b>⚠ LLM 실행 보고</b> — ' + r.llm_report.summary.map(esc).join('<br>') + '<div class="muted small">설정: agents.json timeout_s/retries · config.json llm_timeout/llm_retries · Settings › 모델 › 실제 호출 테스트</div>'; }
+      else if (r.repeat_loop) {
+        // 모델이 같은 구절을 되풀이하는 고장 — 잘라내고 이유를 알린다 (이 답변은 캐시에 저장되지 않는다)
+        lr.classList.remove('hidden');
+        lr.innerHTML = '<b>⚠ 답변이 잘렸습니다 — 모델 반복 루프</b> — 같은 구절을 ' + esc(r.repeat_loop.times) + '번 되풀이해 그 지점부터 잘라냈습니다.' +
+          '<div class="muted small">되풀이된 구절: <code>' + esc(String(r.repeat_loop.phrase || '').slice(0, 80)) + '…</code> · ' +
+          '작은 모델에 컨텍스트가 길 때 생깁니다. 다시 질의하거나 더 큰 answer 모델을 쓰거나 token/speed 프리셋으로 컨텍스트를 줄여 보세요. ' +
+          '억제 강도: config.json llm_frequency_penalty · llm_repeat_penalty</div>';
+      }
       else lr.classList.add('hidden');
       $('#answer').innerHTML = esc(r.answer).replace(/\[C(\d+)\]/g, (m, n) => `<span class="cite" data-n="${n}">[C${n}]</span>`);
       $$('#answer .cite').forEach((c) => c.onclick = () => { const h = $(`#hit-${c.dataset.n}`); if (h) { h.classList.add('open'); h.scrollIntoView({ behavior: 'smooth', block: 'center' }); } });

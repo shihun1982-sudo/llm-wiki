@@ -62,9 +62,9 @@ def assess(query: str, final: List[Any], ctx: Dict[str, Any], chunks: Dict[str, 
                         "ids": ids, "id_hit": id_hit, "keywords": kws[:10]}}
 
 
-def assess_llm(llm: BaseLLM, query: str, ctx: Dict[str, Any], effort: str = "low") -> Dict[str, Any]:
+def assess_llm(llm: BaseLLM, query: str, ctx: Dict[str, Any], effort: str = "low", max_tokens: int = 500) -> Dict[str, Any]:
     user = "## 질문\n%s\n\n## 근거\n%s" % (query, (ctx.get("text") or "")[:12000])
-    r = llm.complete(_prompts.get("evidence_check"), user, max_tokens=500, effort=effort, json_mode=True)
+    r = llm.complete(_prompts.get("evidence_check"), user, max_tokens=max_tokens, effort=effort, json_mode=True)
     data = parse_json(r["text"]) or {}
     v = str(data.get("verdict") or "").lower()
     if v not in ("sufficient", "weak", "insufficient"):

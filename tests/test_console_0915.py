@@ -1,0 +1,110 @@
+# -*- coding: utf-8 -*-
+"""터미널 출력 인코딩 (llmwiki/console.py) — 다른 환경에서 한글·기호가 깨지거나 명령이 죽지 않는지.
+
+재현했던 증상: Windows 의 로캘 코드페이지가 cp949/cp1252 인 상태에서 출력을 파일·파이프로 리디렉션하면
+`UnicodeEncodeError: 'cp949' codec can't encode character '\\u2714'` 로 CLI 가 중간에 죽고, 한글도 깨져 나왔다.
+여기서는 좁은 인코딩(PYTHONIOENCODING=ascii/cp949)을 강제한 자식 프로세스로 실제 CLI 를 돌려 회귀를 막는다.
+"""
+import os
+import subprocess
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from llmwiki import console as C  # noqa: E402
+
+SYMBOLS = "한글 ⏳ ✔ ✘ · → ⚠ ■ ▶"
+
+
+def _run(argv, env_extra=None, timeout=180):
+    env = dict(os.environ)
+    env.pop("PYTHONIOENCODING", None)
+    env.update(env_extra or {})
+    p = subprocess.run([sys.executable, "-m", "llmwiki"] + argv, cwd=ROOT, env=env, capture_output=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr
+
+
+class ConsoleEncodingTest(unittest.TestCase):
+    def test_setup_reports_state(self):
+        d = C.describe()
+        for k in ("mode", "console", "stdout_encoding", "locale_encoding", "safe"):
+            self.assertIn(k, d)
+
+    def test_safe_downgrades_unrepresentable_symbols(self):
+        class _S:
+            encoding = "ascii"
+            errors = "strict"
+        out = C.safe(SYMBOLS, _S())
+        self.assertNotIn("⏳", out)
+        self.assertIn("OK", out)          # ✔ → OK
+        out.encode("ascii")               # ascii 로 인코딩 가능해야 한다
+
+    def test_cli_survives_narrow_encoding(self):
+        """PYTHONIOENCODING=ascii 로 강제해도 CLI 가 죽지 않고 UTF-8 한글을 출력한다 (예전에는 UnicodeEncodeError 로 죽었다)."""
+        for enc in ("ascii", "cp949" if os.name == "nt" else "latin-1"):
+            code, out, err = _run(["corpus", "types"], {"PYTHONIOENCODING": enc})
+            self.assertEqual(code, 0, "PYTHONIOENCODING=%s 에서 종료 코드 %s: %s" % (enc, code, err[-400:]))
+            self.assertNotIn(b"UnicodeEncodeError", out + err)
+            text = out.decode("utf-8")     # UTF-8 로 디코딩되어야 한다 (깨진 바이트가 아님)
+            self.assertTrue(any("가" <= ch <= "힣" for ch in text), "한글이 출력되지 않았다: %r" % text[:200])
+
+    def test_cli_progress_symbols_on_stderr(self):
+        """진행 표시(⏳)는 stderr 로 나간다 — 좁은 인코딩에서도 죽지 않아야 한다."""
+        code, out, err = _run(["query", "ISSUE-2001 원인", "--no-log"], {"PYTHONIOENCODING": "ascii", "LLMWIKI_LLM_PROVIDER": "mock"})
+        self.assertEqual(code, 0, err[-400:])
+        self.assertNotIn(b"UnicodeEncodeError", out + err)
+        out.decode("utf-8")
+        err.decode("utf-8")
+
+    def test_console_encoding_off_and_native(self):
+        """설정으로 동작을 바꿀 수 있다 (native = 코드페이지를 건드리지 않고 표현 불가 문자만 ?)."""
+        code, out, err = _run(["corpus", "types"], {"LLMWIKI_CONSOLE_ENCODING": "native", "PYTHONIOENCODING": "ascii"})
+        self.assertEqual(code, 0, err[-300:])
+        self.assertNotIn(b"UnicodeEncodeError", out + err)
+        code2, out2, err2 = _run(["config", "paths"], {"LLMWIKI_CONSOLE_ENCODING": "off"})
+        self.assertEqual(code2, 0, err2[-300:])
+
+    def test_health_reports_console(self):
+        code, out, err = _run(["health", "--quick"], {"PYTHONIOENCODING": "ascii"})
+        self.assertEqual(code, 0, err[-300:])
+        self.assertIn("console_encoding", out.decode("utf-8"))
+
+    def test_project_text_files_are_utf8(self):
+        """포팅 환경에서 깨지지 않도록 저장소의 텍스트 파일은 UTF-8 이어야 한다 (.ps1 은 Windows PowerShell 5.1 을 위해 BOM 필요)."""
+        bad = []
+        for rel in ("run.bat", os.path.join("setup", "install.bat"), os.path.join("setup", "install.sh"),
+                    "config.json", "README.md", os.path.join("setup", "config.example.json"),
+                    os.path.join("setup", "server.example.json"), os.path.join("setup", "schedule.example.json")):
+            p = os.path.join(ROOT, rel)
+            if not os.path.exists(p):
+                continue
+            with open(p, "rb") as f:
+                data = f.read()
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError as e:
+                bad.append("%s: %s" % (rel, e))
+        self.assertEqual(bad, [])
+        ps1 = os.path.join(ROOT, "setup", "schedule_build.ps1")
+        if os.path.exists(ps1):
+            with open(ps1, "rb") as f:
+                head = f.read(3)
+            with open(ps1, "rb") as f:
+                body = f.read()
+            if any(b > 127 for b in body):
+                self.assertEqual(head, b"\xef\xbb\xbf", "Windows PowerShell 5.1 은 BOM 없는 UTF-8 .ps1 의 한글을 깨뜨린다")
+
+    def test_batch_files_set_utf8_codepage(self):
+        """한글이 들어간 .bat 은 chcp 65001 을 해야 cmd 가 UTF-8 로 읽고 출력한다."""
+        for rel in ("run.bat", os.path.join("setup", "install.bat")):
+            p = os.path.join(ROOT, rel)
+            with open(p, "r", encoding="utf-8") as f:
+                src = f.read()
+            if any(ord(ch) > 127 for ch in src):
+                self.assertIn("chcp 65001", src, "%s 에 한글이 있으면 chcp 65001 이 필요하다" % rel)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,6 +18,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import atomicio
 from .config import path_for
 from .textutil import words, normalize_token, set_compounds
 
@@ -51,11 +52,17 @@ def rules_path() -> str:
     return path_for("query_rules")
 
 
+def _guard_dict(data: Any, what: str) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("%s 는 사전(JSON object) 이어야 합니다 (받은 값: %s)" % (what, type(data).__name__))
+    return data
+
+
 def save_rules(data: Dict[str, Any]) -> str:
-    p = rules_path()
-    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """규칙 사전 저장. 사전이 아니면 거절한다 — 잘못 저장하면 이후 모든 질의가 깨지기 때문(2026-09-15 멍키 테스트로 발견)."""
+    _guard_dict(data, "query_rules")
+    # 쓰는 도중 다른 요청이 읽어도 깨진 파일을 보지 않도록 원자적 교체
+    p = atomicio.write_json(rules_path(), data)
     _CACHE["mtime"] = None
     return p
 
@@ -70,12 +77,18 @@ def load_rules() -> Dict[str, Any]:
         mt = 0
     if _CACHE["mtime"] == mt and _CACHE["rules"] is not None:
         return _CACHE["rules"]
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
+    data = atomicio.read_json(p)
+    if data is None:
         data = json.loads(json.dumps(DEFAULT_RULES))
-    rules = {t: (data.get(t) or {}) for t in TYPES}
+    if not isinstance(data, dict):
+        # 파일이 손상되었더라도(잘못 저장·수동 편집) 질의가 통째로 죽지 않도록 기본값으로 되돌린다
+        try:
+            from . import logging_setup as _ls
+            _ls.log("error", "query_rules 파일이 사전 형식이 아닙니다 → 기본 규칙 사용: %s" % p, "query")
+        except Exception:
+            pass
+        data = json.loads(json.dumps(DEFAULT_RULES))
+    rules = {t: (data.get(t) if isinstance(data.get(t), dict) else {}) for t in TYPES}
     _CACHE.update(mtime=mt, rules=rules, index=_build_index(rules))
     set_compounds(rules.get("compound") or {})
     return rules
@@ -241,11 +254,8 @@ def remove_rule(typ: str, term: str, value: Optional[str] = None) -> bool:
 
 
 def _read_raw() -> Dict[str, Any]:
-    p = rules_path()
-    if not os.path.exists(p):
-        return json.loads(json.dumps(DEFAULT_RULES))
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    raw = atomicio.read_json(rules_path())
+    return raw if isinstance(raw, dict) else json.loads(json.dumps(DEFAULT_RULES))
 
 
 def stats() -> Dict[str, int]:

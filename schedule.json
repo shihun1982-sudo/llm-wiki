@@ -1,0 +1,214 @@
+{
+  "_comment": "서버 스케줄 작업 (docs/SCHEDULER.md). when: every | at(+days) | cron 중 하나. action.type: build | fetch_url | python | cli | query | llm | headless | mcp_ingest | maintenance | http | evolve | memory | precompute | eval | trial | snapshot | wiki | forensic | embed_report. 변경은 서버가 자동으로 다시 읽는다(mtime).",
+  "tick_s": 5,
+  "tasks": [
+    {
+      "name": "incremental-build",
+      "enabled": false,
+      "every": "30m",
+      "action": {
+        "type": "build",
+        "full": false
+      },
+      "timeout_s": 3600,
+      "overlap": "skip",
+      "_note": "코퍼스 변경이 있으면 증분 빌드. 서버 내장 워처(toggles.auto_build)와 역할이 겹치므로 둘 중 하나만 쓰세요."
+    },
+    {
+      "name": "nightly-full-build",
+      "enabled": false,
+      "cron": "0 3 * * *",
+      "action": {
+        "type": "build",
+        "full": true
+      },
+      "timeout_s": 21600,
+      "_note": "매일 03:00 전체 리빌드. 배타 실행이라 진행 중에는 질의가 대기합니다 — 사용자가 적은 시간에."
+    },
+    {
+      "name": "fetch-notice",
+      "enabled": false,
+      "every": "6h",
+      "action": {
+        "type": "fetch_url",
+        "urls": [
+          "https://intranet.example.com/notice.html"
+        ],
+        "dest": "corpus/fetched",
+        "headers": {},
+        "timeout_s": 60,
+        "build_after": true
+      },
+      "_note": "URL 을 코퍼스 폴더에 저장하고 증분 빌드. dest 가 config.json corpus_dirs 안에 있어야 색인됩니다. 내용이 같으면 건너뜁니다."
+    },
+    {
+      "name": "mcp-ingest",
+      "enabled": false,
+      "cron": "0 * * * *",
+      "action": {
+        "type": "mcp_ingest",
+        "sources": null,
+        "build_after": true
+      },
+      "_note": "mcp_sources.json 의 ingest 소스에서 문서를 받아 색인 (toggles.mcp_sources 필요)."
+    },
+    {
+      "name": "weekly-digest",
+      "enabled": false,
+      "at": "08:30",
+      "days": [
+        "mon"
+      ],
+      "action": {
+        "type": "query",
+        "q": "지난주 리뷰한 CL 과 그 이슈를 요약해 줘",
+        "preset": "quality",
+        "out": "logs/schedule/weekly_digest.md"
+      },
+      "_note": "질의를 실행해 답변을 파일로 저장. 사내 메신저로 보내려면 뒤에 http 작업을 하나 더 두거나 python 스크립트를 쓰세요."
+    },
+    {
+      "name": "weekly-review-agent",
+      "enabled": false,
+      "cron": "0 22 * * fri",
+      "action": {
+        "type": "headless",
+        "agent": "opencode",
+        "model": "",
+        "prompt_file": "prompts/answer_guide.md",
+        "out": "logs/schedule/review.md"
+      },
+      "timeout_s": 1800,
+      "_note": "agents.json 의 headless 에이전트(opencode/claude/codex)를 실행. skill 호출도 프롬프트로 전달합니다."
+    },
+    {
+      "name": "custom-script",
+      "enabled": false,
+      "every": "1d",
+      "action": {
+        "type": "python",
+        "script": "tools/my_job.py",
+        "args": [],
+        "timeout_s": 600,
+        "env": {}
+      },
+      "_note": "별도 프로세스로 파이썬 스크립트 실행 (현재 인터프리터). 종료 코드가 0 이 아니면 실패로 기록."
+    },
+    {
+      "name": "db-maintenance",
+      "enabled": false,
+      "cron": "30 4 * * sun",
+      "action": {
+        "type": "maintenance",
+        "action": "wal_checkpoint"
+      },
+      "_note": "vacuum | fts_optimize | wal_checkpoint | clear_cache | warm_cache | refresh_doc_refs"
+    },
+    {
+      "name": "evolve-review",
+      "enabled": false,
+      "cron": "0 2 * * *",
+      "action": {
+        "type": "evolve",
+        "op": "review"
+      },
+      "_note": "LLM 이 최근 질의·포렌식을 훑어 개선 제안을 만든다 (적용은 사람이 HITL 로). 조회 등급이라 질의와 나란히 실행된다."
+    },
+    {
+      "name": "evolve-auto-apply",
+      "enabled": false,
+      "cron": "30 2 * * *",
+      "action": {
+        "type": "evolve",
+        "op": "auto_apply",
+        "min_confidence": 0.95,
+        "max_apply": 3,
+        "kinds": [
+          "pin",
+          "query_rule",
+          "synonym"
+        ],
+        "evaluate": false
+      },
+      "_note": "신뢰도 0.95 이상 제안을 하루 3건까지 자동 적용 (사람 확인 없이 색인/설정을 바꾸므로 kinds 를 좁게 두세요). 배타 실행."
+    },
+    {
+      "name": "memory-decay",
+      "enabled": false,
+      "cron": "0 5 * * *",
+      "action": {
+        "type": "memory",
+        "op": "decay"
+      },
+      "_note": "에피소드·제안 강도를 반감기로 감쇠시켜 오래된 신호가 검색을 계속 끌지 않게 한다."
+    },
+    {
+      "name": "forensic-consolidate",
+      "enabled": false,
+      "cron": "0 6 * * mon",
+      "action": {
+        "type": "forensic",
+        "op": "consolidate"
+      },
+      "_note": "누적된 포렌식을 묶어 corpus_gap/query_rule/tuning 제안으로 만든다."
+    },
+    {
+      "name": "precompute-hot-queries",
+      "enabled": false,
+      "cron": "0 7 * * *",
+      "action": {
+        "type": "precompute",
+        "op": "run",
+        "from_log": 30
+      },
+      "_note": "최근 자주 묻는 질의 30건의 답변을 미리 계산해 두어 낮 시간 응답을 빠르게."
+    },
+    {
+      "name": "nightly-eval",
+      "enabled": false,
+      "cron": "0 1 * * *",
+      "action": {
+        "type": "eval",
+        "k": 5,
+        "out": "logs/schedule/eval.md"
+      },
+      "_note": "평가셋 회귀 — 품질이 떨어지면 이력에서 바로 보인다."
+    },
+    {
+      "name": "nightly-snapshot",
+      "enabled": false,
+      "cron": "0 0 * * *",
+      "action": {
+        "type": "snapshot",
+        "op": "create",
+        "tag": "auto:nightly",
+        "keep": 5
+      },
+      "_note": "색인 스냅샷 (data/snapshots). 실수로 지웠을 때 snapshot restore 로 되돌린다."
+    },
+    {
+      "name": "wiki-rebuild",
+      "enabled": false,
+      "cron": "0 3 * * sat",
+      "action": {
+        "type": "wiki",
+        "min_degree": 1
+      },
+      "_note": "엔티티 위키 페이지 재생성."
+    },
+    {
+      "name": "any-cli-command",
+      "enabled": false,
+      "every": "1d",
+      "action": {
+        "type": "cli",
+        "argv": [
+          "build",
+          "verify",
+          "--fix"
+        ]
+      },
+      "_note": "type=cli 로 CLI 의 모든 기능을 쓸 수 있다 (Web 콘솔과 동일). 예: ['evolve','apply','12'] · ['build','--full','--yes'] · ['memory','consolidate'] · ['trial','run','--name','nightly']"
+    }
+  ]
+}
