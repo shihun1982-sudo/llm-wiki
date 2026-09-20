@@ -1,0 +1,582 @@
+[
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "탭 열림 · 목록 렌더",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "새로고침 (btn-sec-refresh)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "security.json 다시 읽기",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [
+    "security.json 다시 읽음 (mode off)"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "빈 id 로 추가 → 안내",
+  "why": "예전에는 아무 반응이 없어 '버튼이 죽었다' 로 보였다",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [
+    "사용자 id 를 입력하세요"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "짧은 비밀번호 → 보내기 전에 안내",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [
+    "비밀번호는 8자 이상이어야 합니다 (비우면 SSO 전용 계정)"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "사용자 추가 (id·비밀번호 입력)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [
+    "추가됨: verify.user"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "추가한 사용자가 서버에 남음",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "추가 폼이 비워짐 (재입력 방지)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 5,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "역할 바꾸기 (표의 드롭다운)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [
+    "역할 변경: verify.user → class1"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "사용자 비밀번호 바꾸기 (관리자)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [
+    "비밀번호 변경됨"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "빈 이름으로 발급 → 안내",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [
+    "키 이름을 입력하세요 (예: claude-desktop-kim)"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "API 키 발급 (이름·역할 입력)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [
+    "API 키 발급: verify-key"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "발급 즉시 표에도 나타남 (새로고침 없이)",
+  "why": "토큰 표시는 그대로 남아야 한다 (한 번만 볼 수 있으므로)",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "발급한 키가 서버에 남음",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "발급한 키가 표에 보임 (새로고침)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 9,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "API 키 삭제",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "권한 저장 (btn-perms-save)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 13,
+   "toasts": [
+    "권한 저장됨"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "권한 변경이 파일에 반영됨",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "기본값으로 (btn-perms-reset)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 12,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "내 비밀번호 변경 → 안내 (인증 꺼짐)",
+  "why": "인증이 꺼진 상태에서는 바꿀 계정이 없다 — 안내가 뜨면 정상",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [
+    "권한 없음: 로컬 계정으로 로그인한 경우에만 비밀번호를 바꿀 수 있습니다"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "사용자 삭제",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [
+    "삭제됨"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "탭 열림 · 목록 렌더",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "새로고침 (btn-sec-refresh)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 9,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "security.json 다시 읽기",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "security.json 다시 읽음 (mode on)"
+   ],
+   "stepups": 1
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "빈 id 로 추가 → 안내",
+  "why": "예전에는 아무 반응이 없어 '버튼이 죽었다' 로 보였다",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [
+    "사용자 id 를 입력하세요"
+   ],
+   "stepups": 1
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "짧은 비밀번호 → 보내기 전에 안내",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 5,
+   "toasts": [
+    "비밀번호는 8자 이상이어야 합니다 (비우면 SSO 전용 계정)"
+   ],
+   "stepups": 1
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "사용자 추가 (id·비밀번호 입력)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "추가됨: verify.user"
+   ],
+   "stepups": 2
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "추가한 사용자가 서버에 남음",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "추가 폼이 비워짐 (재입력 방지)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 2
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "역할 바꾸기 (표의 드롭다운)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "역할 변경: verify.user → class1"
+   ],
+   "stepups": 3
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "사용자 비밀번호 바꾸기 (관리자)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 5,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "비밀번호 변경됨"
+   ],
+   "stepups": 4
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "빈 이름으로 발급 → 안내",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [
+    "키 이름을 입력하세요 (예: claude-desktop-kim)"
+   ],
+   "stepups": 4
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "API 키 발급 (이름·역할 입력)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "API 키 발급: verify-key"
+   ],
+   "stepups": 5
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "발급 즉시 표에도 나타남 (새로고침 없이)",
+  "why": "토큰 표시는 그대로 남아야 한다 (한 번만 볼 수 있으므로)",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 5
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "발급한 키가 서버에 남음",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "발급한 키가 표에 보임 (새로고침)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 9,
+   "toasts": [],
+   "stepups": 5
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "API 키 삭제",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 6
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "권한 저장 (btn-perms-save)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 18,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "[단계확인 모달 통과]",
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 9
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "권한 변경이 파일에 반영됨",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "기본값으로 (btn-perms-reset)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 10
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "내 비밀번호 변경 (로컬 로그인)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [
+    "비밀번호 변경됨"
+   ],
+   "stepups": 10
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "사용자 삭제",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "삭제됨"
+   ],
+   "stepups": 11
+  }
+ },
+ {
+  "mode": "nonadmin",
+  "verdict": "OK  ",
+  "check": "사용자 추가 폼이 감춰짐",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "nonadmin",
+  "verdict": "OK  ",
+  "check": "왜 못 쓰는지 화면에 표시",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "nonadmin",
+  "verdict": "OK  ",
+  "check": "API 키 영역은 비어 있음 (발급 버튼 없음)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "nonadmin",
+  "verdict": "OK  ",
+  "check": "내 비밀번호 변경은 그대로 쓸 수 있다",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [
+    "비밀번호 변경됨"
+   ],
+   "stepups": 0
+  }
+ }
+]

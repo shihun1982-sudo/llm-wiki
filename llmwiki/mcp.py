@@ -52,6 +52,10 @@ ANNOTATIONS: Dict[str, Dict[str, Any]] = {
     "wiki_analysis": {"title": "상세 분석 리포트", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_sources": {"title": "붙어 있는 외부 소스", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
     "wiki_external_search": {"title": "외부 RAG 직접 검색", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
+    "wiki_requests": {"title": "지난 요청과 그때의 답", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    # 재실행은 색인·설정을 바꾸지 않는다(읽기). 다만 **LLM 을 다시 부르므로** 같은 인자로 다시 불러도
+    # 답 글자가 달라질 수 있어 idempotent 는 아니다 — 붙는 LLM 이 "한 번 더 불러도 되는가" 를 그렇게 판단한다.
+    "wiki_rerun": {"title": "지난 질의를 특정 단계부터 다시", "readOnlyHint": True, "idempotentHint": False, "openWorldHint": False},
 }
 
 TOOLS: List[Dict[str, Any]] = [
@@ -98,6 +102,22 @@ TOOLS: List[Dict[str, Any]] = [
                                                     "wiki_query 는 external_rag 토글이 켜져 있으면 이 결과를 fts/vector/graph 와 함께 융합한다.",
      "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "source": {"type": "string", "description": "소스 이름 (생략=retrieve 매핑이 있는 모든 소스)"},
                                                       "k": {"type": "integer", "default": 5}}, "required": ["query"]}},
+    {"name": "wiki_requests", "description": "이 서버에서 지난 요청(질의·검색·빌드) 목록과 그때의 답을 찾는다. "
+                                             "\"전에 이거 물어본 적 있나?\" 를 확인하거나, 같은 질문을 다시 돌리지 않고 그때 답을 그대로 가져올 때 쓴다. "
+                                             "request_id 를 주면 그 한 건의 저장된 답변·근거 요약을, 주지 않으면 최근 목록을 돌려준다.",
+     "inputSchema": {"type": "object", "properties": {
+         "request_id": {"type": "integer", "description": "한 건 상세 (생략하면 목록)"},
+         "q": {"type": "string", "description": "요약 문자열로 걸러 찾기"},
+         "kind": {"type": "string", "enum": ["query", "search", "build", "eval"], "description": "종류로 걸러 찾기"},
+         "limit": {"type": "integer", "default": 20}}}},
+    {"name": "wiki_rerun", "description": "지난 질의를 **특정 단계부터** 다시 실행한다 (docs/RERUN.md). 저장해 둔 중간 결과로 앞 단계는 재생하고 "
+                                          "고른 지점부터만 지금 설정으로 다시 계산하므로, 답변 프롬프트나 검증 임계값만 바꿔 볼 때 훨씬 빠르고 "
+                                          "'무엇 때문에 답이 바뀌었는지' 가 분리된다. 색인을 바꾸지 않는 읽기 작업이다. "
+                                          "from 은 wiki_rerun 을 인자 없이 부르면 나오는 목록에서 고른다.",
+     "inputSchema": {"type": "object", "properties": {
+         "request_id": {"type": "integer", "description": "다시 돌릴 원 요청 id (wiki_query/wiki_requests 결과에 있다)"},
+         "from": {"type": "string", "description": "재시작점. 생략하면 answer_llm. 목록은 request_id 없이 호출"},
+         "overrides": {"type": "object", "description": "이번 실행에만 적용할 평면 설정 (예 {\"claim_check\": false, \"top_k_final\": 12})"}}}},
 ]
 
 # ---------------------------------------------------------------- 확장: 플러그인 도구 레지스트리 · 페더레이션
@@ -490,6 +510,57 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         return _text(json.dumps({"stats": pipe.store.stats(), "providers": {k: v for k, v in pipe.provider_status().items() if k not in ("catalog", "agents")},
                                  "doc_types": pipe.store.doc_type_counts(), "provenance": pipe.store.provenance_counts()},
                                 ensure_ascii=False, indent=1, default=str))
+    if name == "wiki_requests":
+        rid = int(args.get("request_id") or 0)
+        if rid:
+            r = pipe.store.get_request(rid, archive_dir=pipe.s.requests_archive_dir())
+            if not r:
+                return _err("request %s 를 찾을 수 없습니다 (보존 기간이 지났을 수 있습니다)" % rid)
+            res = r.get("result") or {}
+            body = {"id": r.get("id"), "ts": r.get("ts"), "kind": r.get("kind"), "ms": r.get("ms"),
+                    "query": res.get("query") or r.get("summary"), "answer": res.get("answer"),
+                    "verdict": (res.get("evidence") or {}).get("verdict"), "groundedness": res.get("groundedness"),
+                    "cited": res.get("cited"), "hits": res.get("hits_brief")}
+            out = _text(json.dumps(body, ensure_ascii=False, indent=1, default=str))
+            out["structuredContent"] = {k: body[k] for k in ("id", "kind", "ms", "verdict", "groundedness")}
+            return out
+        rows = pipe.store.requests(kind=str(args.get("kind") or "") or None,
+                                   limit=max(1, min(int(args.get("limit") or 20), 100)),
+                                   q=str(args.get("q") or "") or None)
+        brief = [{"id": r["id"], "ts": r["ts"], "kind": r["kind"], "ms": r["ms"], "summary": r["summary"]} for r in rows]
+        out = _text(json.dumps(brief, ensure_ascii=False, indent=1, default=str))
+        out["structuredContent"] = {"count": len(brief)}
+        return out
+    if name == "wiki_rerun":
+        from . import rerun as _rr
+        rid = int(args.get("request_id") or 0)
+        if not rid:
+            # 인자 없이 부르면 **어디서부터 다시 돌릴 수 있는지** 알려 준다 (붙는 LLM 이 목록을 먼저 본다)
+            return _text(json.dumps({"points": [{k: p[k] for k in ("id", "label", "note")} for p in _rr.POINTS],
+                                     "saved": _rr.list_saved(pipe.s, 20),
+                                     "how": "request_id 와 from 을 주고 다시 부르세요. overrides 로 이번 실행에만 설정을 바꿀 수 있습니다."},
+                                    ensure_ascii=False, indent=1, default=str))
+        point = str(args.get("from") or "answer_llm")
+        ov = args.get("overrides") if isinstance(args.get("overrides"), dict) else None
+        try:
+            with pipe.request_scope(overrides=ov or None):
+                res, tr = pipe.rerun(rid, point, log=True)
+        except ValueError as e:
+            return _err(str(e))
+        replayed = []
+
+        def _walk(n):
+            if n.get("replayed"):
+                replayed.append(n.get("name"))
+            for c in n.get("children") or []:
+                _walk(c)
+        _walk(tr or {})
+        body = {"rerun_of": rid, "from": point, "replayed_stages": replayed, "request_id": res.get("request_id"),
+                "ms": res.get("ms"), "answer": res.get("answer"), "answer_mode": res.get("answer_mode"),
+                "verdict": (res.get("evidence") or {}).get("verdict"), "groundedness": res.get("groundedness")}
+        out = _text(json.dumps(body, ensure_ascii=False, indent=1, default=str))
+        out["structuredContent"] = {k: body[k] for k in ("rerun_of", "from", "request_id", "ms", "verdict")}
+        return out
     return _err("unknown tool %s — 사용 가능: %s" % (name, ", ".join(t["name"] for t in list_tools(pipe, federate=federate))))
 
 
@@ -498,6 +569,10 @@ def handle(pipe, msg: Dict[str, Any], federate: bool = True) -> Optional[Dict[st
     mid = msg.get("id")
     method = msg.get("method")
     params = msg.get("params") or {}
+    if not isinstance(method, str) or not method:
+        # method 가 없으면 요청도 알림도 아니다 (JSON-RPC Invalid Request). 조용히 버리면 클라이언트가
+        # 응답을 기다리며 멈춘다 — id 가 없어도 id:null 로 오류를 돌려줘 붙는 쪽이 원인을 본다.
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32600, "message": "invalid request: 'method' 가 없습니다"}}
     if method == "initialize":
         want = str(params.get("protocolVersion") or "")
         # 우리가 지원하는 버전이면 그대로, 아니면 우리 최신을 돌려준다 (클라이언트가 계속할지 판단한다 — 스펙 권고)
@@ -544,8 +619,19 @@ def _read_message(stream) -> Optional[Dict[str, Any]]:
             l2 = stream.readline()
             if not l2 or l2.strip() == "":
                 break
-        body = stream.read(n)
-        return json.loads(body)
+        # Content-Length 는 **바이트** 수인데 텍스트 스트림의 read(n) 은 **문자** 수를 센다.
+        # 한글이 든 본문은 바이트 > 문자이므로 read(n) 은 다음 메시지까지 삼켜 버린다
+        # (반대로 바이트를 문자로 착각해 모자라게 읽으면 남은 조각이 다음 메시지에 붙는다).
+        # 그래서 인코딩한 길이를 세며 필요한 만큼만 모은다. 요청 본문은 작아 한 글자씩 읽어도 부담이 없다.
+        buf: List[str] = []
+        got = 0
+        while got < n:
+            ch = stream.read(1)
+            if not ch:
+                break
+            buf.append(ch)
+            got += len(ch.encode("utf-8"))
+        return json.loads("".join(buf))
     line = line.strip()
     if not line:
         return {}
@@ -719,6 +805,12 @@ def doctor(pipe, check_sources: bool = False) -> Dict[str, Any]:
     srcs = _mc.load_sources()
     on = {k: v for k, v in srcs.items() if v.get("enabled")}
     add("외부 소스 선언", True, "%d개 선언, %d개 enabled (%s)" % (len(srcs), len(on), ", ".join(on) or "-"))
+    # 형식이 잘못돼 건너뛴 소스는 질의를 막지는 않지만(일부러 그렇게 했다) 반드시 눈에 띄어야 한다 —
+    # 그러지 않으면 "붙였는데 아무 일도 안 일어난다" 로 시간을 버린다.
+    bad_src = _mc.source_errors()
+    add("외부 소스 형식", not bad_src,
+        "모두 정상" if not bad_src else "건너뛴 소스 %d개: %s" % (len(bad_src), "; ".join("%s(%s)" % (k, v[:80]) for k, v in bad_src.items())),
+        "mcp_sources.json 에서 위 소스를 고치세요. retrieve/ingest/enrich 는 [{\"tool\": …}] 형태의 목록입니다")
     for name, cfg in on.items():
         tr = str(cfg.get("transport") or "stdio")
         target = cfg.get("url") or cfg.get("base_url") or " ".join(str(x) for x in (cfg.get("command") or []))

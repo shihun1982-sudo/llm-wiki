@@ -70,6 +70,30 @@ aside h3{margin:0 0 8px;font-size:13px}aside small{color:var(--muted);font-weigh
 .toggle-group label.by-preset{border-left:3px solid var(--s1);padding-left:6px;margin-left:-9px;background:var(--perf-bg)}
 .toggle-group label.by-preset .src{font-size:10px;color:var(--s1);margin-left:4px}
 .by-preset-legend{color:var(--s1)}
+/* ---- 토글의 품질/속도/토큰 배지 ----
+   이름만 보고는 "켜면 뭐가 좋아지고 뭘 내주나" 를 알 수 없다. 누르기 전에 알 수 있게 오른쪽에 붙인다. */
+.toggle-group label{display:flex;align-items:center;gap:4px}
+.toggle-group label .tname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 배지는 이름 **앞**. 세 축(품·속·토)이 늘 같은 자리에 오도록 칸 폭을 고정해 이름이 세로로 정렬된다. */
+.toggle-group label .fxs{display:flex;gap:1px;flex:0 0 auto}
+.fx{font-size:9px;line-height:1.5;padding:0 2px;border-radius:3px;border:1px solid transparent;
+  white-space:nowrap;min-width:16px;text-align:center;box-sizing:border-box}
+.fx.up{color:#0a7a4a;background:rgba(27,175,122,.12);border-color:rgba(27,175,122,.35)}
+.fx.down{color:#b4530f;background:rgba(235,104,52,.10);border-color:rgba(235,104,52,.30)}
+.fx.none{color:var(--grid);background:none;border:0}
+.fx-legend{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--muted);margin:0 0 5px;flex-wrap:wrap}
+.fx-legend .muted{margin-left:2px}
+.fx-filter{display:flex;align-items:center;gap:3px;margin-bottom:6px;flex-wrap:wrap}
+.fx-filter button{font-size:11px;padding:2px 7px;border:1px solid var(--grid);background:var(--card);color:var(--ink2);
+  border-radius:11px;cursor:pointer}
+.fx-filter button:hover{background:var(--hover)}
+.fx-filter button.active{background:var(--s1);border-color:var(--s1);color:#fff}
+.fx-filter #fx-search{flex:1;min-width:70px;font-size:11px;padding:2px 6px;border:1px solid var(--grid);
+  border-radius:11px;background:var(--card);color:var(--ink)}
+.fx-hidden{display:none !important}
+.tg-stage{font-size:9px;border:1px solid var(--grid);border-radius:3px;padding:0 3px;margin-right:4px;color:var(--muted)}
+.tg-hint{font-size:10px;color:var(--muted);line-height:1.4;margin:0 0 5px}
+.toggle-group.collapsed .tg-hint{display:none}
 .cli-hint code{display:block;font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--page);padding:6px;border-radius:4px;border:1px solid var(--grid)}
 main{flex:1;padding:12px 18px;min-width:0}
 .groups{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
@@ -122,6 +146,12 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--ink2);text-transform:uppercase;l
 .tr-meta{grid-column:1/4;font-size:11px;background:var(--page);border-radius:4px;padding:6px;white-space:pre-wrap;word-break:break-all;display:none;max-height:260px;overflow:auto}
 .tr-row.open .tr-meta{display:block}
 .tr-row.has-err .tr-name{color:var(--critical)}
+/* 단계 재실행 ⟲ — 평소엔 흐리게 두고 그 줄에 마우스를 올리면 또렷해진다 (줄마다 버튼이 튀면 폭포 그림이 읽히지 않는다) */
+.tr-rerun{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;padding:0 3px;margin-right:2px;opacity:.35;line-height:1}
+.tr-row:hover .tr-rerun{opacity:1}
+.tr-rerun:hover{color:var(--accent);transform:rotate(-45deg)}
+.tr-row.replayed .tr-bar i{opacity:.35;background-image:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,.6) 3px,rgba(255,255,255,.6) 6px)}
+.pill.replay{background:var(--page);color:var(--muted);border:1px dashed var(--line)}
 .tr-summary{font-size:12px;color:var(--ink2);background:var(--card);border:1px solid var(--grid);border-radius:6px;padding:6px 10px;margin-bottom:6px}
 .tr-meta .mb{margin-bottom:6px}.tr-meta .mb b{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:2px}
 .tr-meta .mb pre{margin:0;white-space:pre-wrap;word-break:break-all;font:11px/1.4 Consolas,"D2Coding",monospace}
@@ -149,7 +179,11 @@ tr.sel{background:var(--sel)}tr[data-id]{cursor:pointer}tr[data-id]:hover{backgr
 .modal{background:var(--card);color:var(--ink);border:1px solid var(--grid);border-radius:10px;padding:18px 20px;width:100%;max-width:520px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
 .modal.danger{border-color:var(--critical);border-top:4px solid var(--critical)}
 .modal h3{margin:0 0 8px;font-size:15px}.modal .modal-op{font-size:12px;color:var(--ink2);margin-bottom:8px}.modal .modal-msg{font-size:13px;line-height:1.5}
-.modal label{display:block;font-size:12px;color:var(--ink2);margin:10px 0 4px}.modal label input{display:block;width:100%;margin-top:4px;font:inherit;padding:7px 9px;border:1px solid var(--axis);border-radius:4px;background:var(--card);color:var(--ink)}
+.modal label{display:block;font-size:12px;color:var(--ink2);margin:10px 0 4px}
+/* input 뿐 아니라 select·textarea 도 — 단계 재실행 창이 이 셋을 모두 쓴다 */
+.modal label input,.modal label select,.modal label textarea{display:block;width:100%;margin-top:4px;font:inherit;padding:7px 9px;border:1px solid var(--axis);border-radius:4px;background:var(--card);color:var(--ink)}
+.modal label textarea{font-family:var(--mono,ui-monospace,Consolas,monospace);font-size:12px;resize:vertical}
+.modal{max-height:86vh;overflow:auto}
 .modal .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin:14px 0 8px}
 body[data-role="viewer"] .danger, body[data-role="viewer"] #sec-add-form{display:none}
 #user-badge a{color:var(--ink2);text-decoration:none;margin-left:6px}
@@ -244,6 +278,17 @@ body[data-role="viewer"] .danger, body[data-role="viewer"] #sec-add-form{display
   border-left:3px solid var(--axis)}
 .act-item:last-child{border-bottom:0}
 .act-item:hover{background:var(--hover)}
+.act-item.clickable,#act-running tr.clickable,#act-recent tr.clickable{cursor:pointer}
+/* 진행 중 작업 상세: 실행 중이면 실시간 단계·로그, 끝났으면 남은 기록과 결과로 가는 길 */
+.act-detail{margin:8px 0;border:1px solid var(--grid);border-radius:8px;background:var(--card);padding:8px}
+.act-detail-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.act-detail-head .grow{flex:1}
+.act-log{max-height:30vh;overflow:auto;margin:6px 0 0}
+/* 저장된 답변 미리보기: 길면 접어 두고 '전체 보기' 로 편다 (목록은 훑어보는 화면이다) */
+.act-answer{white-space:pre-wrap;font-size:12px;line-height:1.55;margin:6px 0;padding:8px;border-radius:6px;background:var(--page);border:1px solid var(--grid)}
+.act-answer.clip{max-height:16em;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
+.statrow.compact .stat{padding:3px 8px}
 .act-item.mine{background:var(--perf-bg)}
 .act-item.queued{opacity:.82}
 /* 종류별 색: 질의 파랑 · 빌드 주황 · CLI 보라 · MCP 초록 · 스케줄 노랑 */
@@ -345,3 +390,75 @@ table.tuning .imp{color:var(--chip-tune-ink)}
 td.best{color:var(--good);font-weight:600}
 .claim{font-size:12px;padding:2px 6px;border-radius:4px;margin:2px 0}.claim.supported{background:var(--banner-ok-bg)}.claim.unsupported{background:var(--banner-err-bg)}.claim.partial,.claim.uncited{background:var(--banner-warn-bg)}
 @media (max-width:900px){.layout{flex-direction:column}aside{width:100%;position:static;max-height:none}.col.narrow-wide{flex:1}}
+
+/* ================= 협업: 사이드바 채팅 · 게시판 · 접속자 캐릭터 (2026-09-16) =================
+   채팅창은 사이드바 최상단에 고정되고 **기본은 접힘**이다. 대화는 창에 쌓지 않고
+   아이콘 위 말풍선(아이폰 메시지 모양)으로 뜬다. */
+#sidebar{display:flex;flex-direction:column}
+.chat-box{position:sticky;top:0;z-index:5;background:var(--card);border:1px solid var(--grid);border-radius:6px;
+  padding:5px 6px;margin:0 0 10px;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+/* 1줄: 최신 대화(늘어남) + [챗] + [게시] */
+.chat-head{display:flex;align-items:center;gap:5px;font-size:12px}
+.chat-last{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-head button{flex:0 0 auto}
+#btn-chat-toggle.on{background:var(--sel);border-color:var(--s1);color:var(--s1);font-weight:600}
+/* 2줄: '챗' 을 켰을 때만 (접속자 아이콘도 함께 켜진다) */
+.chat-input{display:flex;gap:4px;margin-top:5px;align-items:center}
+.chat-input.hidden{display:none}
+.chat-input input{flex:1 1 auto;min-width:0;font-size:12px}
+
+/* 접속자 캐릭터: 화면 위에 떠 있고 캐릭터에만 마우스가 걸린다 (아래 화면 조작을 막지 않는다).
+   위치는 1초마다 서버에서 받아 오므로 남이 옮기면 내 화면에서도 따라 움직인다 — transition 으로 부드럽게. */
+.people-layer{position:fixed;inset:0;pointer-events:none;z-index:40}
+.people-layer.hidden{display:none}
+.person{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;text-align:center;user-select:none;
+  transition:left .35s ease, top .35s ease}
+.person .avatar{font-size:24px;line-height:1;cursor:default;filter:drop-shadow(0 1px 2px rgba(0,0,0,.28))}
+.person.me .avatar{cursor:grab}
+.person.me:active .avatar{cursor:grabbing}
+/* 말풍선 — 아이폰 메시지: 내 것은 파란색(오른쪽 꼬리), 남의 것은 회색(왼쪽 꼬리) */
+.person .bubble{position:relative;bottom:0;max-width:240px;min-width:18px;margin:0 auto 1px;padding:4px 9px;
+  border-radius:16px;background:#e9e9eb;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.18);
+  white-space:pre-wrap;word-break:break-word;line-height:1.35;text-align:left}
+.person .bubble::after{content:"";position:absolute;left:12px;bottom:-4px;width:0;height:0;
+  border:6px solid transparent;border-top-color:#e9e9eb;border-bottom:0}
+.person.me .bubble{background:#2a8cff;color:#fff}
+.person.me .bubble::after{left:auto;right:12px;border-top-color:#2a8cff}
+.person .bubble.hidden{display:none}
+
+/* 게시 대화상자 (사이드바가 좁아 입력이 어려웠다 → 화면 가운데)
+   이름 주의: 여기서 쓰는 **바깥 덮개**는 `.modal-overlay` 다. `.modal` 은 위쪽(154~159줄)에서
+   이미 "가운데 떠 있는 카드" 로 쓰고 있다(`.modal-bg` 안의 상자 — 권한 단계 확인·단계 재실행 창).
+   예전에 이 덮개를 `.modal` 로 잡아 두어서, 나중에 선언된 이 규칙이 카드를 덮어써
+   `position:fixed; inset:0; display:flex` 가 카드에 붙었고 **내용이 가로로 흩어져 겹쳐 보였다**. */
+.modal-overlay{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center}
+.modal-overlay.hidden{display:none}
+.modal-box{background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:14px;width:min(620px,92vw);
+  max-height:86vh;overflow:auto;box-shadow:0 8px 28px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:8px}
+.modal-head{display:flex;align-items:center;justify-content:space-between}
+.modal-x{border:0;background:none;cursor:pointer;font-size:16px;color:var(--ink2)}
+.modal-box label{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.modal-box input,.modal-box select,.modal-box textarea{width:100%}
+
+/* 게시판 */
+.post{border:1px solid var(--grid);border-radius:6px;padding:6px 8px;margin:6px 0;background:var(--card)}
+.post.resolved{opacity:.72}
+.post summary{cursor:pointer}
+.post-body{margin:6px 0;font-size:13px;white-space:pre-wrap}
+.post-reply{border-left:3px solid var(--grid);padding:3px 8px;margin:4px 0;font-size:12px}
+.post .row input.post-reply-in{min-width:220px}
+
+/* 내 지난 요청 (Ask) */
+.myreq{border:1px solid var(--grid);border-radius:6px;padding:4px 8px;margin:6px 0;background:var(--card)}
+.myreq summary{cursor:pointer;font-size:13px}
+.myreq table{width:100%}
+.myreq tr[data-req]{cursor:pointer}
+.myreq tr[data-req]:hover{background:var(--hover)}
+.myreq tr.live-row{background:var(--perf-bg)}
+
+/* 내 아이콘 표시 (고를 수 없다 — 접속 IP 로 정해진다) · 아이콘 표시 끄기 */
+.chat-emoji{flex:0 0 auto;font-size:16px;line-height:1;cursor:default;opacity:.85}
+.people-layer.off{display:none}
+/* 모델 표: 임베딩·리랭크 행은 배경을 달리해 LLM 역할과 구분 */
+table.roles tr.extra-row{background:var(--perf-bg)}
+table.roles tr.extra-row td{border-top:1px solid var(--perf-border)}

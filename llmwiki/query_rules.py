@@ -142,22 +142,45 @@ def _find_terms(query: str, idx: Dict[str, Any]) -> List[Tuple[str, str, str, Li
     hits.sort(key=lambda h: (h[0], -(h[1] - h[0])))
     out: List[Tuple[str, str, str, List[str]]] = []
     taken: List[Tuple[int, int]] = []
+    seen: set = set()
     for s, e, txt, typ, canon, vals in hits:
-        if any(s < te and e > ts and typ != "exclude" for ts, te in taken):   # 겹치는 더 긴 매치 우선 (exclude 는 겹쳐도 유지)
+        key = (s, e, typ, canon)
+        if key in seen:
             continue
+        # 겹치는 **더 긴** 매치가 이미 있으면 버린다 (예: 'DMA underrun' 이 있으면 'DMA' 는 버린다).
+        # 다만 **같은 구간**이면 유형이 달라도 함께 발화시킨다 — 한 낱말이 acronym 이면서 synonym 일 수 있고,
+        # 예전에는 먼저 걸린 유형 하나만 살아남아 나머지 규칙이 조용히 무시됐다 (2026-09-16).
+        if any((s, e) != (ts, te) and s < te and e > ts and typ != "exclude" for ts, te in taken):
+            continue
+        seen.add(key)
         taken.append((s, e))
         out.append((txt, typ, canon, vals))
     return out
 
 
-def expand(query: str, syn_w: float = 0.8, related_w: float = 0.4, acronym_phrase: bool = True) -> Dict[str, Any]:
+def _max_rounds(explicit: Optional[int] = None) -> int:
+    if explicit is not None:
+        return max(1, int(explicit))
+    try:
+        from .tuning import T
+        return max(1, int(T.get("query_rules_max_rounds") or 2))
+    except Exception:
+        return 2
+
+
+def expand(query: str, syn_w: float = 0.8, related_w: float = 0.4, acronym_phrase: bool = True,
+           max_rounds: Optional[int] = None) -> Dict[str, Any]:
     """규칙 확장 결과:
       fts_query   : FTS 용 확장 질의 (원 질의 + acronym/synonym OR 항, alias 치환)
       alt_queries : [(text, weight, kind)] 벡터/FTS 추가 리스트 (synonym 치환, acronym 치환)
       related     : [(text, weight)] 보조 리스트 (별도 융합)
       exclude     : [용어] NOT/페널티 대상
       seeds       : 그래프 시드에 추가할 canonical 이름
-      fired       : 발화한 규칙 목록 (프로파일)
+      fired       : 발화한 규칙 목록 (프로파일; round = 몇 번째 접기에서 나왔는지)
+
+    **여러 번 접어 적용한다(fixed point, 상한 `query_rules_max_rounds`).** 1회만 적용하면
+    `TAT → Turn Around Time`(acronym) 뒤에 `Turn Around Time → 응답시간`(synonym) 이 걸려 있어도
+    두 번째 규칙이 조용히 무시된다 — 사용자가 실제로 겪은 문제다 (2026-09-16).
     """
     load_rules()
     idx = _CACHE["index"] or {}
@@ -168,27 +191,61 @@ def expand(query: str, syn_w: float = 0.8, related_w: float = 0.4, acronym_phras
     exclude: List[str] = []
     seeds: List[str] = []
     q_alias = query
-    for txt, typ, canon, vals in _find_terms(query, idx):
-        fired.append({"type": typ, "matched": txt, "canonical": canon, "values": vals[:6]})
+    done: set = set()            # (normalized term, type, canonical) — 같은 규칙을 두 번 적용하지 않는다
+
+    def apply(txt: str, typ: str, canon: str, vals: List[str], rnd: int) -> List[str]:
+        """규칙 하나를 반영하고, 이 규칙이 **새로 들여온 말** 을 돌려준다(다음 라운드의 입력)."""
+        nonlocal q_alias
+        # 같은 (유형, 대표어) 는 한 번만. 사전은 양방향이라 'TAT→Turn Around Time' 과
+        # 'Turn Around Time→TAT' 이 같은 OR 묶음을 두 번 만든다.
+        key = (typ, _norm(canon))
+        if key in done:
+            return []
+        done.add(key)
+        fired.append({"type": typ, "matched": txt, "canonical": canon, "values": vals[:6], "round": rnd})
+        in_query = txt.lower() in query.lower()      # 2라운드 이후의 말은 원 질의에 없다 → 치환 질의를 만들지 않는다
         if typ == "acronym":
             phr = ['"%s"' % v.replace('"', "") if (acronym_phrase and " " in v) else v for v in vals]
             or_groups.append([txt] + phr)
-            for v in vals[:2]:
-                alt.append((query.replace(txt, v), 1.0, "acronym"))
+            if in_query:
+                for v in vals[:2]:
+                    alt.append((query.replace(txt, v), 1.0, "acronym"))
             seeds.extend([canon] + vals)
-        elif typ == "synonym":
+            return [canon] + list(vals)
+        if typ == "synonym":
             or_groups.append([txt] + vals)
-            for v in vals[:2]:
-                alt.append((query.replace(txt, v), syn_w, "synonym"))
-        elif typ == "alias":
+            if in_query:
+                for v in vals[:2]:
+                    alt.append((query.replace(txt, v), syn_w, "synonym"))
+            return [canon] + list(vals)
+        if typ == "alias":
             q_alias = q_alias.replace(txt, canon)
             or_groups.append([txt, canon])
             seeds.append(canon)
-        elif typ == "related":
+            return [canon]
+        if typ == "related":
             for v in vals[:3]:
                 related.append((v, related_w))
-        elif typ == "exclude":
+            return []                     # 연관어는 정밀도 보호를 위해 다시 펼치지 않는다
+        if typ == "exclude":
             exclude.extend([txt] + vals)
+            return []
+        return []
+
+    # 1라운드: 질의 문자열에서 구간 매칭. 이후 라운드: 앞 라운드가 들여온 말을 사전에서 **정확히** 찾는다.
+    pending: List[str] = []
+    for txt, typ, canon, vals in _find_terms(query, idx):
+        pending.extend(apply(txt, typ, canon, vals, 1))
+    for rnd in range(2, _max_rounds(max_rounds) + 1):
+        nxt: List[str] = []
+        for term in dict.fromkeys(pending):
+            for typ, canon, vals in idx.get(_norm(term)) or []:
+                if typ == "alias":
+                    continue          # 치환은 원 질의에만 적용한다 (연쇄 치환은 의미를 바꾼다)
+                nxt.extend(apply(term, typ, canon, vals, rnd))
+        if not nxt:
+            break
+        pending = nxt
     base_terms = [normalize_token(w) for w in words(q_alias)]
     parts: List[str] = []
     for t in base_terms:
@@ -261,3 +318,137 @@ def _read_raw() -> Dict[str, Any]:
 def stats() -> Dict[str, int]:
     r = load_rules()
     return {t: len(r.get(t) or {}) for t in TYPES}
+
+
+def merge_rules(incoming: Dict[str, Any], replace: bool = False) -> Dict[str, Any]:
+    """다른 사전 파일을 **합친다**. 기본은 값 합치기(기존 항목을 지우지 않음) — 조직 사전을 조금씩 키우는 용도.
+
+    replace=True 면 같은 용어의 값을 통째로 바꾼다. `_` 로 시작하는 키(_comment 등)는 무시한다.
+    반환: 유형별 (추가된 용어 수, 값이 늘어난 용어 수).
+    """
+    _guard_dict(incoming, "merge 대상")
+    data = _read_raw()
+    report: Dict[str, Dict[str, int]] = {}
+    for typ in TYPES:
+        sect_in = incoming.get(typ)
+        if not isinstance(sect_in, dict):
+            continue
+        sect = data.setdefault(typ, {})
+        added = grown = 0
+        for term, vals in sect_in.items():
+            if str(term).startswith("_"):
+                continue                     # _comment_* 같은 설명 키는 규칙이 아니다
+            if typ == "alias":
+                v = str(vals if not isinstance(vals, list) else (vals or [""])[0])
+                if term not in sect:
+                    added += 1
+                elif sect[term] != v:
+                    grown += 1
+                if replace or term not in sect:
+                    sect[term] = v
+                continue
+            new_vals = [str(v) for v in (vals if isinstance(vals, list) else [vals])]
+            cur = sect.get(term)
+            if not isinstance(cur, list):
+                sect[term] = list(dict.fromkeys(new_vals))
+                added += 1
+                continue
+            if replace:
+                if cur != new_vals:
+                    grown += 1
+                sect[term] = list(dict.fromkeys(new_vals))
+                continue
+            before = len(cur)
+            for v in new_vals:
+                if v not in cur:
+                    cur.append(v)
+            if len(cur) > before:
+                grown += 1
+        report[typ] = {"added": added, "grown": grown, "total": len(sect)}
+    save_rules(data)
+    return {"merged": report, "path": rules_path(), "replace": replace}
+
+
+def lint(max_rounds: Optional[int] = None) -> Dict[str, Any]:
+    """사전 자체의 문제를 찾는다 — 사전이 커질수록 손으로는 못 잡는다.
+
+    무엇을 보는가
+      duplicate   : 같은 말이 같은 유형에 두 번(대소문자·공백만 다른 경우 포함)
+      cross_type  : 같은 말이 여러 유형에 걸쳐 있다 (이제는 **함께 발화**하므로 오류가 아니라 알림)
+      self_ref    : 값이 자기 자신을 가리킨다 (PDCCH → PDCCH)
+      alias_chain : alias 가 또 다른 alias 의 출발점을 가리킨다 (A→B, B→C — 치환은 한 번만 하므로 B 에서 멈춘다)
+      deep_chain  : max_rounds 안에 다 펼쳐지지 않는 사슬 (A→B→C→D 인데 rounds=2)
+      empty       : 값이 비었다
+    반환의 `ok` 는 error 가 없을 때 True. warn 은 알림이다.
+    """
+    rules = load_rules()
+    idx = _CACHE["index"] or {}
+    rounds = _max_rounds(max_rounds)
+    issues: List[Dict[str, str]] = []
+
+    def add(level: str, kind: str, term: str, detail: str) -> None:
+        issues.append({"level": level, "kind": kind, "term": term, "detail": detail})
+
+    # 유형 안의 중복 · 자기참조 · 빈 값
+    for typ in TYPES:
+        seen: Dict[str, str] = {}
+        for term, vals in (rules.get(typ) or {}).items():
+            n = _norm(term)
+            if n in seen and seen[n] != term:
+                add("error", "duplicate", term, "같은 유형 '%s' 에 '%s' 와 사실상 같은 항목 (대소문자·공백만 다름)" % (typ, seen[n]))
+            seen[n] = term
+            lst = vals if isinstance(vals, list) else [vals]
+            lst = [str(v) for v in lst]
+            if not [v for v in lst if str(v).strip()]:
+                add("error", "empty", term, "유형 '%s' 의 값이 비어 있습니다" % typ)
+            if any(_norm(v) == n for v in lst):
+                add("warn", "self_ref", term, "유형 '%s' 의 값이 자기 자신을 포함합니다" % typ)
+
+    # 한 말이 여러 유형에 걸침 — 이제는 함께 발화한다(알림). 어떤 유형들인지 알려 준다.
+    for term, entries in idx.items():
+        kinds = sorted({t for t, _c, _v in entries})
+        if len(kinds) > 1:
+            add("warn", "cross_type", term, "여러 유형에서 발화합니다: %s (의도한 것이면 그대로 두세요)" % ", ".join(kinds))
+
+    # alias 사슬 — 치환은 한 번만 한다
+    aliases = {_norm(k): str(v) for k, v in (rules.get("alias") or {}).items()}
+    for term, canon in (rules.get("alias") or {}).items():
+        if _norm(canon) in aliases:
+            add("error", "alias_chain", term, "'%s' → '%s' 인데 '%s' 도 별칭입니다 → '%s' 까지 가지 않습니다. 최종 표기로 직접 적으세요"
+                % (term, canon, canon, aliases[_norm(canon)]))
+
+    # 사슬 깊이 — max_rounds 안에 다 펼쳐지는가
+    def depth(start: str) -> int:
+        """`expand` 의 라운드와 **같은 방식**으로 센다: 한 라운드 = (유형, 대표어) 묶음 하나를 새로 적용하는 것.
+        같은 동의어 묶음 안의 낱말끼리는 오가도 라운드가 늘지 않는다 (예전에는 이것을 세서 깊이가 부풀었다)."""
+        applied: set = set()
+        frontier = [start]
+        rnd = 0
+        while frontier and rnd < 8:
+            nxt: List[str] = []
+            grew = False
+            for term in dict.fromkeys(frontier):
+                for typ, canon, vals in idx.get(_norm(term)) or []:
+                    if typ in ("related", "exclude", "alias"):
+                        continue
+                    key = (typ, _norm(canon))
+                    if key in applied:
+                        continue
+                    applied.add(key)
+                    grew = True
+                    nxt.extend([canon] + list(vals))
+            if not grew:
+                break
+            rnd += 1
+            frontier = nxt
+        return rnd
+    for typ in ("acronym", "synonym"):
+        for term in (rules.get(typ) or {}):
+            dp = depth(term)
+            if dp > rounds:
+                add("warn", "deep_chain", term, "사슬 깊이 %d 인데 query_rules_max_rounds=%d — 끝까지 펼쳐지지 않습니다" % (dp, rounds))
+
+    errors = [i for i in issues if i["level"] == "error"]
+    return {"ok": not errors, "errors": len(errors), "warnings": len(issues) - len(errors),
+            "issues": issues, "stats": {t: len(rules.get(t) or {}) for t in TYPES},
+            "max_rounds": rounds, "path": rules_path()}

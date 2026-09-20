@@ -1,7 +1,7 @@
 /* Ask — 질의·답변·근거 판정·claim·pin·포렌식 + 채널 디버그. */
 (function (LW) {
   'use strict';
-  const { $, $$, esc, fmt, fmtK, api, toast, STATE, overrides, presetNames, cliEquiv, updateCli, renderTrace, switchTab, switchGroup, loadStatus } = LW;
+  const { $, $$, esc, fmt, fmtK, ts, dt, api, toast, STATE, overrides, presetNames, cliEquiv, updateCli, renderTrace, switchTab, switchGroup, loadStatus } = LW;
 
   const SAMPLES = ['ISSUE-2001 의 원인과 수정 CL 은?', 'CL-55302 는 어떤 이슈를 수정했나?', 'HW rev B1 에서 t_setup 은 몇 ns 인가?', 'ISR 안에서 blocking 대기를 써도 되나?', '지난주 리뷰한 CL', '2026년 8월 주간 보고 이슈 요약', 'RX DMA 드라이버의 code map', 'Physical Downlink Control Channel 디코더 문제'];
   $('#samples').innerHTML = SAMPLES.map((s) => `<span>${esc(s)}</span>`).join('');
@@ -91,7 +91,17 @@
       if (!j.result) { LW.renderLive(liveEl, { status: j.cancelled ? 'cancelled' : 'error', detail: j.error || '응답 없음', elapsed_s: 0, log: liveEl._log || [] }, '', token); return; }
       // 완료 상태와 단계 로그를 그대로 남긴다 (✕ 로 닫기 · 📋 로 복사)
       LW.renderLive(liveEl, { status: 'done', elapsed_s: (j.result.ms || 0) / 1000, detail: j.result.answer_mode, log: liveEl._log || [] }, '', token);
-      const r = j.result; STATE.lastQueryId = r.query_id || null; STATE.lastRequestId = r.request_id || null; STATE.lastResult = r;
+      renderResult(j.result, j.trace, q);
+      loadMyRequests();
+    } finally { $('#btn-query').disabled = false; }
+  }
+
+  // 질의 결과를 화면에 그린다. 방금 실행한 결과와 **지난 요청에서 불러온 결과**가 같은 함수를 쓴다
+  // (예전에는 runQuery 안에 인라인이라 지난 결과를 그대로 다시 볼 방법이 없었다 — 2026-09-16).
+  function renderResult(r, trace, q) {
+    {
+      STATE.lastQueryId = r.query_id || null; STATE.lastRequestId = r.request_id || null; STATE.lastResult = r;
+      q = q || r.query || '';
       $('#query-out').classList.remove('hidden'); $('#q-forensic').classList.add('hidden'); $('#q-analysis').classList.add('hidden');
       if (r.analysis && r.analysis.md) { $('#q-analysis').classList.remove('hidden'); $('#q-analysis').innerHTML = `<div class="banner"><b>📊 analysis_mode</b> — 리포트 저장됨: <code>${esc(r.analysis.md)}</code> · ` + ['quality', 'speed', 'tokens'].map((l) => (((r.analysis.top || {})[l] || [])[0] ? `${{ quality: '품질', speed: '속도', tokens: '토큰' }[l]}: ${esc(((r.analysis.top || {})[l] || [])[0].title)}` : '')).filter(Boolean).join(' · ') + ' · <a href="#" id="qa-open">전문 보기</a></div>'; const o = $('#qa-open'); if (o) o.onclick = (e) => { e.preventDefault(); $('#btn-q-analysis').click(); }; }
       $('#answer-mode').textContent = r.answer_mode + (r.model ? ' · ' + r.model : '');
@@ -100,7 +110,7 @@
       const g = r.groundedness; $('#answer-ground').textContent = g == null ? '' : 'groundedness ' + fmt(g, 2); $('#answer-ground').className = 'pill ' + (g == null ? '' : g >= 0.8 ? 'ok' : g >= 0.5 ? 'warn' : 'bad');
       const tk = r.tokens || {};
       const ev = r.evidence || {};
-      $('#q-stats').innerHTML = `<div class="stat"><b>${fmt(r.ms, 0)}</b>ms</div><div class="stat"><b>${tk.calls || 0}</b>LLM 호출</div><div class="stat"><b>${fmtK(tk.total_tokens || 0)}</b>토큰</div><div class="stat"><b>${j.trace && j.trace.summary ? j.trace.summary.sql_statements : '-'}</b>SQL</div><div class="stat"><b>${r.hits.filter((h) => h.in_context).length}/${r.hits.length}</b>컨텍스트 청크</div><div class="stat"><b>${(r.fallback || []).length}</b>fallback</div><div class="stat"><b>#${r.request_id || '-'}</b>request</div><div class="stat"><b>${esc(r.run_id || '-')}</b>run</div>`;
+      $('#q-stats').innerHTML = `<div class="stat"><b>${fmt(r.ms, 0)}</b>ms</div><div class="stat"><b>${tk.calls || 0}</b>LLM 호출</div><div class="stat"><b>${fmtK(tk.total_tokens || 0)}</b>토큰</div><div class="stat"><b>${trace && trace.summary ? trace.summary.sql_statements : '-'}</b>SQL</div><div class="stat"><b>${r.hits.filter((h) => h.in_context).length}/${r.hits.length}</b>컨텍스트 청크</div><div class="stat"><b>${(r.fallback || []).length}</b>fallback</div><div class="stat"><b>#${r.request_id || '-'}</b>request</div><div class="stat"><b>${esc(r.run_id || '-')}</b>run</div>`;
       const ban = $('#q-banner');
       if (r.answer_mode === 'insufficient') { ban.className = 'banner err'; ban.innerHTML = `<b>근거 부족(insufficient)</b> — ${esc((ev.reasons || []).join('; '))}. fallback ${(r.fallback || []).length}회 시도. <a href="#" id="q-fx-link">포렌식 보기</a>`; ban.classList.remove('hidden'); }
       else if (ev.verdict === 'weak' || (g != null && g < 0.6)) { ban.className = 'banner warn'; ban.innerHTML = `<b>주의</b> — 근거 ${esc(ev.verdict || '-')}${g != null ? ', groundedness ' + fmt(g, 2) : ''}. ${esc((ev.reasons || []).join('; '))}`; ban.classList.remove('hidden'); }
@@ -143,14 +153,81 @@
         (h.why || []).map((w) => `<span class="src ${w.split('#')[0]}">${esc(w)}</span>`).join('') + boostChips(h.boosts) + ` <span class="muted">fused=${fmt(h.fused, 4)} rerank=${h.rerank == null ? '-' : fmt(h.rerank, 3)}</span> <button class="mini secondary" data-pin="${esc(h.chunk_id)}" title="이 질의에 이 근거를 고정">📌</button></div><div class="t">${esc(h.text)}</div></div>`).join('');
       $$('#hits .hit .t').forEach((t) => t.onclick = () => t.parentElement.classList.toggle('open'));
       $$('#hits [data-pin]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); const p = await api('/api/pins', { action: 'add', chunk: b.dataset.pin, query: q, note: 'from query' }); toast('pin 추가: ' + p.id); });
-      renderTrace($('#trace'), j.trace);
+      // 단계별 ⟲: 이 요청의 중간 결과로 그 단계부터 다시 실행 → 결과가 오면 이 화면을 그대로 다시 그린다
+      renderTrace($('#trace'), trace, {
+        rerun: r.request_id,
+        onRerun: (j) => { LW.renderResult(j.result, j.trace, (j.result || {}).query || q); },
+      });
+      const rr = r.rerun_from ? `<span class="pill ok">⟲ 재실행: ${esc(r.rerun_from)} 부터 (원 요청 #${esc(String(r.rerun_of))})</span>` : '';
+      if ($('#q-rerun-note')) $('#q-rerun-note').innerHTML = rr;
       const rels = ((r.graph || {}).relations || []).slice(0, 15);
       $('#graph-rels').innerHTML = rels.length ? '<table><tr><th>src</th><th>rel</th><th>dst</th><th>출처</th><th>gain</th><th>근거</th></tr>' + rels.map((x) => `<tr><td>${esc(x.src)}</td><td>${esc(x.rel)}</td><td>${esc(x.dst)}</td><td class="muted">${esc(x.provenance || '')}</td><td class="num">${fmt(x.gain, 3)}</td><td class="muted">${esc((x.description || '').slice(0, 60))}</td></tr>`).join('') + '</table>' : '<span class="muted">(graph off 또는 시드 없음)</span>';
       $('#q-proposals').textContent = (r.proposals && r.proposals.length) ? '생성된 제안 id: ' + r.proposals.join(', ') + ' → Evolve 에서 검토' : '새 제안 없음';
       $('#cli-equiv').textContent = r.cli || cliEquiv('query', q);
       loadStatus();
-    } finally { $('#btn-query').disabled = false; }
+    }
   }
+  LW.renderResult = renderResult;
+
+  // ---------------- 내 지난 요청 ----------------
+  // 한 줄을 누르면 저장해 둔 결과로 위 화면을 그대로 다시 그린다 (질의를 **다시 실행하지 않는다**).
+  async function loadMyRequests() {
+    const box = $('#myreq-list'); if (!box) return;
+    const all = $('#myreq-all') && $('#myreq-all').checked;
+    const qs = new URLSearchParams({ scope: all ? 'all' : 'mine', limit: '40' });
+    if ($('#myreq-kind') && $('#myreq-kind').value) qs.set('kind', $('#myreq-kind').value);
+    if ($('#myreq-q') && $('#myreq-q').value.trim()) qs.set('q', $('#myreq-q').value.trim());
+    const j = await api('/api/requests?' + qs.toString());
+    const rows = (j && j.rows) || [], live = (j && j.live) || [];
+    const msg = $('#myreq-msg');
+    if (msg) msg.textContent = j && j.can_all === false && all ? '전체 조회 권한이 없어 내 요청만 보입니다' : '';
+    const cnt = $('#myreq-count'); if (cnt) cnt.textContent = `(${live.length ? live.length + ' 진행 중 · ' : ''}${rows.length}건${j && j.me ? ' · ' + j.me : ''})`;
+    const stat = (s) => s === 'running' ? '<span class="pill warn">진행 중</span>' : s === 'queued' ? '<span class="pill">대기</span>'
+      : s === 'error' ? '<span class="pill bad">오류</span>' : '<span class="pill ok">완료</span>';
+    box.innerHTML = '<table><tr><th></th><th>시각</th><th>종류</th><th>요약</th><th>ms</th>' + (all ? '<th>사용자</th>' : '') + '<th></th></tr>' +
+      live.map((a) => `<tr class="live-row"><td>${stat(a.status)}</td><td class="muted small">${a.ts ? ts(a.ts) : '-'}</td><td class="small">${esc(a.kind || '')}</td>` +
+        `<td class="small">${esc(String(a.summary || '').slice(0, 70))}${a.stage ? ' <span class="muted">· ' + esc(a.stage) + '</span>' : ''}</td>` +
+        `<td class="num">${fmt(a.ms, 0)}</td>${all ? '<td class="small muted">' + esc(a.user || '') + '</td>' : ''}<td></td></tr>`).join('') +
+      rows.map((r) => `<tr data-req="${r.id}"><td>${stat(r.status)}</td><td class="muted small">${ts(r.ts)}</td><td class="small">${esc(r.kind)}</td>` +
+        `<td class="small">${esc(String(r.summary || '').slice(0, 70))}</td><td class="num">${fmt(r.ms, 0)}</td>` +
+        `${all ? '<td class="small muted">' + esc(r.user || '') + '</td>' : ''}` +
+        `<td>${r.file ? '<span class="pill" title="결과가 파일로 보관되어 있습니다: ' + esc(r.file) + '">보관됨</span>' : ''}</td></tr>`).join('') +
+      '</table>' + (rows.length || live.length ? '' : '<div class="muted small">아직 기록이 없습니다.</div>');
+    $$('#myreq-list tr[data-req]').forEach((tr) => tr.onclick = () => openPastRequest(parseInt(tr.dataset.req, 10)));
+  }
+  LW.loadMyRequests = loadMyRequests;
+  // 다른 화면(진행 중 작업의 완료 항목 등)에서도 "그때 그 결과" 를 같은 방식으로 열 수 있게 공개한다.
+  // 저장된 결과는 근거 전문(hits)을 담지 않으므로 복원 처리가 필요하다 — openPastRequest 가 그걸 안다.
+  LW.openPastRequest = (id) => openPastRequest(id);
+
+  async function openPastRequest(id) {
+    const r = await api('/api/request?id=' + id);
+    if (!r || r.error) { toast('요청 #' + id + ' 을 찾을 수 없습니다' + (r && r.error ? ': ' + r.error : '')); return; }
+    if (r.kind !== 'query' || !r.result) {
+      // 질의가 아니면(빌드·평가 등) 관측 탭의 요청 프로파일로 보낸다
+      LW.switchGroup('observability'); LW.switchTab('requests');
+      setTimeout(() => LW.openRequest && LW.openRequest(id), 300);
+      return;
+    }
+    const res = r.result || {};
+    // 저장된 결과에는 hits 전문 대신 hits_brief 가 있다 — 화면이 비지 않게 최소 형태로 채운다
+    if (!res.hits) res.hits = (res.hits_brief || []).map((h) => Object.assign({ doc_id: '(저장된 요약)', heading: '', text: '(근거 전문은 보관하지 않습니다 — 같은 질의를 다시 실행하면 볼 수 있습니다)', in_context: h.in_context }, h));
+    $('#query-out').classList.remove('hidden');
+    renderResult(res, r.trace || {}, res.query || r.summary);
+    const ban = $('#q-banner');
+    ban.className = 'banner'; ban.classList.remove('hidden');
+    ban.innerHTML = `🕘 <b>지난 요청 #${r.id}</b> 의 결과입니다 (${dt(r.ts)}${r.user ? ' · ' + esc(r.user) : ''}${r.from_archive ? ' · 보관 파일에서 복원' : ''}). ` +
+      '다시 실행한 것이 아니라 <b>그때 저장된 답</b>을 그대로 보여 줍니다. <a href="#" id="myreq-rerun">같은 질의 다시 실행</a>';
+    const rr = $('#myreq-rerun');
+    if (rr) rr.onclick = (e) => { e.preventDefault(); $('#q').value = res.query || r.summary || ''; runQuery(); };
+    $('#query-out').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if ($('#btn-myreq-refresh')) $('#btn-myreq-refresh').onclick = loadMyRequests;
+  if ($('#myreq-all')) $('#myreq-all').onchange = loadMyRequests;
+  if ($('#myreq-kind')) $('#myreq-kind').onchange = loadMyRequests;
+  if ($('#myreq-q')) $('#myreq-q').onkeydown = (e) => { if (e.key === 'Enter') loadMyRequests(); };
+  if ($('#myreq-box')) $('#myreq-box').addEventListener('toggle', () => { if ($('#myreq-box').open) loadMyRequests(); });
+
   $$('.feedback button[data-fb]').forEach((b) => b.onclick = async () => {
     if (!STATE.lastQueryId) { toast('로그가 꺼진(또는 캐시된) 질의에는 피드백을 남길 수 없습니다'); return; }
     const j = await api('/api/feedback', { query_id: STATE.lastQueryId, feedback: parseInt(b.dataset.fb, 10), note: $('#fb-note').value });
@@ -161,14 +238,34 @@
   function renderExpect(rep) {
     if (!rep || (rep.error && !(rep.targets || []).length)) return `<div class="banner err">${esc((rep || {}).error || 'no data')}</div>`;
     const stageMark = (s) => s === 'hit' ? '<span class="ok">✔</span>' : s === 'miss' ? '<span class="bad">✘</span>' : s === 'off' ? '<span class="muted">—</span>' : '<span class="muted">?</span>';
+    const unres = (rep.expected || {}).unresolved || [];
     let html = `<div class="req-head"><b>기대 결과 포렌식</b> request #${rep.request_id} · 원 판정 <span class="pill">${esc(rep.verdict || '-')}</span> · 재실행 ${rep.rerun ? rep.rerun_rounds + ' 라운드 (' + esc(rep.rerun_verdict || '') + ')' : '없음'}${rep.forensic_id ? ' · forensics #' + rep.forensic_id : ''}</div>` +
-      `<div class="muted small">Q: ${esc(rep.query || '')} · 기대 docs=${esc(JSON.stringify((rep.expected || {}).docs ? Object.keys(rep.expected.docs) : []))} terms=${esc(JSON.stringify((rep.expected || {}).terms || []))}${((rep.expected || {}).unresolved || []).length ? ' · <span class="errtxt">미해결 ' + esc(rep.expected.unresolved.join(', ')) + '</span>' : ''}</div>` +
-      '<ul class="small" style="margin:6px 0 6px 16px">' + (rep.summary || []).map((s) => `<li>${esc(s)}</li>`).join('') + '</ul>';
-    (rep.targets || []).forEach((t) => {
-      html += `<details ${t.chunk_id === rep.best_target ? 'open' : ''}><summary><b>${esc(t.chunk_id)}</b> <span class="muted small">${esc((t.heading || '').slice(0, 60))} · ${esc(t.why || '')}</span> · 원 결과 <span class="pill ${t.original === 'cited' ? 'ok' : t.original === 'candidate' ? 'warn' : 'bad'}">${esc(t.original)}</span> → 탈락 <span class="pill ${t.lost_at === 'none' ? 'ok' : 'bad'}">${esc(t.lost_at)}</span></summary>` +
-        '<table class="small"><tr><th></th><th>단계</th><th>순위</th><th>상세</th></tr>' + (t.journey || []).map((j) => `<tr><td>${stageMark(j.status)}</td><td>${esc(j.stage)}</td><td class="num">${j.rank || ''}</td><td>${esc(j.detail || '')}</td></tr>`).join('') + '</table></details>';
-    });
-    html += '<h4 style="margin:8px 0 4px">수정안</h4>' + ((rep.suggestions || []).map((s) => `<div class="sugg"><span class="pill">${esc(s.kind)}</span> ${esc(s.detail)} <span class="muted">conf ${fmt(s.confidence, 2)}</span></div>`).join('') || '<div class="muted small">없음</div>');
+      `<div class="muted small">Q: ${esc(rep.query || '')} · 기대 docs=${esc(JSON.stringify((rep.expected || {}).docs ? Object.keys(rep.expected.docs) : []))} terms=${esc(JSON.stringify((rep.expected || {}).terms || []))}</div>`;
+    // "원 판정 sufficient" 와 "미해결" 이 나란히 있으면 모순처럼 읽힌다 — 무슨 뜻인지 한 문장으로 붙인다.
+    if (unres.length) {
+      html += `<div class="banner warn"><b>색인에서 못 찾은 기대 항목:</b> ${esc(unres.join(', '))} — ` +
+        '이 ID/청크가 <b>코퍼스에 없거나 표기가 다르다</b>는 뜻이다(답변 품질과는 다른 문제). ' +
+        '문서를 넣거나, ID 표기를 <code>data/rules.json</code> 의 <code>id_patterns</code> 와 맞춘다.</div>';
+    }
+    html += '<ul class="small" style="margin:6px 0 6px 16px">' + (rep.summary || []).map((s) => `<li>${esc(s)}</li>`).join('') + '</ul>';
+    // 목표 청크가 수십 개일 수 있다 (용어만 준 경우). 가장 멀리 간 것부터 몇 개만 바로 보이고 나머지는 접는다.
+    const targets = rep.targets || [], shown = Math.max(1, rep.targets_shown || 3);
+    const targetHtml = (t) => `<details ${t.chunk_id === rep.best_target ? 'open' : ''}><summary><b>${esc(t.chunk_id)}</b> <span class="muted small">${esc((t.heading || '').slice(0, 60))} · ${esc(t.why || '')}</span> · 원 결과 <span class="pill ${t.original === 'cited' ? 'ok' : t.original === 'candidate' ? 'warn' : 'bad'}">${esc(t.original)}</span> → 탈락 <span class="pill ${t.lost_at === 'none' ? 'ok' : 'bad'}">${esc(t.lost_at)}</span></summary>` +
+      '<table class="small"><tr><th></th><th>단계</th><th>순위</th><th>상세</th></tr>' + (t.journey || []).map((j) => `<tr><td>${stageMark(j.status)}</td><td>${esc(j.stage)}</td><td class="num">${j.rank || ''}</td><td>${esc(j.detail || '')}</td></tr>`).join('') + '</table></details>';
+    html += targets.slice(0, shown).map(targetHtml).join('');
+    if (targets.length > shown) {
+      html += `<details><summary class="muted small">나머지 목표 청크 ${targets.length - shown}개 (같은 형식의 탈락 단계 표)</summary>` +
+        targets.slice(shown).map(targetHtml).join('') + '</details>';
+    }
+    // 수정안은 서버가 confidence 내림차순으로 준다. 임계 미만은 버리지 않고 접어 둔다.
+    const sug = rep.suggestions || [], strong = sug.filter((s) => !s.low_confidence), weak = sug.filter((s) => s.low_confidence);
+    const sugHtml = (s) => `<div class="sugg"><span class="pill">${esc(s.kind)}</span> ${esc(s.detail)} <span class="muted">conf ${fmt(s.confidence, 2)}</span></div>`;
+    html += '<h4 style="margin:8px 0 4px">수정안 <span class="muted small">확신이 큰 순서</span></h4>' +
+      (strong.map(sugHtml).join('') || (weak.length ? '' : '<div class="muted small">없음</div>'));
+    if (weak.length) {
+      html += `<details><summary class="muted small">확신이 낮은 수정안 ${weak.length}건 (conf &lt; ${fmt(rep.suggestion_min_confidence, 2)} — 근거가 약하니 먼저 위의 것부터)</summary>` +
+        weak.map(sugHtml).join('') + '</details>';
+    }
     if (rep.proposals && rep.proposals.length) html += `<div class="banner ok">제안 등록: #${rep.proposals.join(', #')} → Evolve 탭에서 승인</div>`;
     return html;
   }

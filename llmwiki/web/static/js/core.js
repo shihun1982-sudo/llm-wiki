@@ -86,23 +86,57 @@ window.LW = (function () {
   function switchGroup(name) { const b = $$('.groups button').find((x) => x.dataset.group === name); if (b) b.click(); }
 
   // ---------------- sidebar: toggles (auto from server), presets, overrides ----------------
+  // 토글을 **켰을 때** 세 축이 어떻게 되는지를 배지로 보여 준다.
+  // 이름만 보고는 "이걸 켜면 뭐가 좋아지고 뭘 내주나" 를 알 수 없어서, 누르기 전에 알 수 있게 한 것.
+  const AXIS_LABEL = { q: '품질', s: '속도', t: '토큰' };
+  // 세 축을 **늘 같은 자리**에 그린다 (품 · 속 · 토 순서). 영향 없는 축은 빈 칸으로 남겨
+  // 세로로 훑을 때 "이 줄은 속도를 내주는구나" 가 한눈에 보이게 한다.
+  function effectBadges(t) {
+    const e = (STATE.toggleEffect || {})[t] || {};
+    return ['q', 's', 't'].map((k) => {
+      const ax = (STATE.toggleAxes || AXIS_LABEL)[k] || k;
+      if (!e[k]) return `<span class="fx none" title="켜도 ${ax}에는 뚜렷한 영향이 없습니다">·</span>`;
+      const up = e[k] > 0;
+      return `<span class="fx ${up ? 'up' : 'down'}" title="켜면 ${ax}이(가) ${up ? '좋아집니다' : '나빠집니다'}">${ax[0]}${up ? '↑' : '↓'}</span>`;
+    }).join('');
+  }
+  function effectText(t) {
+    const e = (STATE.toggleEffect || {})[t] || {};
+    const parts = ['q', 's', 't'].filter((k) => e[k]).map((k) => (AXIS_LABEL[k] + (e[k] > 0 ? ' 좋아짐' : ' 나빠짐')));
+    return parts.length ? '\n\n[켜면] ' + parts.join(' · ') : '\n\n[켜도] 품질·속도·토큰에 뚜렷한 영향 없음';
+  }
+  // 배지는 **이름 앞**에 온다. 눈이 왼쪽에서 오른쪽으로 읽으므로, 이름을 읽기 전에
+  // "켜면 무엇이 좋아지고 무엇을 내주나" 가 먼저 들어온다. 폭을 고정해 이름이 세로로 정렬된다.
+  function toggleRow(t, help) {
+    return `<label data-t="${esc(t)}" title="${esc((help || '') + effectText(t))}">` +
+      `<input type="checkbox" data-toggle="${t}">` +
+      `<span class="fxs">${effectBadges(t)}</span>` +
+      `<span class="tname">${esc(t)}</span></label>`;
+  }
   function buildSidebar(j) {
     const box = $('#toggle-groups');
     const known = new Set();
+    STATE.toggleEffect = j.toggle_effect || {};
+    STATE.toggleAxes = j.toggle_axes || AXIS_LABEL;
     box.innerHTML = (j.toggle_groups || []).map((g) => {
       g.toggles.forEach((t) => known.add(t));
-      return `<div class="toggle-group ${g.perf ? 'perf' : ''}" data-g="${g.key}"><div class="tg-title" title="클릭: 접기/펼치기">${esc(g.title)} <small>(${g.toggles.length})</small></div>` +
-        g.toggles.filter((t) => j.toggle_names.includes(t)).map((t) => `<label title="${esc(j.toggle_help[t] || '')}"><input type="checkbox" data-toggle="${t}"> ${t}</label>`).join('') + '</div>';
+      const stage = g.stage ? `<span class="tg-stage">${esc(g.stage)}</span>` : '';
+      const hint = g.hint ? `<div class="tg-hint">${esc(g.hint)}</div>` : '';
+      return `<div class="toggle-group ${g.perf ? 'perf' : ''}" data-g="${g.key}">` +
+        `<div class="tg-title" title="클릭: 접기/펼치기">${stage}${esc(g.title)} <small>(${g.toggles.length})</small></div>${hint}` +
+        g.toggles.filter((t) => j.toggle_names.includes(t)).map((t) => toggleRow(t, j.toggle_help[t])).join('') + '</div>';
     }).join('');
     const rest = j.toggle_names.filter((t) => !known.has(t));
-    if (rest.length) box.innerHTML += `<div class="toggle-group"><div class="tg-title">기타</div>${rest.map((t) => `<label title="${esc(j.toggle_help[t] || '')}"><input type="checkbox" data-toggle="${t}"> ${t}</label>`).join('')}</div>`;
+    if (rest.length) box.innerHTML += `<div class="toggle-group" data-g="rest"><div class="tg-title">기타 <small>(${rest.length})</small></div>` +
+      rest.map((t) => toggleRow(t, j.toggle_help[t])).join('') + '</div>';
     $$('#toggle-groups .tg-title').forEach((h) => h.onclick = () => h.parentElement.classList.toggle('collapsed'));
+    applyFxFilter();
     $$('[data-toggle]').forEach((cb) => cb.addEventListener('change', () => {
       // 사용자가 손으로 바꾼 값은 기억해 두고(프리셋을 껐다 켜도 유지), 프리셋이 정한 값과 다르면 프리셋 표시를 지운다
       const t = cb.dataset.toggle, base = (STATE.settings && STATE.settings.toggles) || {};
       if (cb.checked === !!base[t]) delete PRESET.manual[t]; else PRESET.manual[t] = cb.checked;
       if (t in PRESET.set && PRESET.set[t] !== cb.checked) { delete PRESET.set[t]; markPresetToggles(); }
-      updateCli(); if (loaders._toggleChanged) loaders._toggleChanged();
+      updateCli(); applyFxFilter(); if (loaders._toggleChanged) loaders._toggleChanged();
     }));
     STATE.presetDefs = j.preset_defs || {};
     $('#preset-box').innerHTML = (j.presets || []).map((p) => {
@@ -138,12 +172,43 @@ window.LW = (function () {
     markPresetToggles(); updateCli(); if (loaders._toggleChanged) loaders._toggleChanged();
     if (PRESET.open) showPresetDetail(PRESET.open);
   }
+  // 축으로 걸러 보기 — 토글이 60개가 넘어 "지금 무엇을 찾는지" 로 좁히지 않으면 훑기 어렵다.
+  let FX = { axis: '', q: '' };
+  function applyFxFilter() {
+    const axis = FX.axis, q = (FX.q || '').trim().toLowerCase();
+    $$('#toggle-groups label[data-t]').forEach((lab) => {
+      const t = lab.dataset.t, e = (STATE.toggleEffect || {})[t] || {};
+      const cb = lab.querySelector('[data-toggle]');
+      let ok = true;
+      if (axis === 'on') ok = !!(cb && cb.checked);
+      else if (axis) ok = e[axis] > 0;              // 그 축이 **좋아지는** 것만
+      if (ok && q) ok = t.toLowerCase().indexOf(q) >= 0;
+      lab.classList.toggle('fx-hidden', !ok);
+    });
+    // 남은 것이 없는 묶음은 통째로 감춘다 (빈 제목만 남으면 오히려 헷갈린다)
+    $$('#toggle-groups .toggle-group').forEach((g) => {
+      const vis = $$('label[data-t]', g).filter((l) => !l.classList.contains('fx-hidden')).length;
+      g.classList.toggle('fx-hidden', vis === 0 && !!(axis || q));
+      const c = g.querySelector('.tg-title small');
+      if (c) c.textContent = (axis || q) ? '(' + vis + '/' + $$('label[data-t]', g).length + ')' : '(' + $$('label[data-t]', g).length + ')';
+    });
+  }
+  function initFxFilter() {
+    const bar = $('#fx-filter'); if (!bar) return;
+    $$('#fx-filter button').forEach((b) => b.onclick = () => {
+      FX.axis = b.dataset.fx || '';
+      $$('#fx-filter button').forEach((x) => x.classList.toggle('active', x === b));
+      applyFxFilter();
+    });
+    const s = $('#fx-search');
+    if (s) s.oninput = () => { FX.q = s.value; applyFxFilter(); };
+  }
   function markPresetToggles() {
     $$('[data-toggle]').forEach((cb) => {
       const t = cb.dataset.toggle, lab = cb.parentElement, by = t in PRESET.set;
       lab.classList.toggle('by-preset', by);
       let s = lab.querySelector('.src'); if (by) { if (!s) { s = document.createElement('span'); s.className = 'src'; lab.appendChild(s); } s.textContent = '← ' + PRESET.src[t]; } else if (s) s.remove();
-      lab.title = (STATE.toggleHelp[t] || '') + (by ? '\n\n[프리셋 ' + PRESET.src[t] + ' 이(가) ' + (PRESET.set[t] ? 'ON' : 'OFF') + ' 으로 정함 — 손으로 바꾸면 프리셋보다 우선하지 않고 서버에서 프리셋 값이 다시 적용됩니다. 다른 값을 쓰려면 프리셋 체크를 해제하세요]' : '');
+      lab.title = (STATE.toggleHelp[t] || '') + effectText(t) + (by ? '\n\n[프리셋 ' + PRESET.src[t] + ' 이(가) ' + (PRESET.set[t] ? 'ON' : 'OFF') + ' 으로 정함 — 손으로 바꾸면 프리셋보다 우선하지 않고 서버에서 프리셋 값이 다시 적용됩니다. 다른 값을 쓰려면 프리셋 체크를 해제하세요]' : '');
     });
   }
   async function showPresetDetail(name) {
@@ -166,16 +231,14 @@ window.LW = (function () {
       `<div class="muted" style="margin-top:6px">CLI: <code>--preset ${esc(name)}</code> · 영구 적용은 Settings › 프리셋 › 적용(저장) 또는 <code>preset apply ${esc(name)} --save</code></div>`;
     box.classList.remove('hidden');
   }
+  // 요청 단위 오버라이드. 프로바이더·모델은 여기서 다루지 않는다 (2026-09-17) —
+  // Settings › 모델 · 프로바이더 가 유일한 자리다. 두 곳에서 같은 값을 받으면 어느 쪽이 적용됐는지
+  // 알 수 없고, 사이드바 값은 저장되지 않아 "바꿨는데 왜 안 남지?" 가 된다.
   function overrides() {
     const ov = {};
     $$('[data-toggle]').forEach((cb) => { ov[cb.dataset.toggle] = cb.checked; });
-    const llm = $('#ov-llm').value, emb = $('#ov-embed').value, k = $('#ov-k').value, dbg = $('#ov-debug').value;
-    if (llm) ov.llm_provider = llm;
-    if (emb) ov.embed_provider = emb;
-    if (k) ov.top_k_final = parseInt(k, 10);
+    const dEl = $('#ov-debug'), dbg = dEl ? dEl.value : '';
     if (dbg !== '') ov.debug_level = parseInt(dbg, 10);
-    if ($('#ov-answer-model').value.trim()) ov.answer_model = $('#ov-answer-model').value.trim();
-    if ($('#ov-rerank-model').value.trim()) ov.rerank_model = $('#ov-rerank-model').value.trim();
     return ov;
   }
   function cliEquiv(cmd, q) {
@@ -261,16 +324,7 @@ window.LW = (function () {
       buildSidebar(j); setTogglesFrom(j.settings.toggles); document.body.dataset.togglesSig = sig; document.body.dataset.togglesInit = '1';
       const tp = $('#tr-preset'); if (tp) tp.innerHTML = '<option value="">(프리셋 없음)</option>' + (j.presets || []).map((x) => `<option>${esc(x)}</option>`).join('');
     }
-    const dl = $('#dl-llm-models');
-    if (dl && !dl.children.length) {
-      const cat = (p.catalog && p.catalog.llm) || {};
-      dl.innerHTML = [].concat(cat.anthropic || [], cat.openai || [], cat.ollama || []).filter((m) => !String(m).startsWith('(')).map((m) => `<option value="${esc(m)}">`).join('');
-      api('/api/models/catalog').then((c) => {   // models.json 카탈로그가 있으면 그것으로 교체 (사람이 추가/삭제하는 목록)
-        const ms = (c && c.models) || []; if (!ms.length) return;
-        dl.innerHTML = ms.filter((m) => m.enabled !== false).map((m) => `<option value="${esc(m.id)}">${esc(m.provider + ' · ' + (m.label || ''))}</option>`).join('');
-        STATE.catalog = c;
-      }).catch(() => {});
-    }
+    // 사이드바의 모델 datalist 는 없앴다 (프로바이더/모델 오버라이드와 함께) — Settings › 모델 · 프로바이더 가 유일한 자리다.
     return j;
   }
 
@@ -301,9 +355,72 @@ window.LW = (function () {
       try { await navigator.clipboard.writeText(JSON.stringify(trace, null, 1)); toast('trace 를 클립보드에 복사했습니다'); } catch (e) { toast('복사 실패: ' + e); }
     };
   }
+  // ---------------- 단계 재실행 (docs/RERUN.md) ----------------
+  // 재시작점 표는 서버가 준다 (`GET /api/rerun`). 화면에 박아 두면 파이프라인이 바뀔 때 어긋난다.
+  const RERUN = { points: [], stage_point: {}, loaded: false };
+  async function loadRerunPoints() {
+    if (RERUN.loaded) return RERUN;
+    const j = await api('/api/rerun');
+    if (j && !j.error) { RERUN.points = j.points || []; RERUN.stage_point = j.stage_point || {}; RERUN.capture_on = !!j.capture_on; }
+    RERUN.loaded = true;
+    return RERUN;
+  }
+  function rerunLabel(id) { return ((RERUN.points || []).find((p) => p.id === id) || {}).label || id; }
+  // 실제 실행. 설정을 따로 주지 않으면 **왼쪽 사이드바의 지금 설정**(토글·오버라이드·프리셋)으로 돈다 —
+  // 보통 질의와 같은 길이라 "사이드바에서 값을 바꾸고 ⟲ 를 누른다" 가 그대로 통한다.
+  async function runRerun(requestId, point, extra, onDone) {
+    const body = Object.assign({ request_id: requestId, from: point }, extra || {});
+    if (!body.overrides) body.overrides = overrides();
+    if (body.preset === undefined) { const pr = presetNames(); if (pr && pr.length) body.preset = pr.join(','); }
+    toast('⟲ ' + rerunLabel(point) + ' 다시 실행 중…');
+    const j = await api('/api/query/rerun', body);
+    if (!j || j.error) { toast('재실행 실패: ' + esc((j && j.error) || '')); return j; }
+    const rep = (((j.trace || {}).children) || []).filter((c) => c.replayed).length;
+    toast('재실행 완료 — ' + rerunLabel(point) + (rep ? ' (앞 ' + rep + '단계 재생)' : ''));
+    if (onDone) onDone(j);
+    return j;
+  }
+  function openRerun(requestId, point, stage, onDone) {
+    let ov = $('#rerun-modal'); if (ov) ov.remove();
+    const pinfo = (RERUN.points || []).find((p) => p.id === point) || {};
+    ov = document.createElement('div'); ov.id = 'rerun-modal'; ov.className = 'modal-bg';
+    ov.innerHTML = `<div class="modal">
+      <h3>⟲ <b>${esc(rerunLabel(point))}</b> 다시 실행</h3>
+      <div class="modal-op">요청 <code>#${esc(String(requestId))}</code> · 누른 단계 <code>${esc(stage || point)}</code></div>
+      <p class="modal-msg">${esc(pinfo.note || '')} 이 지점 <b>앞</b>의 단계는 저장해 둔 결과를 그대로 재생하고, <b>뒤</b>의 단계만 지금 설정으로 다시 계산합니다.</p>
+      <label>재시작점 <select id="rr-point">${(RERUN.points || []).map((p) => `<option value="${esc(p.id)}" ${p.id === point ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+      <label>이번 실행에만 적용할 설정 <small class="muted">(JSON · 평면. 예 <code>{"top_k_final": 12, "claim_check": false}</code>)</small>
+        <textarea id="rr-ov" spellcheck="false" style="min-height:70px" placeholder="{}"></textarea></label>
+      <label>프리셋 <input id="rr-preset" type="text" placeholder="(비움) 예: speed 또는 deep_research"></label>
+      <div id="rr-msg" class="muted small"></div>
+      <div class="modal-actions"><button class="secondary" id="rr-cancel">취소</button><button id="rr-go">실행</button></div>
+      <div class="muted small">설정을 바꿔 가며 눌러 보세요. 결과는 새 요청으로 기록되며, 거기서 또 이어서 재실행할 수 있습니다.</div>
+    </div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    $('#rr-cancel').onclick = close;
+    ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    $('#rr-go').onclick = async () => {
+      let o = null;
+      const raw = ($('#rr-ov').value || '').trim();
+      if (raw) { try { o = JSON.parse(raw); } catch (e) { $('#rr-msg').innerHTML = '<span class="bad">설정 JSON 을 읽지 못했습니다: ' + esc(e.message) + '</span>'; return; } }
+      $('#rr-go').disabled = true; $('#rr-msg').textContent = '실행 중…';
+      // 칸을 비워 두면 사이드바의 지금 설정으로 (runRerun 이 채운다)
+      const extra = {};
+      if (o) extra.overrides = o;
+      const pr = ($('#rr-preset').value || '').trim(); if (pr) extra.preset = pr;
+      const j = await runRerun(requestId, $('#rr-point').value, extra, null);
+      $('#rr-go').disabled = false;
+      if (!j || j.error) { $('#rr-msg').innerHTML = '<span class="bad">' + esc((j && j.error) || '실패') + '</span>'; return; }
+      close();
+      if (onDone) onDone(j);
+    };
+  }
   function renderTrace(el, trace, opts) {
     opts = opts || {};
     if (!trace) { el.innerHTML = ''; return; }
+    const rerunId = opts.rerun || null;      // 원 요청 id. 주면 각 단계에 ⟲ 가 붙는다
+    if (rerunId && !RERUN.loaded) loadRerunPoints().then(() => renderTrace(el, trace, opts));
     const total = trace.ms || 1;
     const rows = [];
     (function walk(n, depth) { rows.push({ n, depth }); (n.children || []).forEach((c) => walk(c, depth + 1)); })(trace, 0);
@@ -318,11 +435,23 @@ window.LW = (function () {
       const pct = r.depth === 1 && !skip ? ` <small class="muted">${fmt(100 * n.ms / total, 0)}%</small>` : '';
       const c = n.counters || {};
       const badges = (c.llm_calls ? `<span class="cnt llm" title="LLM 호출/토큰">llm ${c.llm_calls} · ${fmtK((c.llm_input_tokens || 0) + (c.llm_output_tokens || 0))} tok</span>` : '') + (c.sql ? `<span class="cnt" title="SQL 문 수">sql ${c.sql}</span>` : '');
-      return `<div class="tr-row ${n.error ? 'has-err' : ''}"><div class="tr-name ${skip ? 'skip' : ''}" style="padding-left:${r.depth * 14}px" title="클릭: 상세">${esc(n.name)}${skip ? ' <small>(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}${pct}</div>` +
+      // 단계 재실행(⟲): 이 단계부터 저장된 중간 결과로 다시 돌린다 (docs/RERUN.md).
+      // 재시작점이 없는 단계(sync_index 처럼 되돌릴 의미가 없는 것)에는 달지 않는다.
+      const pt = rerunId ? (RERUN.stage_point || {})[n.name] : null;
+      const rr = pt ? `<button class="tr-rerun" data-rerun="${esc(pt)}" data-stage="${esc(n.name)}" title="이 단계부터 다시 실행 — 지금 사이드바 설정으로 바로 실행합니다 (앞 단계는 저장된 결과를 재생).&#10;Shift 또는 Alt 를 누른 채 클릭하면 이번 실행에만 쓸 설정을 직접 적을 수 있습니다.">⟲</button>` : '';
+      const rep = n.replayed ? ' <span class="pill replay" title="계산하지 않고 저장된 결과를 그대로 썼습니다">재생</span>' : '';
+      return `<div class="tr-row ${n.error ? 'has-err' : ''}${n.replayed ? ' replayed' : ''}"><div class="tr-name ${skip ? 'skip' : ''}" style="padding-left:${r.depth * 14}px" title="클릭: 상세">${rr}${esc(n.name)}${skip ? ' <small>(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}${rep}${pct}</div>` +
         `<div class="tr-bar">${skip ? '' : `<i class="${n.error ? 'err' : ''}" style="left:${left}%;width:${w}%;background:${n.error ? '' : color}"></i>`}${badges}</div>` +
         `<div class="tr-ms">${skip ? '—' : fmt(n.ms) + ' ms'}</div><div class="tr-meta">${metaBlock(n)}</div></div>`;
     }).join('') + '</div>';
     $$('.tr-name', el).forEach((d) => d.onclick = () => d.parentElement.classList.toggle('open'));
+    // 그냥 클릭 = 지금 설정으로 **바로 실행**. Shift/Alt + 클릭 = 이번만 쓸 설정을 적는 창.
+    // (창을 항상 띄우면 "값 하나 바꾸고 눌러 본다" 는 흐름이 매번 한 단계 늘어난다.)
+    $$('.tr-rerun', el).forEach((b) => b.onclick = (e) => {
+      e.stopPropagation();
+      if (e.shiftKey || e.altKey) openRerun(rerunId, b.dataset.rerun, b.dataset.stage, opts.onRerun);
+      else runRerun(rerunId, b.dataset.rerun, null, opts.onRerun);
+    });
     if (opts.openAll) $$('.tr-row', el).forEach((r) => r.classList.add('open'));
     if (opts.controls !== false) traceToolbar(el, trace);
   }
@@ -629,7 +758,8 @@ window.LW = (function () {
     const tg = {};
     $$('[data-toggle]').forEach((cb) => { tg[cb.dataset.toggle] = cb.checked; });
     const ov = {};
-    ['ov-llm', 'ov-embed', 'ov-k', 'ov-debug', 'ov-answer-model', 'ov-rerank-model'].forEach((id) => { const e = $('#' + id); if (e) ov[id] = e.value; });
+    // 예전 프로파일에 남아 있는 ov-llm 등은 그냥 무시된다 (아래 복원도 있는 요소에만 값을 넣는다)
+    ['ov-debug'].forEach((id) => { const e = $('#' + id); if (e) ov[id] = e.value; });
     let theme = 'light'; try { theme = localStorage.getItem('llmwiki.theme') || 'light'; } catch (e) { /* ignore */ }
     const s = navState();
     return { theme: theme, toggles: tg, presets: presetNames(), overrides: ov, pins: PINS.slice(),
@@ -699,10 +829,10 @@ window.LW = (function () {
   function boot() {
     initNav();
     initTheme();
-    ['#ov-llm', '#ov-embed', '#ov-k', '#ov-debug', '#ov-answer-model', '#ov-rerank-model'].forEach((s) => { const e = $(s); if (e) e.addEventListener('change', updateCli); });
-    // 모델 입력(datalist): 값이 있으면 브라우저가 목록을 그 값으로 필터해 다시 고를 수 없으므로 × 로 비우거나, 포커스 시 전체 선택해 바로 덮어쓰게 한다
-    $$('[data-clear]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.clear); i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); i.focus(); });
-    ['#ov-answer-model', '#ov-rerank-model'].forEach((s) => { const i = $(s); if (!i) return; i.addEventListener('focus', () => i.select()); i.addEventListener('dblclick', () => { i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); }); });
+    initFxFilter();
+    ['#ov-debug'].forEach((s) => { const e = $(s); if (e) e.addEventListener('change', updateCli); });
+    // 값이 있는 입력칸을 × 로 비운다 (datalist 입력은 값이 남아 있으면 목록이 그 값으로 걸러진다)
+    $$('[data-clear]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.clear); if (!i) return; i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); i.focus(); });
     $('#btn-reset-toggles').onclick = () => setTogglesFrom(STATE.settings.toggles);
     // 사이드바의 '토글을 config.json 에 저장' 은 제거했다: 한 사람이 누르면 모든 사용자의 서버 기본값이 바뀌기 때문.
     // 서버 기본값 변경은 Settings › config.json (admin 등급, 감사 로그에 기록) 에서만 한다.
@@ -715,7 +845,9 @@ window.LW = (function () {
     const pl = $('#btn-profile-load'); if (pl) pl.onclick = () => loadProfile(false);
     const pr = $('#btn-profile-reset'); if (pr) pr.onclick = async () => { await api('/api/profile', { action: 'reset' }); try { localStorage.removeItem('llmwiki.profile'); } catch (e) { /* ignore */ } const m = $('#profile-msg'); if (m) m.textContent = '저장한 설정을 지웠습니다'; toast('내 설정 삭제됨'); };
     loadStatus().then((j) => {
-      if (!applyHash()) writeHash();
+      // 해시가 없으면 예전에는 주소만 적고 끝나서 **처음 열린 탭의 loader 가 돌지 않았다**
+      // → 그 탭(예: Settings › 모델)이 서버 설정을 읽지 않은 빈/오래된 화면으로 남았다 (2026-09-16).
+      if (!applyHash()) { writeHash(); const ab = $('.tabs:not(.hidden) button.active') || $('.tabs button.active'); if (ab && loaders[ab.dataset.tab]) { try { loaders[ab.dataset.tab](); } catch (e) { console.error('boot loader', ab.dataset.tab, e); } } }
       restorePins();
       loadProfile(true).catch(() => {});      // 로그인 사용자의 저장된 화면 설정을 자동 적용
       updateCli();
@@ -811,5 +943,6 @@ window.LW = (function () {
     activityTick(true);
   }
   return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, renderLive, watchProgress, fmtS, stepUp, cancelToken, gotoLogin, applyHash, togglePin, tabVisible, myJobs: MY_JOBS, saveProfile, loadProfile, boot, fmtDur,
+           openRerun, runRerun, loadRerunPoints,
            onActivity, refreshActivity: () => activityTick(true), onReady: [] };
 })();

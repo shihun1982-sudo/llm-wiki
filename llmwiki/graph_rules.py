@@ -88,12 +88,32 @@ DEFAULT_RULES: Dict[str, object] = {
         "UCIe": {"type": "tech", "aliases": ["chiplet", "칩렛"]},
         "technological sovereignty": {"type": "concept", "aliases": ["기술 주권", "technology sovereignty"]},
     },
+    # 관계 패턴. `value` 가 잡은 문자열을 **무엇으로 읽을지**, `in_decision`/`in_chunk` 가 **어디서 적용할지**를 정한다.
+    #   value: entity(사전 엔티티 찾기) | date | money | percent | text(잡은 문자열 자체를 노드로, node_type 사용) | id(문서 ID 패턴)
+    #   in_decision: '### D1.' 결정 블록 안에서 (출발 노드 = 그 결정)   in_chunk: 청크 전체에서 (출발 노드 = 문서)
+    # 이 세 가지가 파일에 있으므로 **코드를 고치지 않고** 새 패턴을 추가할 수 있다
+    # (예전에는 rel 이름이 owner/deadline/amount/attendee/source 다섯 중 하나일 때만 동작했다 — 2026-09-16).
     "relation_patterns": [
-        {"name": "owner", "regex": r"\*\*담당\*\*\s*[:：]\s*([^\n]+)", "rel": "owner"},
-        {"name": "deadline", "regex": r"\*\*(?:마감|적용|일정)\*\*\s*[:：]\s*([^\n]+)", "rel": "deadline"},
-        {"name": "amount", "regex": r"\*\*금액\*\*\s*[:：]\s*([^\n]+)", "rel": "amount"},
-        {"name": "attendee", "regex": r"##\s*참석(?:\s*예정)?\s*\n([^\n]+)", "rel": "attendee"},
-        {"name": "source", "regex": r"출처\s*[:：]\s*([^\n]+)", "rel": "source"},
+        {"name": "owner", "regex": r"\*\*담당\*\*\s*[:：]\s*([^\n]+)", "value": "entity",
+         "in_decision": {"rel": "owner", "weight": 1.0, "confidence": 0.9, "desc": "담당: "},
+         "in_chunk": {"rel": "responsible", "weight": 0.8, "confidence": 0.7, "desc": "담당: "}},
+        {"name": "deadline", "regex": r"\*\*(?:마감|적용|일정)\*\*\s*[:：]\s*([^\n]+)", "value": "date",
+         "in_decision": {"rel": "deadline", "weight": 1.0, "confidence": 0.85, "desc": "마감/적용: "}},
+        {"name": "amount", "regex": r"\*\*금액\*\*\s*[:：]\s*([^\n]+)", "value": "money",
+         "in_decision": {"rel": "amount", "weight": 1.0, "confidence": 0.9, "desc": "금액: "}},
+        {"name": "attendee", "regex": r"##\s*참석(?:\s*예정)?\s*\n([^\n]+)", "value": "entity",
+         "in_chunk": {"rel": "attendee", "weight": 1.0, "confidence": 0.9, "desc": "참석: "}},
+        {"name": "source", "regex": r"출처\s*[:：]\s*([^\n]+)", "value": "entity",
+         "in_chunk": {"rel": "source", "weight": 0.7, "confidence": 0.8, "desc": "출처: "}},
+        # ---- 모뎀/임베디드 (조직에 맞게 고치거나 지우세요) ----
+        {"name": "affected_module", "regex": r"\*\*(?:영향\s*모듈|모듈)\*\*\s*[:：]\s*([^\n]+)", "value": "text", "node_type": "module",
+         "in_chunk": {"rel": "affects_module", "weight": 0.8, "confidence": 0.8, "desc": "영향 모듈: "}, "split": ","},
+        {"name": "register", "regex": r"\*\*(?:레지스터|register)\*\*\s*[:：]\s*([^\n]+)", "value": "text", "node_type": "register",
+         "in_chunk": {"rel": "touches_register", "weight": 0.8, "confidence": 0.8, "desc": "레지스터: "}, "split": ","},
+        {"name": "hw_block", "regex": r"\*\*(?:HW\s*블록|hw_block)\*\*\s*[:：]\s*([^\n]+)", "value": "text", "node_type": "hw_block",
+         "in_chunk": {"rel": "in_block", "weight": 0.7, "confidence": 0.8, "desc": "HW 블록: "}, "split": ","},
+        {"name": "root_cause_of", "regex": r"\*\*(?:근본\s*원인|root\s*cause)\*\*\s*[:：]\s*([^\n]+)", "value": "id",
+         "in_chunk": {"rel": "root_cause_of", "weight": 1.0, "confidence": 0.9, "desc": "근본 원인: "}},
     ],
     "analyst_pattern": r"\*\*([가-힣A-Za-z]+)\s*\((\d{1,2}/\d{1,2})\)\*\*\s*[:：]\s*[\"“]([^\"”]+)[\"”]",
     "decision_pattern": r"###\s*(D\d)\.\s*([^\n]+)",
@@ -170,6 +190,33 @@ def entity_id_for(name: str) -> str:
     return "e:" + re.sub(r"\s+", "_", name.strip().lower())
 
 
+# 예전 형식(`{"name","regex","rel"}` 만 있는 파일)의 기본 동작. 새 파일은 value/in_decision/in_chunk 를 직접 적는다.
+_LEGACY_REL_DEFAULTS: Dict[str, Dict[str, object]] = {
+    "owner": {"value": "entity", "in_decision": {"rel": "owner", "weight": 1.0, "confidence": 0.9, "desc": "담당: "},
+              "in_chunk": {"rel": "responsible", "weight": 0.8, "confidence": 0.7, "desc": "담당: "}},
+    "deadline": {"value": "date", "in_decision": {"rel": "deadline", "weight": 1.0, "confidence": 0.85, "desc": "마감/적용: "}},
+    "amount": {"value": "money", "in_decision": {"rel": "amount", "weight": 1.0, "confidence": 0.9, "desc": "금액: "}},
+    "attendee": {"value": "entity", "in_chunk": {"rel": "attendee", "weight": 1.0, "confidence": 0.9, "desc": "참석: "}},
+    "source": {"value": "entity", "in_chunk": {"rel": "source", "weight": 0.7, "confidence": 0.8, "desc": "출처: "}},
+}
+
+
+def _norm_rel_pattern(p: Dict[str, object]) -> Dict[str, object]:
+    """관계 패턴 한 줄을 정규화한다 — 없으면 예전 동작으로 채우고, 그래도 없으면 '청크 전체에서 엔티티 연결'."""
+    if "in_decision" not in p and "in_chunk" not in p:
+        legacy = _LEGACY_REL_DEFAULTS.get(str(p.get("rel") or p.get("name") or ""))
+        if legacy:
+            p = dict(legacy, **{k: v for k, v in p.items() if k in ("name", "regex")})
+        else:
+            p.setdefault("value", "entity")
+            p["in_chunk"] = {"rel": str(p.get("rel") or p.get("name") or "references"),
+                             "weight": float(p.get("weight", 0.7) or 0.7), "confidence": float(p.get("confidence", 0.7) or 0.7),
+                             "desc": str(p.get("desc") or ((p.get("name") or "") and str(p.get("name")) + ": "))}
+    p.setdefault("value", "entity")
+    p.setdefault("node_type", str(p.get("name") or "term"))
+    return p
+
+
 def load_rules(path: Optional[str] = None) -> Dict[str, object]:
     from . import atomicio
     path = path or rules_path()
@@ -206,7 +253,13 @@ class RuleExtractor:
         # 긴 별칭 우선 매칭
         alts = sorted(self.alias_map.keys(), key=len, reverse=True)
         self._ent_re = re.compile("|".join(re.escape(a) for a in alts), re.I) if alts else None
-        self._rel_pats = [(p["name"], re.compile(p["regex"]), p["rel"]) for p in self.rules.get("relation_patterns", [])]  # type: ignore
+        # 관계 패턴: 파일의 선언을 그대로 쓴다. `rel` 만 있는 예전 파일은 이름으로 기본 동작을 채워 준다(호환).
+        self._rel_pats: List[Tuple[Dict[str, object], "re.Pattern"]] = []
+        for p in self.rules.get("relation_patterns", []):    # type: ignore
+            try:
+                self._rel_pats.append((_norm_rel_pattern(dict(p)), re.compile(str(p["regex"]))))
+            except re.error:
+                continue                                     # 정규식이 깨져도 나머지 패턴은 살린다
         self._analyst_re = re.compile(self.rules["analyst_pattern"])  # type: ignore
         self._decision_re = re.compile(self.rules["decision_pattern"])  # type: ignore
         self._date_res = [re.compile(p) for p in self.rules["date_patterns"]]  # type: ignore
@@ -260,6 +313,48 @@ class RuleExtractor:
                 ents.setdefault(eid, RuleEntity(eid, name, ttype, [], "", 0.95))
                 rels.append(RuleRelation(doc_eid, eid, rel, "front matter related.%s" % key, 1.0, 0.98, "explicit"))
         return ents, rels
+
+    def _apply_rel_patterns(self, text: str, scope: str, src_eid: str, add, rels: List[RuleRelation]) -> None:
+        """관계 패턴을 **파일의 선언대로** 적용한다 (코드에 rel 이름을 적지 않는다).
+
+        scope = 'in_decision'(결정 블록 안, 출발=결정 노드) | 'in_chunk'(청크 전체, 출발=문서 노드).
+        value = entity | date | money | percent | text | id.
+        """
+        for pat, rx in self._rel_pats:
+            spec = pat.get(scope)
+            if not isinstance(spec, dict):
+                continue
+            rel = str(spec.get("rel") or pat.get("name") or "references")
+            w = float(spec.get("weight", 0.7) or 0.7)
+            conf = float(spec.get("confidence", 0.7) or 0.7)
+            desc_pre = str(spec.get("desc") or "")
+            value = str(pat.get("value") or "entity")
+            node_type = str(pat.get("node_type") or "term")
+            split = str(pat.get("split") or "")
+            for mm in rx.finditer(text):
+                val = (mm.group(1) if (mm.lastindex or 0) >= 1 else mm.group(0)).strip()
+                if not val:
+                    continue
+                desc = desc_pre + val[:120]
+                if value == "entity":
+                    for canon, _pos in self.find_entities(val):
+                        rels.append(RuleRelation(src_eid, entity_id_for(canon), rel, desc, w, conf))
+                elif value == "date":
+                    for d in self._dates(val):
+                        rels.append(RuleRelation(src_eid, add(d, "date", "", 0.9), rel, desc, w, conf))
+                elif value == "money":
+                    for a in self._money_re.findall(val):
+                        rels.append(RuleRelation(src_eid, add(a.strip(), "amount", "", 0.9), rel, desc, w, conf))
+                elif value == "percent":
+                    for a in self._pct_re.findall(val):
+                        rels.append(RuleRelation(src_eid, add(a.strip(), "percent", "", 0.9), rel, desc, w, conf))
+                elif value == "id":
+                    for cid, ctype, _pos in self.find_ids(val):
+                        rels.append(RuleRelation(src_eid, add(cid, ctype, "", 0.95), rel, desc, w, conf))
+                else:                                   # text — 잡은 문자열 자체가 노드 (split 이 있으면 나눠서)
+                    parts = [x.strip() for x in val.split(split)] if split else [val]
+                    for name in [x for x in parts if x][:12]:
+                        rels.append(RuleRelation(src_eid, add(name, node_type, "", conf), rel, desc, w, conf))
 
     # ------------------------------------------------------------------
     def find_entities(self, text: str) -> List[Tuple[str, int]]:
@@ -328,34 +423,10 @@ class RuleExtractor:
             # 결정 블록 범위 안의 담당/마감/금액
             block_end = chunk_text.find("\n### ", m.end())
             block = chunk_text[m.start(): block_end if block_end > 0 else len(chunk_text)]
-            for pname, rx, rel in self._rel_pats:
-                for mm in rx.finditer(block):
-                    val = mm.group(1).strip()
-                    if rel == "owner":
-                        for canon, _ in self.find_entities(val):
-                            rels.append(RuleRelation(deid, entity_id_for(canon), "owner", "담당: " + val, 1.0, 0.9))
-                    elif rel == "deadline":
-                        for d in self._dates(val):
-                            did = add(d, "date", "", 0.9)
-                            rels.append(RuleRelation(deid, did, "deadline", "마감/적용: " + val, 1.0, 0.85))
-                    elif rel == "amount":
-                        for a in self._money_re.findall(val):
-                            aid = add(a.strip(), "amount", "", 0.9)
-                            rels.append(RuleRelation(deid, aid, "amount", "금액: " + val, 1.0, 0.9))
+            self._apply_rel_patterns(block, "in_decision", deid, add, rels)
 
-        # 담당/마감 (결정 블록 밖, 청크 전체)
-        for pname, rx, rel in self._rel_pats:
-            for mm in rx.finditer(chunk_text):
-                val = mm.group(1).strip()
-                if rel == "attendee":
-                    for canon, _ in self.find_entities(val):
-                        rels.append(RuleRelation(doc_eid, entity_id_for(canon), "attendee", "참석: " + val, 1.0, 0.9))
-                elif rel == "source":
-                    for canon, _ in self.find_entities(val):
-                        rels.append(RuleRelation(doc_eid, entity_id_for(canon), "source", "출처: " + val, 0.7, 0.8))
-                elif rel == "owner":
-                    for canon, _ in self.find_entities(val):
-                        rels.append(RuleRelation(doc_eid, entity_id_for(canon), "responsible", "담당: " + val, 0.8, 0.7))
+        # 결정 블록 밖, 청크 전체 — 출발 노드는 문서
+        self._apply_rel_patterns(chunk_text, "in_chunk", doc_eid, add, rels)
 
         # 애널리스트 코멘트: **미래에셋 (5/15)**: "…"
         for m in self._analyst_re.finditer(chunk_text):

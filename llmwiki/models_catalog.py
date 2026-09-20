@@ -43,10 +43,20 @@ DEFAULT_CATALOG: Dict[str, Any] = {
         {"id": "voyage-3.5", "provider": "voyage", "label": "voyage-3.5 (1024d)", "dim": 1024, "enabled": True, "notes": "VOYAGE_API_KEY"},
         {"id": "BAAI/bge-m3", "provider": "st", "label": "BAAI/bge-m3 (sentence-transformers)", "dim": 1024, "enabled": True, "notes": "pip install sentence-transformers"},
     ],
+    # rerank API 모델 (rerank_url + rerank_api_model). LLM 리랭크(역할 rerank)와는 다른 경로다 —
+    # 역할 rerank 는 위 models 목록에서 고르고, 여기 항목은 전용 rerank 엔드포인트의 모델 이름이다.
+    "rerank": [
+        {"id": "BAAI/bge-reranker-v2-m3", "provider": "cohere", "label": "bge-reranker-v2-m3 (vLLM/Jina 호환 /v1/rerank)", "enabled": True, "notes": "rerank_api_style=cohere"},
+        {"id": "rerank-multilingual-v3.0", "provider": "cohere", "label": "Cohere rerank-multilingual-v3.0", "enabled": True, "notes": "COHERE_API_KEY"},
+        {"id": "jina-reranker-v2-base-multilingual", "provider": "cohere", "label": "Jina reranker v2 (multilingual)", "enabled": True, "notes": "JINA_API_KEY"},
+        {"id": "rerank-2", "provider": "voyage", "label": "Voyage rerank-2", "enabled": True, "notes": "rerank_api_style=voyage"},
+    ],
 }
 
 PROVIDERS = ["auto", "anthropic", "openai", "ollama", "headless:opencode", "headless:claude", "headless:codex", "headless:mock", "mock", "none"]
 EMBED_PROVIDERS = ["auto", "hash", "voyage", "openai", "ollama", "st"]
+RERANK_PROVIDERS = ["cohere", "voyage"]        # rerank_api_style 과 같은 값 (응답 포맷)
+SECTIONS = ("models", "embed", "rerank")       # kind → 카탈로그 절. kind 를 안 주면 llm(=models)
 
 
 def catalog_path() -> str:
@@ -76,10 +86,16 @@ def load_catalog(force: bool = False) -> Dict[str, Any]:
                     raise ValueError("models.json 형식 오류")
             except Exception:
                 data = json.loads(json.dumps(DEFAULT_CATALOG))
-        data.setdefault("models", [])
-        data.setdefault("embed", [])
+        for sect in SECTIONS:
+            data.setdefault(sect, [])
+            if sect == "rerank" and not data[sect]:
+                # 예전 models.json 에는 rerank 절이 없다 — 파일을 건드리지 않고 기본 목록만 채워 준다
+                data[sect] = json.loads(json.dumps(DEFAULT_CATALOG["rerank"]))
         for m in data["models"]:
             _norm(m)
+        for sect in ("embed", "rerank"):
+            for m in data[sect]:
+                _norm(m)
         _CACHE.update(mtime=mt, data=data, path=p)
         return data
 
@@ -118,7 +134,8 @@ def add_model(m: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("id 필요")
     data = json.loads(json.dumps(load_catalog(force=True)))
     m = _norm(dict(m))
-    sect = "embed" if m.pop("kind", "llm") == "embed" else "models"
+    kind = str(m.pop("kind", "llm") or "llm")
+    sect = kind if kind in ("embed", "rerank") else "models"
     lst = data.setdefault(sect, [])
     for i, x in enumerate(lst):
         if x.get("id") == m["id"] and (x.get("provider") == m["provider"] or not m.get("provider")):
@@ -132,10 +149,10 @@ def add_model(m: Dict[str, Any]) -> Dict[str, Any]:
 
 def remove_model(mid: str, provider: Optional[str] = None) -> Dict[str, Any]:
     data = json.loads(json.dumps(load_catalog(force=True)))
-    n0 = len(data.get("models", [])) + len(data.get("embed", []))
-    for sect in ("models", "embed"):
+    n0 = sum(len(data.get(s, [])) for s in SECTIONS)
+    for sect in SECTIONS:
         data[sect] = [x for x in data.get(sect, []) if not (x.get("id") == mid and (provider is None or x.get("provider") == provider))]
-    if len(data["models"]) + len(data["embed"]) == n0:
+    if sum(len(data[s]) for s in SECTIONS) == n0:
         raise ValueError("카탈로그에 없는 모델: %s" % mid)
     _write(data)
     return load_catalog(force=True)
@@ -168,13 +185,36 @@ def describe(settings: Any = None, role: Optional[str] = None) -> Dict[str, Any]
         try:
             for r in settings.LLM_ROLES:
                 c = settings.role_llm(r)
-                in_use[r] = {"provider": c["provider"], "model": c["model"]}
+                in_use[r] = {"provider": c["provider"], "model": c["model"], "kind": "llm",
+                             "source": "역할 설정" if (getattr(settings, "llm_roles", None) or {}).get(r, {}).get("model") else "전역 상속"}
                 if c["provider"] not in ("none", "mock") and not any(m["id"] == c["model"] and (m["provider"] == c["provider"] or c["provider"] == "auto") for m in cat.get("models", [])):
                     unknown.append({"role": r, "provider": c["provider"], "model": c["model"]})
         except Exception:
             pass
-    return {"path": catalog_path(), "models": models, "embed": cat.get("embed", []), "by_provider": by_prov, "providers": PROVIDERS,
-            "embed_providers": EMBED_PROVIDERS, "in_use": in_use, "unknown_in_use": unknown, "roles_note": "roles 가 빈 항목은 모든 역할에 표시"}
+        # 임베딩·리랭크(API)도 "지금 쓰는 모델" 이다 — 예전에는 역할 LLM 만 보여 줘서
+        # 화면에서 임베딩/리랭크 모델이 아예 안 보였다 (2026-09-16).
+        try:
+            ep = str(getattr(settings, "embed_provider", "") or "auto")
+            em = str(getattr(settings, "embed_model", "") or "")
+            in_use["embed"] = {"provider": ep, "model": em or "(hash)", "kind": "embed",
+                               "source": "config embed_provider/embed_model" + (" · auto 판정" if ep == "auto" else "")}
+            if em and not any(m.get("id") == em for m in cat.get("embed", [])):
+                unknown.append({"role": "embed", "provider": ep, "model": em})
+        except Exception:
+            pass
+        try:
+            ru = str(getattr(settings, "rerank_url", "") or "")
+            rm = str(getattr(settings, "rerank_api_model", "") or "")
+            in_use["rerank_api"] = {"provider": str(getattr(settings, "rerank_api_style", "cohere") or "cohere"),
+                                    "model": rm or "(rerank_url 없음 — API 리랭크 꺼짐)", "kind": "rerank",
+                                    "source": "config rerank_url/rerank_api_model"}
+            if ru and rm and not any(m.get("id") == rm for m in cat.get("rerank", [])):
+                unknown.append({"role": "rerank_api", "provider": str(getattr(settings, "rerank_api_style", "") or ""), "model": rm})
+        except Exception:
+            pass
+    return {"path": catalog_path(), "models": models, "embed": cat.get("embed", []), "rerank": cat.get("rerank", []),
+            "by_provider": by_prov, "providers": PROVIDERS, "embed_providers": EMBED_PROVIDERS, "rerank_providers": RERANK_PROVIDERS,
+            "in_use": in_use, "unknown_in_use": unknown, "roles_note": "roles 가 빈 항목은 모든 역할에 표시"}
 
 
 def discover(settings: Any, timeout: float = 3.0) -> Dict[str, Any]:

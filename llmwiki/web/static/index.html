@@ -31,28 +31,83 @@
 
 <div class="layout">
   <aside id="sidebar">
+    <!-- 채팅: 사이드바 **최상단 고정**. 스크롤을 내려도 남아 있고, 접으면 최근 한 줄만 보인다.
+         부수 기능이라 토글 collab 이 꺼져 있으면 서버가 404 를 주고 이 블록은 통째로 숨는다. -->
+    <!-- 두 줄 구성:
+         1줄 — 최신 대화 한 줄 + [챗](대화창과 아이콘을 함께 켜고 끈다) + [게시]
+         2줄 — '챗' 을 켰을 때만 보이는 입력칸. 입력한 말은 내 아이콘 위 말풍선으로 뜬다. -->
+    <div id="chat-box" class="chat-box hidden">
+      <div class="chat-head">
+        <span id="chat-last" class="chat-last muted small" title="가장 최근 대화">(대화 없음)</span>
+        <button type="button" id="btn-chat-toggle" class="mini secondary" title="대화창과 접속자 아이콘을 함께 켜고 끕니다">챗</button>
+        <button type="button" id="btn-chat-board" class="mini secondary" title="게시판에 글 올리기 (내용과 작업 연결을 고릅니다)">게시</button>
+      </div>
+      <div id="chat-row2" class="chat-input hidden">
+        <span id="chat-emoji" class="chat-emoji" title="내 아이콘 (접속 IP 로 정해집니다 — 고를 수 없습니다)">🛠</span>
+        <input id="chat-text" type="text" maxlength="2000" placeholder="메시지 (휘발성 — 내 아이콘 위에 뜹니다)">
+        <button type="button" id="btn-chat-send" class="mini" title="보내기 (Enter)">⏎</button>
+      </div>
+    </div>
+    <!-- 게시 대화상자: '게시' 버튼을 누르면 화면 가운데에 뜬다 (사이드바가 좁아 입력이 어려웠다) -->
+    <div id="post-modal" class="modal-overlay hidden">
+      <div class="modal-box">
+        <div class="modal-head"><b>게시판에 올리기</b><button type="button" id="btn-cp-cancel" class="modal-x" title="닫기">✕</button></div>
+        <div class="muted small">채팅은 사라지지만 여기 올린 글은 남습니다. 어떤 작업에 대한 것인지 고르면 그 요청과 연결됩니다.</div>
+        <label>제목 <input id="cp-title" type="text" placeholder="한 줄 요약"></label>
+        <label>연결할 작업 <select id="cp-request"><option value="">(작업 연결 안 함)</option></select></label>
+        <label>내용 <textarea id="cp-body" rows="8" placeholder="내용 (클립보드의 표·로그·텍스트를 그대로 붙여 넣어도 됩니다)"></textarea></label>
+        <div class="row">
+          <select id="cp-kind"><option value="feedback">피드백</option><option value="question">질문</option><option value="note">기록</option><option value="bug">문제</option></select>
+          <button type="button" id="btn-cp-submit">게시</button>
+          <button type="button" id="btn-cp-board" class="secondary">게시판 보기</button>
+        </div>
+      </div>
+    </div>
     <h3>프리셋 <small>(체크 → 아래 토글에 즉시 반영, 요청 단위)</small></h3>
     <div class="toggle-group" id="preset-box"></div>
     <div id="preset-detail" class="preset-detail hidden"></div>
     <h3>기능 토글 <small>(요청 단위 적용 · <span class="by-preset-legend">■</span> 프리셋이 정한 값)</small></h3>
+    <!-- 배지 읽는 법 + 축으로 걸러 보기. "이걸 켜면 뭐가 좋아지고 뭘 내주나" 를 누르기 전에 알 수 있게 한다. -->
+    <div class="fx-legend">
+      <span class="fx up">품↑</span><span class="fx down">속↓</span><span class="fx down">토↓</span>
+      <span class="muted">= 켜면 품질 좋아짐 · 속도 느려짐 · 토큰 늘어남</span>
+    </div>
+    <div class="fx-filter" id="fx-filter">
+      <button type="button" data-fx="" class="active" title="모든 토글">전체</button>
+      <button type="button" data-fx="q" title="켜면 품질이 좋아지는 토글만">품질↑</button>
+      <button type="button" data-fx="s" title="켜면 빨라지는 토글만">속도↑</button>
+      <button type="button" data-fx="t" title="켜면 토큰을 아끼는 토글만">토큰↓</button>
+      <button type="button" data-fx="on" title="지금 켜져 있는 토글만">켜진 것</button>
+      <input type="search" id="fx-search" placeholder="이름 검색" title="토글 이름으로 걸러 보기">
+    </div>
     <div id="toggle-groups"></div>
-    <div class="toggle-group"><div class="tg-title">Providers / 디버그 (요청 단위)</div>
-      <label title="이번 요청에만 쓸 LLM 프로바이더. (config) = config.json 값 그대로. auto = ANTHROPIC_API_KEY 있으면 anthropic → Ollama(모델 받아져 있을 때) → none(추출식). openai/headless 는 직접 선택.">LLM <select id="ov-llm"><option value="">(config)</option><option>auto</option><option>anthropic</option><option>openai</option><option>ollama</option><option>headless:opencode</option><option>mock</option><option>none</option></select></label>
-      <label title="이번 요청에만 쓸 answer 역할 모델명. 목록에서 고르거나 직접 입력. × 로 비우면 config 값. 저장은 Settings › 모델·프로바이더.">answer 모델 <span class="clearable"><input id="ov-answer-model" type="text" list="dl-llm-models" placeholder="(config)" style="width:150px"><button type="button" class="clr" data-clear="ov-answer-model" title="비우기 (config 값 사용)">×</button></span></label>
-      <label title="이번 요청에만 쓸 rerank 역할 모델명.">rerank 모델 <span class="clearable"><input id="ov-rerank-model" type="text" list="dl-llm-models" placeholder="(config)" style="width:150px"><button type="button" class="clr" data-clear="ov-rerank-model" title="비우기 (config 값 사용)">×</button></span></label>
-      <label>Embed <select id="ov-embed"><option value="">(config)</option><option>auto</option><option>hash</option><option>voyage</option><option>openai</option><option>ollama</option><option>st</option></select></label>
-      <label>top_k <input id="ov-k" type="number" min="1" max="30" placeholder="8" style="width:60px"></label>
-      <label>debug <select id="ov-debug"><option value="">(config)</option><option value="0">0 요약</option><option value="1">1 디버그</option><option value="2">2 프롬프트 샘플</option></select></label>
-      <datalist id="dl-llm-models"></datalist>
+    <!-- 프로바이더/모델 요청 단위 오버라이드는 **없앴다** (2026-09-17).
+         같은 값을 Settings › 모델·프로바이더 표에서 이미 고칠 수 있어 두 곳이 서로 다른 말을 했고,
+         사이드바에서 바꾼 값은 저장되지 않아 "바꿨는데 왜 안 남지?" 를 만들었다.
+         질의마다 바꿀 만한 것은 top_k 와 debug 뿐이라 그 둘만 남긴다. -->
+    <div class="toggle-group"><div class="tg-title" title="이번 요청에만 적용됩니다">단계 기록 상세도 (요청 단위)</div>
+      <label title="이번 요청의 **단계별 프로파일(trace)** 에 무엇까지 남길지 정합니다. 서버 로그 레벨과는 다릅니다.">trace
+        <select id="ov-debug">
+          <option value="">(config 값)</option>
+          <option value="0">0 · 단계와 시간만</option>
+          <option value="1">1 · + 디버그 메타 (규칙·순위·FTS 식)</option>
+          <option value="2">2 · + 프롬프트·응답 샘플</option>
+        </select></label>
+      <div class="muted small">올릴수록 <b>워터폴에서 볼 수 있는 것</b>이 늘고 저장 용량이 커집니다 (답변 품질과는 무관).<br>
+        · 리포트까지 원하면 토글 <code>analysis_mode</code><br>
+        · ⟲ 재실행용 중간 결과는 토글 <code>rerun_capture</code><br>
+        · <b>서버 로그 레벨</b>(DEBUG/INFO/…)은 관리 › 서버 모니터, 로그 보기는 관측 › 로그<br>
+        · 모델·프로바이더는 Settings › 모델 · 프로바이더 (거기서 바꾼 값은 저장됩니다)</div>
     </div>
     <div class="toggle-group">
       <button id="btn-reset-toggles" class="secondary">config 값으로 되돌리기</button>
       <div class="muted small">토글은 <b>이번 요청에만</b> 적용됩니다. 서버 기본값을 바꾸려면 Settings › config.json (admin).</div>
       <div class="row" style="margin-top:6px">
-        <button id="btn-profile-save" class="secondary mini" title="지금의 토글·프리셋·모델 오버라이드·테마·고정 탭을 내 계정에 저장합니다 (서버 설정은 바뀌지 않습니다)">💾 내 설정 저장</button>
-        <button id="btn-profile-load" class="secondary mini" title="저장해 둔 내 설정을 불러옵니다">↺ 불러오기</button>
+        <button id="btn-profile-save" class="secondary mini" title="지금의 토글·프리셋·테마·고정 탭·화면 배치를 **로그인한 내 계정**으로 서버에 저장합니다 (data/profiles.json). 서버 설정(config.json)은 바뀌지 않고, 다른 사용자에게도 영향이 없습니다. 게스트는 저장되지 않고 이 브라우저에만 남습니다.">💾 내 설정 저장</button>
+        <button id="btn-profile-load" class="secondary mini" title="저장해 둔 내 설정을 불러옵니다 (다른 PC·브라우저에서도 같은 계정이면 그대로 따라옵니다)">↺ 불러오기</button>
         <button id="btn-profile-reset" class="secondary mini" title="저장한 내 설정을 지웁니다">✕</button>
       </div>
+      <div class="muted small">저장 기준은 <b>로그인 계정</b>입니다 (IP 가 아닙니다). 게스트는 이 브라우저에만 남습니다.</div>
       <div id="profile-msg" class="muted small"></div>
     </div>
     <div class="cli-hint"><div class="tg-title">CLI 동등 명령</div><code id="cli-equiv">python -m llmwiki …</code></div>
@@ -85,7 +140,7 @@
     <nav class="tabs hidden" data-group="corpus"><button data-tab="build">빌드 · 상태</button><button data-tab="embed">임베딩 · coverage</button><button data-tab="contract">문서 계약 · lint</button><button data-tab="sources">MCP 소스</button></nav>
     <nav class="tabs hidden" data-group="knowledge"><button data-tab="graph">그래프</button><button data-tab="wiki">위키</button><button data-tab="rules">그래프 규칙</button></nav>
     <nav class="tabs hidden" data-group="quality"><button data-tab="trials">Trial 비교</button><button data-tab="eval">평가</button><button data-tab="forensics">포렌식</button></nav>
-    <nav class="tabs hidden" data-group="evolve"><button data-tab="evolve">제안 (HITL)</button><button data-tab="memory">메모리</button></nav>
+    <nav class="tabs hidden" data-group="evolve"><button data-tab="evolve">제안 (HITL)</button><button data-tab="memory">메모리</button><button data-tab="board">게시판</button></nav>
     <nav class="tabs hidden" data-group="settings"><button data-tab="models">모델 · 프로바이더</button><button data-tab="presets">프리셋</button><button data-tab="tuning">튜닝</button><button data-tab="qrules">질의 규칙 사전</button><button data-tab="pins">Pin</button><button data-tab="prompts">프롬프트</button><button data-tab="schedule">스케줄</button><button data-tab="config">config.json</button><button data-tab="security">보안 · 사용자</button></nav>
     <nav class="tabs hidden" data-group="observability"><button data-tab="requests">요청 프로파일</button><button data-tab="activity">진행 중 작업</button><button data-tab="server">서버 모니터</button><button data-tab="logs">로그</button><button data-tab="arch">구조 · 흐름</button><button data-tab="system">시스템 · 규모</button><button data-tab="qlog">질의 로그</button><button data-tab="console">콘솔 (CLI)</button></nav>
 
@@ -98,6 +153,18 @@
         <label class="inline"><input type="checkbox" id="q-log" checked> 로그/자가진화 기록</label>
       </div>
       <div class="samples" id="samples"></div>
+      <!-- 내 지난 요청: 한 줄을 누르면 그때의 답변·근거·판정을 **다시 실행하지 않고** 그대로 다시 본다 -->
+      <details id="myreq-box" class="myreq">
+        <summary>🕘 내 지난 요청 <span id="myreq-count" class="muted small"></span></summary>
+        <div class="row">
+          <input id="myreq-q" type="text" placeholder="요약에서 찾기 (예: AGC)" style="min-width:200px">
+          <select id="myreq-kind"><option value="">전체</option><option value="query">질의</option><option value="search">검색</option><option value="build">빌드</option><option value="eval">평가</option></select>
+          <label class="inline" title="권한이 있으면 서버에서 실행된 모든 사람의 요청을 봅니다"><input type="checkbox" id="myreq-all"> 모든 사용자</label>
+          <button class="mini secondary" id="btn-myreq-refresh">새로고침</button>
+          <span id="myreq-msg" class="muted small"></span>
+        </div>
+        <div id="myreq-list" class="small"></div>
+      </details>
       <!-- 지금 서버에서 실행·대기 중인 요청 한 줄 요약 (질의하면서 서버 상태를 같이 본다) -->
       <div id="q-queue" class="queue-strip hidden"></div>
       <div id="q-live" class="live hidden"></div>
@@ -135,7 +202,8 @@
             <div id="hits"></div>
           </div>
           <div class="col">
-            <h3>단계별 프로파일 <small class="muted">이름 클릭 → meta · debug · samples</small> <button class="mini" id="btn-q-inspect">요청 프로파일에서 상세 보기</button></h3>
+            <h3>단계별 프로파일 <small class="muted">이름 클릭 → meta · debug · samples · <b>⟲ = 그 단계부터 다시 실행</b></small> <button class="mini" id="btn-q-inspect">요청 프로파일에서 상세 보기</button></h3>
+            <div id="q-rerun-note" class="small" style="margin:2px 0"></div>
             <div id="trace"></div>
             <h3>라우터 / 시드 / 모델</h3>
             <div id="route" class="kv"></div>
@@ -326,29 +394,39 @@
       <div id="mem-episodes"></div>
     </section>
 
+    <section id="tab-board" class="tab">
+      <div class="row">
+        <button id="btn-board-refresh" class="secondary">새로고침</button>
+        <input id="board-q" type="text" placeholder="제목·내용에서 찾기" style="min-width:200px">
+        <label class="inline"><input type="checkbox" id="board-mine"> 내 글만</label>
+        <label class="inline"><input type="checkbox" id="board-unresolved"> 미해결만</label>
+        <span class="muted small">사이드바 대화창에서 <code>/게시 제목</code> 으로 올립니다. 채팅은 휘발성이고 여기 글만 남습니다.</span>
+      </div>
+      <div id="board-list"></div>
+      <div class="muted small" id="board-note"></div>
+    </section>
+
     <!-- ================= SETTINGS ================= -->
     <section id="tab-models" class="tab">
       <div class="row">
         <button id="btn-models-save">저장 &amp; 프로바이더 재로드</button>
         <button id="btn-models-test" class="secondary">전체 연결 테스트</button>
         <button id="btn-models-test-live" class="secondary" title="ping 외에 역할별 provider/model 당 실제 완성 호출 1회 — PAT 권한·헤더·모델명·headless 실행까지 확인 (토큰 소량 소비)">실제 호출 테스트 (--live)</button>
-        <button id="btn-models-reload" class="secondary">다시 읽기</button>
+        <button id="btn-models-reload" class="secondary" title="서버가 들고 있는 설정으로 이 화면을 다시 그립니다 (파일은 읽지 않음)">화면 다시 그리기</button>
+        <button id="btn-models-reload-file" class="secondary" title="디스크의 config.json 을 서버가 다시 읽습니다 — 설정 파일을 서버 밖에서 고쳤을 때 (admin)">↻ config.json 다시 읽기</button>
         <span id="models-msg" class="muted small"></span>
       </div>
       <div class="cols">
-        <div class="col">
-          <h3>임베딩 (벡터 검색)</h3>
-          <div class="form" id="embed-form"></div>
-          <h3>전역 LLM 기본값</h3>
-          <div class="form" id="llm-form"></div>
-          <h3>OpenAI-compatible · rerank 엔드포인트</h3>
-          <div class="form" id="endpoint-form"></div>
-          <div class="muted small" id="models-note"></div>
-        </div>
         <div class="col wide">
-          <h3>역할별 LLM <small class="muted">비우면 전역값 상속 · provider 에 headless:&lt;agent&gt; 지정 가능 · 모델은 models.json 카탈로그에서 선택</small>
-            <label class="inline" style="float:right"><input type="checkbox" id="roles-show-policy"> 재시도·타임아웃 열 보기</label></h3>
+          <h3>모델 · 역할 전체 <small class="muted">역할 LLM + 임베딩 + 리랭크(API) 를 여기서 모두 고칩니다 · 비우면 전역값 상속 · provider 에 headless:&lt;agent&gt; 가능 · 모델은 models.json 카탈로그에서 선택</small>
+            <span style="float:right;display:inline-flex;gap:6px;align-items:center">
+              <label class="inline"><input type="checkbox" id="roles-show-policy" checked> 재시도·타임아웃 열 보기</label>
+              <button id="btn-roles-reload" class="mini secondary" title="서버가 들고 있는 설정으로 이 표를 다시 그립니다">↻ 다시 그리기</button>
+              <button id="btn-roles-reload-file" class="mini secondary" title="디스크의 config.json 을 서버가 다시 읽고 이 표를 갱신합니다 (admin)">↻ config.json</button>
+              <button id="btn-roles-save" class="mini" title="이 표와 오른쪽 폼의 값을 config.json 에 저장하고 프로바이더를 다시 만듭니다">저장</button>
+            </span></h3>
           <div id="roles-table"></div>
+          <div id="roles-msg" class="muted small"></div>
           <h3>연결 테스트 결과</h3>
           <div id="models-test" class="small"></div>
           <h3>사용 가능한 모델 카탈로그 <small class="muted">models.json — 여기 있는 모델이 위 드롭다운에 나옵니다</small>
@@ -360,13 +438,22 @@
             <select id="cat-provider"></select>
             <input id="cat-label" type="text" placeholder="표시 이름" style="width:160px">
             <input id="cat-roles" type="text" placeholder="역할 (비우면 전체): answer,rerank" style="width:180px">
-            <label class="inline"><input type="checkbox" id="cat-embed"> 임베딩</label>
+            <label class="inline">종류 <select id="cat-kind"><option value="llm">LLM</option><option value="embed">임베딩</option><option value="rerank">리랭크(API)</option></select></label>
             <button class="mini" id="btn-cat-add">추가</button>
           </div>
           <div id="cat-table"></div>
           <div id="cat-discover" class="small"></div>
           <h3>Headless agents (agents.json) <button class="mini secondary" id="btn-agents-save">저장</button></h3>
           <textarea id="agents-json" spellcheck="false" style="min-height:180px"></textarea>
+        </div>
+        <div class="col">
+          <h3>임베딩 (벡터 검색)</h3>
+          <div class="form" id="embed-form"></div>
+          <h3>전역 LLM 기본값</h3>
+          <div class="form" id="llm-form"></div>
+          <h3>OpenAI-compatible · rerank 엔드포인트</h3>
+          <div class="form" id="endpoint-form"></div>
+          <div class="muted small" id="models-note"></div>
         </div>
       </div>
     </section>
@@ -529,6 +616,8 @@
       <div id="act-board" class="act-board"></div>
       <div id="act-summary" class="statrow hidden"></div>
       <div id="act-running" class="hidden"></div>
+      <!-- 한 줄을 누르면 여기에 상세: 실행 중이면 지금 어느 단계인지(실시간), 끝났으면 그때 남긴 진행 기록과 결과로 가는 길 -->
+      <div id="act-detail" class="act-detail hidden"></div>
       <h3>최근 완료</h3>
       <div id="act-recent-board" class="act-board recent"></div>
       <div id="act-recent" class="hidden"></div>
@@ -660,12 +749,16 @@
   </main>
 </div>
 <div id="toast"></div>
+<!-- 접속자 캐릭터 + 말풍선. 드래그로 옮기며 위치는 화면 비율로 서버에 저장된다.
+     pointer-events 는 캐릭터에만 있어 아래 화면 조작을 막지 않는다. -->
+<div id="people-layer" class="people-layer"></div>
 <script src="/static/js/core.js"></script>
 <script src="/static/js/ask.js"></script>
 <script src="/static/js/corpus.js"></script>
 <script src="/static/js/knowledge.js"></script>
 <script src="/static/js/quality.js"></script>
 <script src="/static/js/evolve.js"></script>
+<script src="/static/js/collab.js"></script>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/observability.js"></script>
 <script>LW.boot();</script>

@@ -91,6 +91,28 @@ forensics #32 에 기록됨 (origin=expectation)
 - **answer 탈락(근거는 있었음)** → `answer_length_target=long`, `prompts/answer_guide.md` 에 "수치·ID 를 빠짐없이" 지시, `claim_policy` 가 drop 이면 mark 로.
 - **corpus_gap** → 문서 추가. `memory consolidate` 로 반복 여부를 본다.
 
+#### 자주 헷갈리는 조합 — "원 판정은 sufficient 인데 기대 문서는 미해결"
+
+두 값은 **다른 질문에 대한 답**이다. 나란히 놓여 있어서 모순처럼 보일 뿐이다.
+
+| 보이는 것 | 뜻 | 할 일 |
+|---|---|---|
+| 원 판정 `sufficient` | 그 질의의 답변은 **가진 근거로 충분**했다 | — |
+| 기대 항목이 **미해결**(`expected.unresolved`) | 당신이 적은 ID/청크가 **색인에 아예 없다** — 코퍼스에 없거나 ID 표기가 다르다 | 문서를 넣거나, `data/rules.json` 의 `id_patterns` 와 표기를 맞춘다. **설정을 만질 문제가 아니다** |
+| 판정 `sufficient` + 기대 청크가 하나도 인용 안 됨 | 답은 했지만 **다른 문서로** 했다 | 아래 '탈락 단계' 에서 어디서 밀렸는지 본다 |
+
+화면(Ask · Quality)은 이 세 경우를 한 문장으로 먼저 알려 준다. 미해결 항목은 빨간 글자 대신
+"무엇을 해야 하는가" 가 붙은 안내 배너로 나온다.
+
+#### 화면이 긴 경우 (목표가 수십 개 / 수정안이 여러 건)
+
+- `--term` 만 주면 그 용어를 담은 청크가 전부 목표가 된다(최대 `forensic_term_targets`, 기본 20).
+  서버가 **가장 멀리 간 것부터** 정렬해 주고, 화면은 앞의 `forensic_targets_shown`(기본 3)개만 펼친다.
+  나머지는 "나머지 목표 청크 N개" 로 접혀 있다 — 같은 형식의 표가 반복되어 읽기 어려웠던 문제.
+- 수정안은 **confidence 내림차순**으로 온다. 예전에는 담긴 순서(목표별 → 전역 → corpus_gap → pin) 그대로여서
+  근거가 약한 0.35 짜리가 0.8 짜리보다 위에 있었다. `forensic_suggestion_min_confidence`(기본 0.5) 미만은
+  버리지 않고 `low_confidence: true` 로 표시되어 화면에서 접힌다 — 위의 것부터 적용하고, 효과가 없을 때 펼쳐 본다.
+
 ### 2.4.1 튜닝 키 (`tuning.json`, `tuning show --stage forensic`)
 
 | 키 | 기본 | 뜻 |
@@ -99,6 +121,8 @@ forensics #32 에 기록됨 (origin=expectation)
 | `forensic_term_candidates` | 6 | FTS 탈락 청크에서 뽑는 대표 용어(동의어 후보) 수 — 헤딩 용어 우선, 그다음 빈도순 |
 | `forensic_term_targets` | 20 | `--term` 만 주고 `--doc` 이 없을 때 코퍼스에서 그 용어를 담은 청크를 최대 몇 개까지 목표로 삼는가 (많으면 느려짐) |
 | `forensic_pin_confidence` | 0.6 | pin 제안의 confidence (Evolve 목록 정렬·자동 적용 임계 비교값) |
+| `forensic_suggestion_min_confidence` | 0.5 | 수정안을 **바로 펼쳐** 보여 줄 최소 confidence. 미만은 접어 둔다(버리지 않는다) |
+| `forensic_targets_shown` | 3 | 목표 청크의 '탈락 단계' 표를 바로 보여 줄 개수 (가장 멀리 간 것 순). 나머지는 접힌다 |
 | `forensic_min_events` | 3 | (자동 포렌식) 같은 주제 소견 누적 → corpus_gap 제안 |
 | 토글 `forensic_auto` | on | 질의마다 자동 포렌식 기록 |
 
@@ -114,4 +138,4 @@ forensics #32 에 기록됨 (origin=expectation)
 | `llmwiki/answer.py` | `build_context` 가 `dropped/neighbors/doc_expand` 를 돌려줌 |
 | `llmwiki/evolve.py` | 제안 kind `pin`/`query_rule`/`tuning` 적용, `corpus_gap` 은 자동 적용 불가 안내 |
 | `llmwiki/cli.py` `web/server.py` `mcp.py` `web/static/js/ask.js` `quality.js` | `forensic expect`, `/api/forensic/expect`, `wiki_forensic`, Ask/Quality 화면 |
-| `tests/test_features_0914.py::ForensicExpectTest` | 인용된 경우/무관 문서/코퍼스 없는 용어/answer 단계 탈락/캐시 요청 따라가기/제안 적용 |
+| `tests/test_features_0914.py::ForensicExpectTest` | 인용된 경우/무관 문서/코퍼스 없는 용어/answer 단계 탈락/캐시 요청 따라가기/제안 적용 · **미해결 안내와 수정안·목표 정렬**(`test_expect_report_is_ordered_and_explains_unresolved`) |

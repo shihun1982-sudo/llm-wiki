@@ -92,12 +92,14 @@ GET_PATHS = ["/api/status", "/api/docs", "/api/graph", "/api/entity", "/api/chun
              "/api/query_rules", "/api/query_rules/test", "/api/embed/report", "/api/build/status", "/api/build/verify",
              "/api/corpus/lint", "/api/corpus/types", "/api/mcp_sources", "/api/memory", "/api/precompute", "/api/agents",
              "/api/themes", "/api/time", "/api/analysis", "/api/activity", "/api/progress", "/api/schedule", "/api/auth/me",
+             "/api/query_rules/lint", "/api/collab", "/api/collab/board",
              "/api/jobs/zzz", "/api/nope", "/", "/login", "/static/js/core.js", "/static/../config.json", "/mcp"]
 POST_PATHS = ["/api/query", "/api/search", "/api/feedback", "/api/forensic/expect", "/api/forensic/llm", "/api/evolve/propose",
               "/api/pins", "/api/presets", "/api/query_rules", "/api/tuning", "/api/prompts", "/api/rules", "/api/memory",
               "/api/precompute", "/api/trials", "/api/fusion/compare", "/api/eval", "/api/watch", "/api/mcp_sources",
               "/api/build/verify", "/api/wiki/page", "/api/evolve/apply", "/api/evolve/reject", "/api/evolve/review",
-              "/api/models/test", "/api/activity", "/api/schedule", "/api/models/catalog", "/api/cli", "/mcp", "/api/nope"]
+              "/api/models/test", "/api/activity", "/api/schedule", "/api/models/catalog", "/api/cli", "/api/collab",
+              "/mcp", "/api/nope"]
 # 색인을 지우거나 서버 설정을 영구히 바꾸는 경로는 기본으로 보내지 않는다
 DESTRUCTIVE = {"/api/build", "/api/config", "/api/models/set", "/api/snapshot", "/api/maintenance", "/api/auth/users",
                "/api/security", "/api/apikeys", "/api/agents", "/api/admin/server"}
@@ -307,6 +309,10 @@ def run_cli_monkey(rng, n, env, findings, lock):
         argv = list(rng.choice(CLI_ARGS))
         if rng.random() < 0.4:
             argv.append(str(rnd_scalar(rng))[:60])
+        # NUL 은 **실제 명령줄에 넣을 수 없다** — OS 가 금지한다. 여기서 넘기면 CLI 가 시작도 못 하고
+        # subprocess 가 ValueError 를 던져, 제품 결함이 아닌 하네스 오류가 결함으로 기록된다 (2026-09-16).
+        # Web 경로(/api/cli)는 JSON 으로 NUL 이 들어올 수 있어 서버가 400 으로 거절한다 (_as_argv).
+        argv = [a.replace("\x00", "") for a in argv]
         try:
             p = subprocess.run([PY, "-m", "llmwiki"] + argv, cwd=ROOT, env=env, capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=180)
@@ -351,15 +357,26 @@ def main() -> int:
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     base = ns.url.rstrip("/")
     if not base:
-        # 포트가 이미 쓰이고 있으면 중단한다 — 예전 실행에서 남은 서버(옛 코드)를 때리면 결과가 거짓이 된다
+        # 쓰이고 있는 포트에는 절대 붙지 않는다 — 예전 실행에서 남은 서버(옛 코드)를 때리면 결과가 거짓이 된다.
+        # 다만 **중단하지는 않는다**: 고아 프로세스 하나 때문에 전체 검증이 못 도는 일이 실제로 있었다
+        # (verify_all 이 이 단계에서만 0.1초 만에 실패). 비어 있는 다음 포트를 찾아 계속한다.
         import socket as _s
-        probe = _s.socket()
-        probe.settimeout(1.0)
-        if probe.connect_ex(("127.0.0.1", ns.port)) == 0:
-            probe.close()
-            print("포트 %d 를 이미 누군가 쓰고 있습니다. 이전 실행의 서버가 남아 있을 수 있습니다 — 그 프로세스를 종료하거나 --port 로 다른 포트를 쓰세요." % ns.port)
-            return 2
-        probe.close()
+
+        def _busy(port):
+            probe = _s.socket()
+            probe.settimeout(1.0)
+            try:
+                return probe.connect_ex(("127.0.0.1", port)) == 0
+            finally:
+                probe.close()
+
+        if _busy(ns.port):
+            alt = next((p for p in range(ns.port + 1, ns.port + 40) if not _busy(p)), None)
+            if alt is None:
+                print("포트 %d~%d 가 모두 사용 중입니다 — 이전 실행의 서버가 남아 있는지 확인하세요." % (ns.port, ns.port + 39))
+                return 2
+            print("포트 %d 가 사용 중이라 %d 로 옮깁니다 (이전 실행의 서버가 남아 있을 수 있습니다)." % (ns.port, alt))
+            ns.port = alt
         tmp = tempfile.mkdtemp(prefix="lwmonkey_")
         cfg = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
         cfg["data_dir"] = os.path.join(tmp, "data")

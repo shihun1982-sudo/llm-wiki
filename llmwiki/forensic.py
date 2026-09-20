@@ -576,6 +576,25 @@ def trace_expectation(pipe, request_id: int, docs: Optional[List[str]] = None, t
         else:
             summary.append("대표 원인 (%s, %s 까지 도달): %s — %s" % (best["chunk_id"], STAGE_KO.get(STAGE_ORDER[best["reach"]], "-") if best["reach"] >= 0 else "어느 채널에도 없음",
                                                          STAGE_KO.get(_lost_stage(best["lost_at"]), best["lost_at"]), (first_miss or {}).get("detail", "")))
+    # "원 판정은 sufficient 인데 기대한 문서는 못 찾았다" 를 화면이 두 조각으로 보여 주면 읽는 사람이 모순으로 읽는다.
+    # 둘은 다른 질문에 대한 답이다 — 한 문장으로 붙여 준다.
+    if report["verdict"] == "sufficient":
+        if exp["unresolved"]:
+            summary.insert(0, "답변 자체는 충분(sufficient)했지만, 기대한 %s 는 **색인에 그런 문서가 없다**(코퍼스에 없거나 ID 표기가 다름) — "
+                              "설정을 고칠 문제가 아니라 문서를 넣거나 ID 를 맞출 문제다." % ", ".join(exp["unresolved"]))
+        elif n_cited == 0 and report["targets"]:
+            summary.insert(0, "답변 자체는 충분(sufficient)했지만, 당신이 기대한 근거는 쓰이지 않았다 — 다른 문서로 답했다는 뜻이다. "
+                              "아래 '탈락 단계' 에서 어디서 밀렸는지 본다.")
+
+    # 수정안은 **확신이 큰 것부터**. 예전에는 per-target → global → corpus_gap → pin 순서로 담기는 바람에
+    # confidence 0.35 짜리가 0.8 짜리보다 위에 있었다. 임계 미만은 버리지 않고 표시만 해 둔다(화면이 접는다).
+    _min_conf = float(T.get("forensic_suggestion_min_confidence") or 0.0)
+    suggestions.sort(key=lambda s: -float(s.get("confidence") or 0))
+    for s_ in suggestions:
+        s_["low_confidence"] = float(s_.get("confidence") or 0) < _min_conf
+    report["suggestion_min_confidence"] = _min_conf
+    report["targets_shown"] = int(T.get("forensic_targets_shown") or 3)
+    report["targets"].sort(key=lambda x: (-x["reach"], x["lost_at"] == "none"))   # 가장 멀리 간 것부터
     report["lost_counts"] = lost_counts
     report["summary"] = summary
     report["suggestions"] = suggestions

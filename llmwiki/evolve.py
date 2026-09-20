@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from typing import Any, Dict, List, Optional
@@ -65,8 +66,10 @@ def capture_query(pipe, q: str, result: Dict[str, Any], final: List[Any]) -> Lis
     if final and top < s.evolve_low_score_threshold and len(final[0].ranks) <= 1:
         c = store.get_chunk(final[0].chunk_id)
         if c:
-            hk = [w for w in keywords(c["heading"]) if w not in kws][:2]
+            hk = [w for w in keywords(c["heading"]) if w not in kws and _usable_term(w)][:2]
             for k in kws[:2]:
+                if not _usable_term(k):
+                    continue
                 for h in hk:
                     ids.append(store.add_proposal("synonym", {"term": k, "expansion": h},
                                                   "낮은 융합 점수(%.3f): '%s' 질의가 헤딩 '%s' 문단에서만 약하게 매칭" % (top, k, c["heading"][:40]),
@@ -81,6 +84,23 @@ def capture_query(pipe, q: str, result: Dict[str, Any], final: List[Any]) -> Lis
             if p and p["status"] == "proposed" and (p["confidence"] or 0) >= s.evolve_min_confidence:
                 apply_proposal(pipe, pid, auto=True)
     return ids
+
+
+#: 동의어·별칭 후보로 쓸 수 있는 말인가.
+#: 왜 필요한가: 헤딩에서 뽑은 낱말을 그대로 동의어 후보로 올리면 **날짜·숫자**가 섞여 들어온다.
+#: 실제로 "2026년 5월 20일 … 임원회의" 헤딩에서 `nvidia → 2026`, `nvidia → 20` 같은 제안이 쌓였다.
+#: 사람이 그걸 승인하면 이후 모든 'nvidia' 질의가 '2026' 까지 확장되어 검색이 망가진다.
+#: 그래서 숫자·너무 짧은 말·날짜 조각은 후보에서 뺀다 (엔티티 후보 쪽에는 원래 있던 규칙을 맞춘 것이다).
+_DATEISH = re.compile(r"^\d{1,4}(년|월|일|분기|시|분)?$")
+
+
+def _usable_term(w: str) -> bool:
+    w = str(w or "").strip()
+    if len(w) < 2 or w.isdigit() or _DATEISH.match(w):
+        return False
+    # 숫자가 대부분인 토큰(예: '2026년', 'v1.2.3')도 동의어로는 의미가 없다
+    digits = sum(1 for ch in w if ch.isdigit())
+    return digits < max(1, len(w) * 0.6)
 
 
 def _term_in_corpus(store, term: str) -> bool:

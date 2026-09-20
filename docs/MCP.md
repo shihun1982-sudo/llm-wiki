@@ -13,7 +13,9 @@
 | **다른 RAG / 검색 API / MCP 서버를 이 서버 뒤에 붙이고** 싶다 (클라이언트는 우리 `/mcp` 하나만) | **페더레이션 + 외부 RAG 채널** — `mcp_sources.json` 에 소스(stdio/http/rest) 선언, 토글 `mcp_federation`(도구 노출) · `external_rag`(검색 채널) | [RAG_FEDERATION.md](RAG_FEDERATION.md) |
 | 코드 수정 없이 **도구를 추가**하고 싶다 | **플러그인** `plugins/mcp_tools/<이름>.py` 의 `register(add_tool)` | RAG_FEDERATION.md §3 |
 
-세 방식 모두 같은 도구(§2)와 같은 파이프라인(`Pipeline.query`)을 쓴다. HTTP 는 표준 라이브러리 `http.server` 만 사용한다(추가 패키지 없음). 확장성: 도구 목록은 built-in 11개 + 플러그인 + 페더레이션(`<source>__<tool>`)으로 늘어나며, 모두 같은 `tools/list`·`tools/call`·인증·감사 경로를 탄다.
+세 방식 모두 같은 도구(§2)와 같은 파이프라인(`Pipeline.query`)을 쓴다. HTTP 는 표준 라이브러리 `http.server` 만 사용한다(추가 패키지 없음). 확장성: 도구 목록은 built-in **14개** + 플러그인 + 페더레이션(`<source>__<tool>`)으로 늘어나며, 모두 같은 `tools/list`·`tools/call`·인증·감사 경로를 탄다.
+
+**붙기 전에 서버 쪽에서 먼저 확인**: `python -m llmwiki mcp --doctor` (§4). "왜 안 붙는가" 를 클라이언트 로그 대신 서버에서 답한다.
 
 ## 1. 설치·기동
 
@@ -63,37 +65,151 @@ claude mcp add llmwiki-remote -- python -m llmwiki mcp --connect http://wiki-hos
 
 ## 2. 도구
 
-| 도구 | 입력 | 돌려주는 것 | 등급 |
-|---|---|---|---|
-| `wiki_query` | `question`, `k`, `mode=fast|normal|deep`, `doc_types[]`, `preset` | 인용 `[C#]` 답변 + 판정/groundedness + 근거 목록(doc_expand 청크 표시) + **request_id / query_id** + (있으면) LLM 실행 보고 | read |
-| `wiki_search` | `channel=fts|vector|graph`, `query`, `k` | 단일 채널 결과 | read |
-| `wiki_related` | `text`, `doc_types[]`, `k` | 유사 문서 + 그래프 연결(CL↔Issue↔TC) | read |
-| `wiki_doc` | `id`(ISSUE-2041 / doc_id) | 문서 전문 + 메타 + 관계 | read |
-| `wiki_entity` | `name` | 엔티티 상세(관계·provenance·문서 참조) | read |
-| `wiki_propose` | `kind`, `payload`, `reason`, `confidence` | 자가진화 제안 id (HITL; `pin`/`query_rule` 등) | read |
-| `wiki_feedback` | `query_id`, `feedback=+1/-1`, `note` | 피드백 기록(부정+메모 → 위키 노트 제안) | read |
-| `wiki_forensic` | `request_id`(생략=마지막), `expected_docs[]`, `expected_terms[]`, `expected_chunks[]`, `note`, `propose` | **기대 결과 포렌식** 표(어느 단계에서 탈락했나 + 수정안) — [FORENSIC.md](FORENSIC.md) | read |
-| `wiki_status` | – | 색인 통계·프로바이더 | read |
-| `wiki_analysis` | `request_id`(생략=마지막), `focus=quality|speed|tokens|all` | **상세 분석 리포트**(마크다운): 설정 스냅샷·단계 타임라인·검색 상세·답변 판정·세 렌즈 소견과 조절점 — 튜닝 제안의 근거 자료 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) | read |
-| `wiki_sources` | `check` | 붙어 있는 외부 소스(다른 RAG) 목록·용도·(check) 연결 상태 + 토글·플러그인 상태 — [RAG_FEDERATION.md](RAG_FEDERATION.md) | read |
-| `wiki_external_search` | `query`, `source`, `k` | 외부 소스에 직접 검색(융합 없음, 원 결과 id/제목/본문/점수/URL) | read |
-| `<source>__<tool>` | 원격 스키마 그대로 | 페더레이션: `mcp_sources.json` 에서 `expose` 한 외부 서버의 tool 을 그대로 중계 (토글 `mcp_federation`) | read |
-| (플러그인) | 플러그인 정의 | `plugins/mcp_tools/*.py` 가 등록한 도구 | read |
+built-in 14개. 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 함께 돌려주는 MCP `annotations` 이며, 붙는 LLM 이
+"이 도구를 불러도 되는가" 를 스스로 판단하는 근거다(§2.2).
 
-외부 LLM 의 권장 사용 순서: `wiki_query` → 답변이 부족하면 `wiki_forensic(request_id, expected_docs/terms)` 로 원인 확인 → `wiki_propose`/`wiki_feedback` 으로 개선 제안. 색인을 바꾸는 도구는 없다(변경은 사람이 Web/CLI 로 승인).
+| 도구 | 입력 | 돌려주는 것 | 등급 | 힌트 |
+|---|---|---|---|---|
+| `wiki_query` | `question`, `k`, `mode=fast|normal|deep`, `doc_types[]`, `preset` | 인용 `[C#]` 답변 + 판정/groundedness + 근거 목록(doc_expand 청크 표시) + **request_id / query_id** + (있으면) LLM 실행 보고 | read | 읽기 |
+| `wiki_search` | `channel=fts|vector|graph`, `query`, `k` | 단일 채널 결과 | read | 읽기 |
+| `wiki_related` | `text`, `doc_types[]`, `k` | 유사 문서 + 그래프 연결(CL↔Issue↔TC) | read | 읽기 |
+| `wiki_doc` | `id`(ISSUE-2041 / doc_id) | 문서 전문 + 메타 + 관계 | read | 읽기 |
+| `wiki_entity` | `name` | 엔티티 상세(관계·provenance·문서 참조) | read | 읽기 |
+| `wiki_propose` | `kind`, `payload`, `reason`, `confidence` | 자가진화 제안 id (HITL; `pin`/`query_rule` 등) | read | **쓰기**(비파괴) |
+| `wiki_feedback` | `query_id`, `feedback=+1/-1`, `note` | 피드백 기록(부정+메모 → 위키 노트 제안) | read | **쓰기**(비파괴) |
+| `wiki_forensic` | `request_id`(생략=마지막), `expected_docs[]`, `expected_terms[]`, `expected_chunks[]`, `note`, `propose` | **기대 결과 포렌식** 표(어느 단계에서 탈락했나 + 수정안) — [FORENSIC.md](FORENSIC.md) | read | 읽기 |
+| `wiki_status` | – | 색인 통계·프로바이더 | read | 읽기 |
+| `wiki_analysis` | `request_id`(생략=마지막), `focus=quality|speed|tokens|all` | **상세 분석 리포트**(마크다운): 설정 스냅샷·단계 타임라인·검색 상세·답변 판정·세 렌즈 소견과 조절점 — 튜닝 제안의 근거 자료 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) | read | 읽기 |
+| `wiki_sources` | `check` | 붙어 있는 외부 소스(다른 RAG) 목록·용도·(check) 연결 상태 + 토글·플러그인 상태 — [RAG_FEDERATION.md](RAG_FEDERATION.md) | read | 읽기 · **외부** |
+| `wiki_external_search` | `query`, `source`, `k` | 외부 소스에 직접 검색(융합 없음, 원 결과 id/제목/본문/점수/URL) | read | 읽기 · **외부** |
+| `wiki_requests` | `request_id`(생략=목록), `q`, `kind`, `limit` | **지난 요청과 그때의 답**: "전에 물어본 적 있나?" 를 확인하거나, 같은 질문을 다시 돌리지 않고 저장된 답을 가져온다 — [REQUEST_HISTORY.md](REQUEST_HISTORY.md) | read | 읽기 |
+| `wiki_rerun` | `request_id`, `from`, `overrides` | 지난 질의를 **특정 단계부터** 다시 (앞 단계는 저장된 결과를 재생). 인자 없이 부르면 재시작점 목록을 돌려준다 — [RERUN.md](RERUN.md) | read | 읽기 (색인을 바꾸지 않음) |
+| `<source>__<tool>` | 원격 스키마 그대로 | 페더레이션: `mcp_sources.json` 에서 `expose` 한 외부 서버의 tool 을 그대로 중계 (토글 `mcp_federation`) | read | 원격 spec 그대로 |
+| (플러그인) | 플러그인 정의 | `plugins/mcp_tools/*.py` 가 등록한 도구 (§6) | read | 플러그인 spec 그대로 |
+
+외부 LLM 의 권장 사용 순서: `wiki_query` → 답변이 부족하면 `wiki_forensic(request_id, expected_docs/terms)` 로 원인 확인 → `wiki_propose`/`wiki_feedback` 으로 개선 제안. **색인을 바꾸는 도구는 없다** — `wiki_propose`/`wiki_feedback` 도 제안 큐에 쌓을 뿐이고 반영은 사람이 Web/CLI 로 승인한다.
+
+### 2.1 인자 검증 — 붙는 LLM 이 실패 이유를 읽을 수 있게
+
+`tools/call` 은 도구를 실행하기 전에 `inputSchema` 의 **required · type · enum** 을 확인하고, 위반이면 실행하지 않고
+`isError: true` 와 사람이 읽는 메시지 + 스키마 전문을 돌려준다(`llmwiki/mcp.py` `validate_args()`). built-in 도구와
+플러그인 도구에 똑같이 적용된다. 예전에는 빈 질문으로 `wiki_query` 를 부르면 조용히 빈 결과가 나와, 붙은 LLM 이
+"검색 결과가 없다" 와 "인자를 잘못 줬다" 를 구별하지 못했다.
+
+| 부른 모습 | 돌아오는 메시지(요지) |
+|---|---|
+| `wiki_query {}` · `{"question": "   "}` | `필수 인자 'question' 가 없습니다. inputSchema: {…}` |
+| `wiki_search {"channel": "nope", …}` | `인자 'channel' 는 ['fts', 'vector', 'graph'] 중 하나여야 합니다 (받은 값: 'nope')` |
+| `wiki_search {"k": "많이"}` | `인자 'k' 는 integer 여야 합니다 (받은 값: '많이')` — 다만 `"8"` 처럼 **숫자로 읽히는 문자열은 받아 준다** |
+| `wiki_propose {"kind": "정체불명"}` | `unsupported kind 정체불명` |
+| 없는 도구 | `unknown tool <이름> — 사용 가능: wiki_query, …` |
+| 없는 문서 (`wiki_doc`) | `not found: <id>` — 이것은 오류가 아니라 **정상 응답**(`isError` 아님) |
+
+프로토콜 수준의 오류는 JSON-RPC 코드로 온다: 없는 메서드 `-32601`, `method` 가 없는 본문 `-32600`,
+깨진 JSON `-32700`, 서버가 요청을 받지 않음(동시성·속도 제한) `-32002` + HTTP 429/503(§3.1).
+
+### 2.2 도구 힌트(annotations)와 프로토콜 버전
+
+- `tools/list` 의 각 도구에는 `title` 과 MCP `annotations` 가 붙는다 — `readOnlyHint`(색인·설정을 바꾸지 않음),
+  `destructiveHint`(되돌릴 수 없음 — **우리 도구에는 없다**), `idempotentHint`, `openWorldHint`(외부 시스템에 나간다).
+  14개 중 `wiki_propose`·`wiki_feedback` 만 `readOnlyHint=false` 이고, 그 둘도 `destructiveHint=false` 다(사람 승인 전까지 큐에만 쌓인다).
+  플러그인·페더레이션 도구는 자기 spec 의 annotations 를 그대로 쓴다. 정의: `llmwiki/mcp.py` `ANNOTATIONS`.
+- **프로토콜 버전 협상**: 지원 목록은 `2025-06-18`(기본) · `2025-03-26` · `2024-11-05`.
+  클라이언트가 `initialize` 에 보낸 버전이 이 안에 있으면 그대로 돌려주고, 아니면 우리 최신(`2025-06-18`)을 돌려준다.
+  예전에는 클라이언트가 보낸 값을 그대로 되돌려 주어, 지원하지 않는 버전도 지원한다고 답했다.
+- **도구 이름 중복**: 플러그인과 페더레이션이 같은 이름을 만들면 뒤에 온 것을 버린다(클라이언트가 어느 것을 부를지 알 수 없으므로).
+  버려진 이름은 `wiki_sources` 와 `mcp --doctor` 에 보고된다.
+- **stdio 프레이밍**: 한 줄에 하나(`{…}\n`) 또는 `Content-Length: <바이트 수>\r\n\r\n<본문>`.
+  헤더의 길이는 **UTF-8 바이트 수**이며(문자 수가 아니다), 한글 인자를 이 방식으로 보내는 클라이언트도 정확히 잘린다.
+
+### 2.3 붙는 LLM 이 여럿일 때 — 키는 클라이언트마다 따로
+
+동시성 제한(`server.json concurrency`)은 **사용자(=API 키)별**로 걸린다. 여러 LLM 이 **같은 키**를 쓰면
+`max_parallel_per_user`(기본 3) 하나만 나눠 쓰게 되어, 네 번째 동시 호출부터 429(`code=per_user_limit`)를 받는다.
+클라이언트마다 `apikey add <이름>` 으로 키를 따로 발급하면 각자 그 제한을 갖고, IP 전체는
+`max_parallel_per_ip`(기본 6)와 `rate_limit` 에 걸린다. 값과 조정 방법은 [CONCURRENCY.md](CONCURRENCY.md).
 
 ## 3. 보안 정리
 
 - 인증: `Authorization: Bearer <API 키>` > 세션 쿠키 > 익명(`anonymous_role`). 키마다 역할이 있고 파일에는 해시만 저장(`apikey list|remove`). **잘못된/폐기된 `lwk_` 키는 익명으로 강등되지 않고 401** (`WWW-Authenticate: Bearer` + JSON-RPC 오류) — 클라이언트 로그에서 키 문제가 바로 드러난다.
+- ⚠ `security.json` 의 `mode` 가 기본값 `auto` 면 **`127.0.0.1` 에 바인드한 서버는 인증을 하지 않는다**(개발 편의 — 모든 요청이 로컬 admin). 사내에 내놓을 때는 `0.0.0.0` 바인드라 자동으로 켜지지만, 루프백에서 인증 동작을 확인하려면 `mode: "on"` 으로 두고 봐야 한다. 그렇지 않으면 "잘못된 키가 거부되는가" 를 시험해도 늘 통과한다.
+- **키는 붙는 클라이언트마다 따로** 발급한다 — 역할 분리와 폐기뿐 아니라 동시성 제한이 키 단위이기 때문이다(§2.3).
 - 권한: MCP 도구는 모두 `read` 등급 → `permissions.levels.read`(기본 viewer). 특정 클라이언트에게만 열려면 `anonymous_role: ""` + 키 발급.
 - 전송 보안: HTTPS 는 리버스 프록시에서(SECURITY.md §8). 사내망 밖으로 열 때는 반드시 프록시 + 키.
 - 감사: 모든 인증 실패와 도구 호출(질의는 requests 테이블, 거부는 audit.jsonl)이 남는다.
 
-## 4. 운영·문제 해결
+### 3.1 서버가 요청을 받지 않을 때 (429 / 503)
+
+동시 접속·속도 제한에 걸리면 도구 실패가 아니라 **요청 자체가 거부**되고, JSON-RPC `-32002` + HTTP 429/503 +
+`Retry-After` 헤더가 온다. 본문 `error.data.code` 로 무엇에 걸렸는지 구분한다.
+
+| `data.code` | HTTP | 뜻 | 설정 키 (`server.json`) |
+|---|---|---|---|
+| `per_user_limit` | 429 | 같은 키(사용자)의 동시 요청 초과 | `concurrency.max_parallel_per_user` (기본 3) |
+| `per_ip_limit` | 429 | 같은 IP 의 동시 요청 초과 | `concurrency.max_parallel_per_ip` (기본 6) |
+| `rate_limited` | 429 | 분당 요청 수 초과 | `rate_limit.per_user_per_min` (60) · `per_ip_per_min` (120) |
+| `queue_full` | 503 | 대기열이 가득 참 | `concurrency.queue_max` (64) |
+
+클라이언트는 `Retry-After` 만큼 기다렸다 재시도하면 된다. 상세와 조정 기준은 [CONCURRENCY.md](CONCURRENCY.md).
+
+## 4. 자가 점검 — `mcp --doctor`
+
+붙이려는 LLM 이 여럿이고 외부 RAG 까지 얹으면 "왜 안 붙는가" 의 원인이 클라이언트·서버·소스에 흩어진다.
+`--doctor` 는 **서버 쪽에서 답할 수 있는 것을 한 번에** 점검한다. bring-up 체크리스트의 "연결 확인" 단계로 쓴다.
+
+```bat
+python -m llmwiki mcp --doctor                     :: 사람이 읽는 출력
+python -m llmwiki mcp --doctor --check-sources     :: 외부 소스에 실제로 접속해 본다 (느림)
+python -m llmwiki mcp --doctor --json              :: 스크립트/CI 용 (ok, errors, warnings, checks[], tools[])
+```
+
+<!-- 실제 출력 (2026-09-16, 확장 없는 기본 환경) -->
+```text
+MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)
+
+  OK  도구 목록              14개 (built-in 14)
+  OK  inputSchema        모든 도구가 object 스키마
+  OK  도구 설명              모두 있음
+  OK  플러그인               C:\...\plugins\mcp_tools — 파일 0개, 도구 없음
+  OK  외부 소스 선언           4개 선언, 0개 enabled (-)
+  OK  검색 채널(external_rag) retrieve 소스 없음 · 토글 external_rag=False
+  OK  페더레이션              expose 소스 없음 · 토글 mcp_federation=False · 중계 도구 없음
+  OK  페더레이션 연결           오류 없음
+  OK  재귀 방지              이 프로세스는 최상위 (페더레이션 가능)
+  OK  인증                 anonymous_role=viewer · API 키 0개 · 계정 1개
+  OK  전송                 stdio: `python -m llmwiki mcp` · http: serve 의 POST /mcp (mcp_host=127.0.0.1 mcp_port=8766) · 브리지: mcp --connect <url>
+
+도구 14개: wiki_query, wiki_search, wiki_related, wiki_doc, wiki_entity, wiki_propose, wiki_feedback, wiki_forensic, wiki_status, wiki_analysis, wiki_sources, wiki_external_search, wiki_requests, wiki_rerun
+
+결과: 정상 (오류 0 · 경고 0)
+클라이언트 설정: python -m llmwiki mcp --client-config   · 문서 docs/MCP.md
+```
+
+| 항목 | 실패하면 보는 곳 |
+|---|---|
+| 도구 목록 / inputSchema / 도구 설명 | 플러그인 spec 의 `inputSchema` 를 `{"type":"object","properties":{…}}` 로. 설명이 없으면 붙는 LLM 이 그 도구를 고르지 못한다(경고) |
+| 플러그인 | `<mcp_plugins_dir>/*.py` 의 import·`register()` 실패. **깨진 파일 하나가 다른 플러그인을 막지는 않는다** — 힌트에 파일명과 예외가 나온다 |
+| 외부 소스 선언 / 소스 `<이름>` 설정·연결 | `mcp_sources.json` 의 `transport` 별 필수 필드(stdio=`command`, http=`url`, rest=`base_url`). 재현: `python -m llmwiki mcp-source test <이름>` |
+| 검색 채널(external_rag) / 페더레이션 | `retrieve`·`expose` 를 선언해 놓고 토글을 켜지 않은 흔한 실수 (경고) |
+| 페더레이션 연결 | 원격이 죽었거나 인증 실패 — 예전에는 도구가 조용히 사라졌다 |
+| 재귀 방지 | 이 프로세스가 다른 llmwiki 의 페더레이션 하위로 실행 중이면 자기 페더레이션을 하지 않는다(A↔B 상호 expose 무한 재귀 방지) |
+| 인증 | 익명 역할도 API 키도 없으면 HTTP 로는 아무도 붙을 수 없다 |
+
+종료 코드는 오류가 있으면 1 이므로 배포 스크립트에서 그대로 쓸 수 있다.
+
+## 5. 운영·문제 해결
+
+**먼저 `python -m llmwiki mcp --doctor`** (§4) — 아래 증상의 절반은 여기서 원인이 바로 나온다.
 
 | 증상 | 조치 |
 |---|---|
 | 클라이언트가 서버를 못 찾음 (stdio) | `cwd` 가 프로젝트 루트인지, Windows 는 `python.exe` 절대 경로인지. 터미널에서 `python -m llmwiki mcp` 를 띄우고 `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` 를 붙여넣어 응답 확인 |
+| 도구를 불렀는데 `isError` 와 "필수 인자 …" | 인자 검증(§2.1). 메시지에 `inputSchema` 가 함께 오므로 그대로 고쳐 다시 부르면 된다 |
+| 429 / 503 으로 거부됨 | 동시성·속도 제한(§3.1). `Retry-After` 만큼 기다렸다 재시도. 여러 LLM 이 같은 키를 쓰고 있지 않은지 확인(§2.3) |
+| 잘못된 키인데도 통과한다 | `security.json mode=auto` + `127.0.0.1` 바인드는 인증을 하지 않는다(§3). `mode: "on"` 으로 두고 확인 |
+| 플러그인 도구가 안 보임 | `mcp --doctor` 의 "플러그인" 행에 파일명과 예외가 나온다. 파일명이 밑줄로 시작하면 무시된다 |
+| 페더레이션 도구가 사라짐 | 원격 연결 실패. `wiki_sources {"check": true}` 의 `federation_errors` 와 `mcp --doctor --check-sources` |
+| 한글 인자를 보내면 응답이 멈춘다 | 클라이언트가 `Content-Length` 를 **문자 수**로 적고 있다. 헤더 값은 UTF-8 **바이트 수**여야 한다(§2.2) |
 | HTTP 401 | 토큰 오타/삭제됨(`apikey list`) — `lwk_` 키가 맞지 않으면 익명 역할과 무관하게 401. 또는 `anonymous_role` 이 비어 있는데 토큰 없이 호출 |
 | 클라이언트 설정을 어떻게 적어야 할지 모르겠다 | `python -m llmwiki mcp --client-config --url http://wiki-host:8765 --token lwk_…` 출력을 붙여 넣는다. 형식 원본: `setup/mcp_clients.example.json` |
 | HTTP 405 on GET | 정상 — 이 서버는 SSE 스트림을 제공하지 않으므로 클라이언트가 JSON 응답 모드로 동작해야 한다(대부분 자동) |
@@ -102,16 +218,74 @@ claude mcp add llmwiki-remote -- python -m llmwiki mcp --connect http://wiki-hos
 | 브리지가 `remote MCP HTTP 599` | 원격 URL 접속 불가(방화벽/프록시). `curl` 로 §1.2 4번 확인 |
 | 도구 결과에 `LLM 실행 보고` | 답변 LLM 이 재시도 후 실패해 추출식으로 대체됨. `agents.json timeout_s/retries`, `config llm_timeout/llm_retries`, `models test --live` |
 
-## 5. 구현 파일
+## 6. 다른 RAG 를 이 서버 뒤에 붙이기 — 세 가지 방법
+
+붙는 LLM 은 우리 `/mcp` **하나만** 설정하면 되고, 뒤에 무엇이 몇 개 붙어 있는지는 몰라도 된다.
+셋은 배타적이지 않다 — 같은 소스에 `retrieve` 와 `expose` 를 함께 둘 수 있다.
+소스 선언 파일은 `mcp_sources.json`(예시 `setup/mcp_sources.example.json`), 필드 전체 설명은 [RAG_FEDERATION.md](RAG_FEDERATION.md) §2.
+
+| | ① 검색 채널로 융합 | ② 도구를 그대로 중계 | ③ 문서를 내려받아 색인 |
+|---|---|---|---|
+| **설정** | 소스에 `retrieve` 매핑 + 토글 `external_rag` | 소스에 `expose: ["tool", …]` + 토글 `mcp_federation` | 소스에 `ingest` 매핑 |
+| **언제 쓰나** | 그쪽 결과가 **우리 답변의 근거**가 되어야 할 때 (인용·groundedness 에 함께 들어간다) | 그쪽 도구를 **LLM 이 직접 고르게** 할 때 (티켓 생성 조회 등 우리 검색과 성격이 다른 도구) | 그쪽 원본이 **거의 안 변하고** 우리 그래프·엔티티까지 태우고 싶을 때 |
+| **LLM 에게 보이는 모습** | 도구는 그대로 14개. `wiki_query` 결과의 근거에 `ext_<source>` 채널이 섞인다 | `tools/list` 에 `<source>__<tool>` 이 늘어난다 | 평범한 우리 문서 (`wiki_doc`/`wiki_search` 로 나온다) |
+| **설정 예** | `"retrieve": [{"tool": "search", "args": {"q": "{query}", "limit": "{k}"}, "result_path": "items", "id_field": "id", "title_field": "title", "text_field": "snippet"}]` | `"expose": ["search", "get_issue"]` | `"ingest": {…}` — [RAG_FEDERATION.md](RAG_FEDERATION.md) §2.3 |
+| **확인 명령** | `python -m llmwiki mcp-source test <이름>` → `wiki_external_search` 도구 → `wiki_query` 근거에 `ext_` 채널 | `mcp --doctor` 의 "페더레이션" 행 → `tools/list` 에 `<source>__<tool>` | `build` 후 `wiki_status` 의 `docs` 증가 |
+| **안 될 때 증상** | 근거에 외부 결과가 하나도 안 섞임 → 토글 `external_rag` 가 꺼져 있거나 `result_path`/필드 이름이 틀림 | `tools/list` 에 안 나옴 → 토글 `mcp_federation` 이 꺼짐 · `expose` 목록 밖 · 원격 연결 실패(`wiki_sources` 의 `federation_errors`) | 문서가 안 늘어남 → `ingest` 매핑/권한 |
+
+공통 안전장치: **expose 목록 밖의 도구 호출은 거부**되고(`tool X is not exposed by source Y`), 없는 소스도 거부되며
+(`unknown federated source`), 페더레이션 하위로 실행된 프로세스는 자기 페더레이션을 하지 않는다(A↔B 상호 expose 무한 재귀 방지).
+
+### 6.1 코드를 고치지 않고 도구 추가하기 (플러그인)
+
+`<mcp_plugins_dir>`(기본 `plugins/mcp_tools`, `config.json` 으로 변경) 의 `*.py` 중 밑줄로 시작하지 않는 파일이
+`register(add_tool)` 을 제공하면 그 도구가 built-in 과 **똑같은** `tools/list`·`tools/call`·인자 검증·인증·감사 경로를 탄다.
+파일 mtime 이 바뀌면 다시 읽으므로 서버를 재시작하지 않아도 된다.
+
+```python
+# plugins/mcp_tools/hello.py
+def register(add_tool):
+    add_tool(
+        {"name": "team_echo", "description": "무엇을 하는 도구인지 — 붙는 LLM 은 이 문장만 보고 고른다",
+         "inputSchema": {"type": "object", "properties": {"msg": {"type": "string"}}, "required": ["msg"]}},
+        lambda pipe, args: {"echo": args["msg"], "docs": pipe.store.stats()["docs"]},
+    )
+```
+
+- `inputSchema` 는 **필수**다. 없으면 인자 검증이 걸리지 않고, `mcp --doctor` 가 경고한다.
+- 도구 이름에 `__` 를 쓸 수 없다(페더레이션 이름과 충돌). built-in 과 같은 이름도 거부된다.
+- handler 는 `dict`(구조화 결과) 또는 문자열을 돌려주면 된다. 예외를 던지면 `isError` 로 감싸인다.
+- 한 파일이 깨져도 나머지 플러그인은 그대로 적재되고, 오류는 `wiki_sources` 와 `mcp --doctor` 에 파일명과 함께 보고된다.
+- 예시 원본: `plugins/mcp_tools/_example_echo.py` (밑줄을 지우면 활성).
+
+## 7. 검증
+
+```bat
+python tools\verify\verify_mcp.py            :: 전체 (98 항목)
+python tools\verify\verify_mcp.py --quick    :: HTTP 쪽 도구 반복·동시성 규모를 줄여 빠르게 (87 항목)
+python -m unittest tests.test_features_0914  :: McpHttpTest · McpStdioFramingTest
+```
+
+무엇을 보는가 — 전송 3종(stdio/HTTP/브리지) · 프로토콜 적합성(버전 협상, 두 가지 프레이밍, 배치, 깨진 입력) ·
+도구 13회 호출 · 잘못된 호출 7종 · 인증(익명·잘못된 Bearer·API 키) · 동시 접속 · 확장(플러그인 정상/깨짐,
+페더레이션 중계와 거부, 외부 RAG 융합, 재귀 방지) · `mcp --doctor`.
+결과는 `tools/verify/verify_mcp_result.json` 에 남고 실패가 있으면 종료 코드 1.
+실측 기록은 [VERIFICATION_0916.md](VERIFICATION_0916.md).
+
+## 8. 구현 파일
 
 | 파일 | 내용 |
 |---|---|
-| `llmwiki/mcp.py` | 도구 정의/실행(`call_tool`), JSON-RPC 처리(`handle`), stdio 루프(`serve_stdio`), Streamable HTTP(`handle_http`), 브리지(`bridge_stdio_to_http`, `http_post_mcp`), 클라이언트 설정 예시(`client_config_snippets`), **확장**: 플러그인 레지스트리(`register_tool`, `load_plugins`)·페더레이션(`federated_tools`, `call_extension`, 재귀 방지 `FED_HEADER`) |
+| `llmwiki/mcp.py` | 도구 정의(`TOOLS`)·힌트(`ANNOTATIONS`)·실행(`call_tool`), 인자 검증(`validate_args`), JSON-RPC 처리(`handle`), stdio 프레이밍(`_read_message`)과 루프(`serve_stdio`), Streamable HTTP(`handle_http`), 브리지(`bridge_stdio_to_http`, `http_post_mcp`), 자가 점검(`doctor`), 클라이언트 설정 예시(`client_config_snippets`), **확장**: 플러그인 레지스트리(`register_tool`, `load_plugins`)·페더레이션(`federated_tools`, `call_extension`, 재귀 방지 `FED_HEADER`) |
 | `llmwiki/mcp_client.py` | 외부 소스 클라이언트 stdio/http/rest, 검색 채널 `retrieve`, 페더레이션 중계 `call_source_tool` — [RAG_FEDERATION.md](RAG_FEDERATION.md) |
 | `llmwiki/web/server.py` | `/mcp` 라우팅(POST/GET/DELETE) + Bearer/쿠키/익명 인증 + 감사, `serve(mcp_only=True)` |
-| `llmwiki/cli.py` | `mcp --transport stdio|http --host --port --connect --token --insecure --client-config --url` (생략 시 `config.json mcp_*`/`web_*`) |
+| `llmwiki/cli.py` | `mcp --transport stdio|http --host --port --connect --token --insecure --client-config --url --doctor --check-sources --json` (생략 시 `config.json mcp_*`/`web_*`), doctor 출력 렌더러 `_mcp_doctor_text()` |
+| `llmwiki/reqmgr.py` | 동시성·속도 제한(`server.json`) — MCP 거부 시의 429/503 과 `data.code` (§3.1) |
+| `plugins/mcp_tools/` | 플러그인 도구 폴더 (`README.md`, `_example_echo.py`) — §6.1 |
 | `llmwiki/config.py` | Settings `web_host/web_port/mcp_transport/mcp_host/mcp_port/mcp_url` + 설명(`SETTING_HELP`) |
 | `setup/mcp_clients.example.json` | 클라이언트 설정 원본 4종 + 붙여 넣는 위치 |
-| `tools/verify/verify_web.py` | `/mcp` 9도구·401/405/DELETE·잘못된 키 401 실측 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §3.3) |
+| `tools/verify/verify_web.py` | `/mcp` 도구·401/405/DELETE·잘못된 키 401 실측 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §3.3) |
+| `tools/verify/verify_mcp.py` | **MCP 종단 검증** — 전송 3종·프로토콜·도구·잘못된 호출·인증·동시성·확장·doctor (§7) |
 | `llmwiki/auth.py` | API 키 발급/검증(`add_api_key/user_from_api_key`), `identify()` 의 Bearer 처리 |
 | `tests/test_features_0914.py::McpHttpTest` | 401/토큰/세션/배열 요청/GET 405/DELETE/쿠키/감사/브리지/익명/mcp_only |
+| `tests/test_features_0914.py::McpStdioFramingTest` | stdio 두 프레이밍, `Content-Length` 가 바이트 수라는 것, `method` 없는 본문 → -32600 |

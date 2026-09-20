@@ -550,10 +550,11 @@ class Pipeline:
                 prof.skipped("mcp_ingest")
             # ---- 1. load_corpus ----
             scan_dirs = list(s.corpus_dirs) + [d for d in extra_dirs if d not in s.corpus_dirs]
-            with prof.stage("load_corpus", dirs=scan_dirs, stat_skip=bool(incremental and t.stat_skip), tokenizer=self.tokenizer) as st:
+            with prof.stage("load_corpus", dirs=scan_dirs, stat_skip=bool(incremental and t.stat_skip), tokenizer=self.tokenizer,
+                            exclude=list(getattr(s, "corpus_exclude", []) or [])) as st:
                 known = self.store.doc_stats() if (incremental and t.stat_skip) else None
                 lstats: Dict[str, Any] = {}
-                docs = iter_corpus(scan_dirs, known, lstats)
+                docs = iter_corpus(scan_dirs, known, lstats, exclude=getattr(s, "corpus_exclude", None))
                 for n in wiki_notes(s.wiki_dir):   # 위키 편집 노트 overlay
                     text = "# %s (편집 노트)\n\n%s" % (n["name"], n["note"])
                     docs.append(Document(doc_id="wiki/" + n["name"] + ".md", path=n["path"], title=n["name"] + " (편집 노트)",
@@ -1056,7 +1057,8 @@ class Pipeline:
     def check_changes(self) -> Dict[str, Any]:
         """파일을 읽지 않고 stat 만으로 변경 여부 판단 (수천 파일도 수십 ms)."""
         t0 = time.perf_counter()
-        r = scan_changed(self.s.corpus_dirs, self.store.doc_stats())
+        # 제외 목록을 **빌드와 똑같이** 넘긴다 — 다르면 워처가 헛빌드를 반복한다
+        r = scan_changed(self.s.corpus_dirs, self.store.doc_stats(), exclude=getattr(self.s, "corpus_exclude", None))
         r["scan_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         r["ts"] = time.time()
         self.watcher["last_scan"] = r["ts"]
@@ -1109,6 +1111,32 @@ class Pipeline:
         """질의 (v3 엔진). overrides 는 호출 전 apply_overrides 로 적용하는 것을 권장(Web 서버 방식)."""
         from .query_engine import QueryEngine
         return QueryEngine(self).run(q, log=log, debug=debug)
+
+    def rerun(self, request_id: Any, point: str, log: bool = True, debug: Optional[int] = None,
+              query: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """저장해 둔 중간 결과로 **특정 단계부터** 다시 돌린다 (docs/RERUN.md).
+
+        설정 변경은 호출자가 `request_scope(overrides=…, presets=…)` 로 감싸서 준다 —
+        Web 의 일반 질의와 같은 길을 쓰므로 "재실행에서만 되는 설정" 같은 것이 생기지 않는다.
+        """
+        from . import rerun as _rerun
+        from .query_engine import QueryEngine
+        if point not in _rerun.POINT_IDS:
+            raise ValueError("재시작점은 %s 중 하나여야 합니다" % ", ".join(_rerun.POINT_IDS))
+        data = _rerun.load(self.s, request_id)
+        ok, why = _rerun.check_compatible(data or {}, str(self.store.build_version()))
+        if point != "plan" and not ok:
+            raise ValueError(why)
+        q = query or str((data or {}).get("query") or "")
+        if not q:
+            raise ValueError("원 질의를 찾을 수 없습니다 (중간 결과가 없고 query 도 주지 않았습니다)")
+        eng = QueryEngine(self)
+        if point != "plan" and data:
+            eng.resume = _rerun.Resume(point, data)
+        res, tr = eng.run(q, log=log, debug=debug)
+        res["rerun_of"] = request_id
+        res["rerun_from"] = point
+        return res, tr
 
     def _query_legacy(self, q: str, log: bool = True, overrides: Optional[Dict[str, Any]] = None,
                       debug: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -1252,7 +1280,7 @@ class Pipeline:
             result["query_id"] = self.store.log_query(q, result["config"], [h.chunk_id for h in final], ans["answer"],
                                                       {"top_fused": final[0].fused if final else 0, "n_hits": len(final)}, trace)
         result["request_id"] = self.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)},
-                                                      result["config"], None, keep=s.keep_requests)
+                                                      result["config"], None, keep=s.keep_requests, archive_dir=s.requests_archive_dir())
         # 반복 루프로 망가진 답변은 캐시하지 않는다 — 한 번 캐시되면 그 질문은 계속 같은 고장 답변을 즉시 돌려준다
         if key and not result.get("repeat_loop"):
             self.qcache_put(key, {"result": dict(result), "trace": trace})
@@ -1433,6 +1461,10 @@ class Pipeline:
         elif action == "purge_requests":
             self.store.conn.execute("DELETE FROM requests")
             self.store.conn.commit()
+        elif action == "prune_requests":
+            # 보관 폴더에서 requests_keep_days 를 넘긴 결과 파일만 지운다 (DB 는 건드리지 않는다).
+            pr = self.store.prune_request_archive(self.s.requests_archive_dir(), int(self.s.requests_keep_days or 0))
+            return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "archive": pr}
         else:
             return {"error": "unknown action %s" % action}
         return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "stats": self.store.stats()}

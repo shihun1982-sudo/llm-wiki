@@ -1,0 +1,96 @@
+{
+ "ts": 1789592087.0333822,
+ "when": "2026-09-17 05:54",
+ "rows": [
+  {
+   "key": "unit",
+   "name": "단위 테스트",
+   "argv": "-m unittest discover -s tests",
+   "ok": true,
+   "code": 0,
+   "passed": 240,
+   "total": 240,
+   "seconds": 107.0,
+   "tail": "  return max(0.0, self.ms - sum(c.ms for c in self.children))\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n.\n----------------------------------------------------------------------\nRan 240 tests in 106.715s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=952, family=2, type=1, proto=0, laddr=('127.0.0.1', 57280)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=364, family=2, type=1, proto=0, laddr=('127.0.0.1', 57285)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=864, family=2, type=1, proto=0, laddr=('127.0.0.1', 52788)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2456, family=2, type=1, proto=0, laddr=('127.0.0.1', 59242)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=648, family=2, type=1, proto=0, laddr=('127.0.0.1', 59303)>"
+  },
+  {
+   "key": "stress",
+   "name": "스트레스 (30명 동시)",
+   "argv": "-m unittest tests.test_concurrency_0915.StressTest",
+   "ok": true,
+   "code": 0,
+   "passed": 9,
+   "total": 9,
+   "seconds": 23.9,
+   "tail": "..C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 429: 'Too Many Requests'>\n  _warnings.warn(self.warn_message, ResourceWarning)\nC:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 503: 'Service Unavailable'>\n  _warnings.warn(self.warn_message, ResourceWarning)\n.C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 499: ''>\n  _warnings.warn(self.warn_message, ResourceWarning)\n..\n----------------------------------------------------------------------\nRan 9 tests in 23.734s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=644, family=2, type=1, proto=0, laddr=('127.0.0.1', 59383)>"
+  },
+  {
+   "key": "docs",
+   "name": "문서 ↔ 코드 정합",
+   "argv": "tools/verify/verify_docs.py",
+   "ok": true,
+   "code": 0,
+   "passed": null,
+   "total": null,
+   "seconds": 0.1,
+   "tail": "문서 35개 · 검사: 링크 224 · CLI 79 · 설정 6 · 파일 333 · API 56 · 코드→문서 참조 35\n\n요약: 어긋남 0 · 없는 문서 참조 0 · 고아 문서 0\n\nRESULT OK"
+  },
+  {
+   "key": "align",
+   "name": "CLI · Web · MCP 정렬",
+   "argv": "tools/verify/verify_surface_align.py",
+   "ok": true,
+   "code": 0,
+   "passed": null,
+   "total": null,
+   "seconds": 0.1,
+   "tail": "임베딩 현황                   `embed`        `/api/embed/report`        –                〃\n사전 계산                    `precompute`   `/api/precompute`          –                〃\n워처                       `watch`        `/api/watch`               –                〃\n유지보수                     `maintenance`  `/api/maintenance`         –                〃\n협업 채팅·게시판                –              `/api/collab`              –                Web 전용 부수 기능 (토글 collab)\n서버 기동                    `serve`        –                          –                명령 자체가 서버를 띄운다\nMCP 서버 기동·점검             `mcp`          –                          –                〃\n\n기능 47개 · CLI 명령 44 · Web 경로 92 · MCP 도구 14\n세 창구 모두 제공: 13개 · MCP 는 읽기 전용이라 의도적으로 뺀 것: 33개\n\nRESULT OK"
+  },
+  {
+   "key": "cli",
+   "name": "CLI 전수",
+   "argv": "tools/verify/verify_cli.py",
+   "ok": true,
+   "code": 0,
+   "passed": 222,
+   "total": 222,
+   "seconds": 63.0,
+   "tail": "OK  schedule remove digest                     code=0   166ms  removed\nOK  server status (서버 없음)                      code=1  4237ms  ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했\nOK  server cancel (인자 없음)                      code=1   160ms  usage: server cancel <token>\nOK  server limits (서버 없음)                      code=1  2201ms  ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했\nOK  --log-level DEBUG                          code=0   208ms  Q: ISSUE-2001 원인\nOK  logs grep DEBUG                            code=0   228ms  2026-09-17 05:53:47 INFO    query  457a5478cc38 query start {\"run_id\": \"457a5478cc38\"}\nOK  config reset (no --yes)                    code=4   149ms  !! 파괴적 작업: config.json 을 기본값으로 덮어쓰기\nOK  config reset --yes                         code=0   151ms  config reset\nOK  help                                       code=0    73ms  usage: llmwiki [-h] [--user CLI_USER] [--password CLI_PASSWORD]\nOK  query --help                               code=0    69ms  usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]\nOK  server --help                              code=0    67ms  usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]\nOK  schedule --help                            code=0    69ms  usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
+  },
+  {
+   "key": "web",
+   "name": "Web API 전수",
+   "argv": "tools/verify/verify_web.py",
+   "ok": true,
+   "code": 0,
+   "passed": 307,
+   "total": 307,
+   "seconds": 12.4,
+   "tail": "OK  admin schedule remove                    POST /api/schedule                 200  {\"ok\": true, \"tasks\": \"…\"}\nOK  admin schedule 잘못된 작업 → 400              POST /api/schedule                 400  {\"error\": \"cron 은 5필드: 분 시 일 월 요일 (예 '0 3 * * *')\"}\nOK  버스트용 제한 완화                               POST /api/admin/server             200  {\"ok\": true, \"limits\": \"…\"}\nOK  동시 질의 20건 (게스트)                          POST /api/query ×20                200  20/20 OK\nOK  admin 전체 빌드 시작(취소용)                      POST /api/build                    200  {\"job\": \"248c0222\"}\nOK  admin 작업 취소 (DELETE /api/jobs)           DELETE /api/jobs/248c0222          200  {\"ok\": true, \"token\": \"248c0222\", \"status\": \"running\"}\nOK  취소된 작업 상태                                GET /api/jobs/<id>                 cancelled  cancelled by kh82.kim: user request\nOK  취소 후 전체 빌드 정상                            POST /api/build                    200  {\"job\": \"1659cdb3\"}\nOK  취소 후 빌드 복구                               GET /api/jobs/<id>                 done  \nOK  취소 후 질의 정상                               POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  csrf origin → 403                        POST /api/query                    403  {\"error\": \"cross-origin 요청 차단 (Origin http://evil.example)\", \"status\": 403}\nOK  admin logout                             POST /api/auth/logout              200  {\"ok\": true}"
+  },
+  {
+   "key": "mcp",
+   "name": "MCP 종단",
+   "argv": "tools/verify/verify_mcp.py --quick",
+   "ok": true,
+   "code": 0,
+   "passed": 92,
+   "total": 92,
+   "seconds": 8.0,
+   "tail": "  OK   재귀 방지: 하위 프로세스는 페더레이션 안 함                      []\n  OK   재귀 방지: 하위에서 중계 호출 거부                           federated tool mock__search is not available through a federated call (recursion guard)\n\n[8] 자가 점검 명령\n  OK   mcp --doctor --json (심어 둔 결함만 오류로)             ok=False · 오류 ['플러그인'] · 경고 0 · 도구 16\n  OK   doctor: 플러그인 오류 검출                             오류: [{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)\n  OK   doctor: 도구 목록에 확장 포함                           16\n  OK   doctor: 페더레이션 도구 보고                            \n  OK   mcp --doctor (사람이 읽는 출력)                       ['MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)']\n  OK   mcp --client-config (stdio/http/브리지)           ['_how', 'stdio_claude_code', 'stdio_json', 'http_claude_code', 'http_json', 'bridge_json']\n\nMCP OK  92/92 통과"
+  },
+  {
+   "key": "wiring",
+   "name": "UI 배선",
+   "argv": "tools/verify/verify_ui_wiring.py",
+   "ok": true,
+   "code": 0,
+   "passed": null,
+   "total": null,
+   "seconds": 0.1,
+   "tail": "corpus.js          refs= 51 created=  0 missing=- balanced=True\nevolve.js          refs= 17 created=  0 missing=- balanced=True\n   imbalance: {'(': 238, ')': 240, '{': 53, '}': 54, '[': 14, ']': 14}\nknowledge.js       refs= 20 created=  0 missing=- balanced=False\nobservability.js   refs=101 created= 17 missing=- balanced=True\n   imbalance: {'(': 285, ')': 287, '{': 52, '}': 52, '[': 12, ']': 12}\nquality.js         refs= 31 created=  0 missing=- balanced=False\n   imbalance: {'(': 154, ')': 157, '{': 104, '}': 105, '[': 23, ']': 23}\nsettings.js        refs=151 created= 42 missing=- balanced=False\nJS 가 부르는 API 경로: 86 | 서버에 없는 경로: -\nLW 헬퍼 구조분해 누락: -\nRESULT OK"
+  }
+ ],
+ "ok": true,
+ "python": "3.14.7"
+}

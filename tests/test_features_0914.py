@@ -247,6 +247,45 @@ class LlmRetryTest(_Base):
         self.assertFalse(cm4.exception.transient)
         self.assertEqual(drain_incidents()[0]["attempts"], 1)
 
+    def test_headless_stall_is_detected_without_waiting_full_timeout(self):
+        """무응답(stall): 붙었다가 아무 것도 내놓지 않는 opencode 를 **전체 제한을 기다리지 않고** 잡아낸다 (2026-09-16).
+
+        예전에는 `subprocess.run(timeout=timeout_s)` 이라 300초(기본)를 꼬박 기다렸고, 재시도까지 더하면
+        한 질의가 20분을 날렸다. 이제는 출력이 멎으면 그 자체를 실패로 본다.
+        """
+        from llmwiki.providers import LLMError, drain_incidents
+        # 전체 제한 60초, 무출력 제한 2초 → 2초쯤에 실패해야 한다 (60초를 기다리면 안 된다)
+        self._agent("stalled", ["--stall", "30"], retries=0, retry_backoff_s=0, timeout_s=60,
+                    stall_timeout_s=2, first_output_timeout_s=2)
+        llm = hl.HeadlessAgentLLM("stalled", "")
+        t0 = time.time()
+        with self.assertRaises(LLMError) as cm:
+            llm.complete("TASK=answer", "q")
+        took = time.time() - t0
+        self.assertLess(took, 20, "무출력 감지가 동작하지 않았습니다 (%.1fs 걸림)" % took)
+        self.assertEqual(cm.exception.kind, "stall")
+        self.assertTrue(cm.exception.transient)          # retry_on 에 stall 이 자동으로 채워진다
+        drain_incidents()
+        # 멎기 전에 실제 텍스트를 냈으면 그것을 살린다 (재시도에 또 몇 분을 쓰지 않는다)
+        self._agent("stalled_partial", ["--stall", "30", "--partial"], retries=0, retry_backoff_s=0, timeout_s=60,
+                    stall_timeout_s=2, first_output_timeout_s=2, keep_partial_on_timeout=True)
+        r = hl.HeadlessAgentLLM("stalled_partial", "").complete("TASK=answer", "q")
+        self.assertTrue(r.get("partial"))
+        self.assertEqual(r.get("stop_reason"), "stall")
+        self.assertIn("부분 답변", r["text"])
+        drain_incidents()
+        # 부분 결과를 쓰지 않도록 끄면 실패한다
+        self._agent("stalled_strict", ["--stall", "30", "--partial"], retries=0, retry_backoff_s=0, timeout_s=60,
+                    stall_timeout_s=2, first_output_timeout_s=2, keep_partial_on_timeout=False)
+        with self.assertRaises(LLMError) as cm2:
+            hl.HeadlessAgentLLM("stalled_strict", "").complete("TASK=answer", "q")
+        self.assertEqual(cm2.exception.kind, "stall")
+        drain_incidents()
+        # 예전 agents.json(retry_on 에 stall 없음)도 재시도 대상이 되도록 이관된다
+        self.assertIn("stall", hl.with_defaults({"retry_on": ["timeout", "exec"]})["retry_on"])
+        # 명시적으로 끄고 싶으면 "-stall"
+        self.assertNotIn("stall", hl.with_defaults({"retry_on": ["timeout", "-stall"]})["retry_on"])
+
     def test_query_reports_llm_failure_and_falls_back(self):
         state = os.path.join(self.tmp, "fail_state_q")
         self._agent("dead", ["--fail-times", "99", "--state", state], retries=1, retry_backoff_s=0, timeout_s=30)
@@ -390,6 +429,33 @@ class ForensicExpectTest(_Base):
         self.assertEqual(rep5["followed_from"], [r5["request_id"]])
         self.p.s.toggles.query_cache = False
 
+    def test_expect_report_is_ordered_and_explains_unresolved(self):
+        """화면이 읽히도록 서버가 미리 정리해 주는 것들 (2026-09-16).
+
+        예전 화면은 (1) '원 판정 sufficient' 옆에 '미해결 ISSUE-…' 만 띄워 모순처럼 보였고,
+        (2) 수정안이 담긴 순서 그대로여서 confidence 0.35 가 0.8 위에 있었으며,
+        (3) 목표 청크가 수십 개면 같은 탈락 단계 표가 그만큼 반복됐다.
+        """
+        from llmwiki import forensic as _fx
+        self.p.s.toggles.llm_answer = False
+        r, _ = self.p.query("HW rev B1 에서 t_setup 은 몇 ns 인가?", log=True)
+        rep = _fx.trace_expectation(self.p, r["request_id"], ["없는문서-XYZ"], ["8ns"])
+        # (1) 못 찾은 기대 문서: '미해결' 로만 두지 않고 무엇을 해야 하는지까지
+        self.assertEqual(rep["expected"]["unresolved"], ["없는문서-XYZ"])
+        self.assertTrue(rep["targets"])                       # 용어로 목표는 잡혔다
+        if rep["verdict"] == "sufficient":
+            self.assertIn("색인에 그런 문서가 없다", " ".join(rep["summary"]))
+        # (2) 수정안은 확신이 큰 것부터, 임계 미만은 표시만 하고 버리지 않는다
+        confs = [s["confidence"] for s in rep["suggestions"]]
+        self.assertEqual(confs, sorted(confs, reverse=True), confs)
+        thr = rep["suggestion_min_confidence"]
+        self.assertTrue(all(s["low_confidence"] == (s["confidence"] < thr) for s in rep["suggestions"]))
+        # (3) 목표 청크는 가장 멀리 간 것부터 (화면은 targets_shown 개만 펼친다)
+        reaches = [t["reach"] for t in rep["targets"]]
+        self.assertEqual(reaches, sorted(reaches, reverse=True), reaches)
+        self.assertGreaterEqual(rep["targets_shown"], 1)
+        self.assertTrue(any(t["chunk_id"] == rep["best_target"] for t in rep["targets"]))
+
     def test_proposal_kinds_query_rule_and_tuning(self):
         from llmwiki import evolve as ev
         pid = self.p.store.add_proposal("query_rule", {"type": "synonym", "term": "언더런", "values": ["underrun"]}, "t", 0.6, "expectation")
@@ -520,6 +586,55 @@ class McpHttpTest(_Base):
         self.assertEqual(st, 200)
         snippets = __import__("llmwiki.mcp", fromlist=["client_config_snippets"]).client_config_snippets("http://127.0.0.1:%d" % self.port, "tok")
         self.assertIn("/mcp", snippets["http_json"]["mcpServers"]["llmwiki"]["url"])
+
+
+class McpStdioFramingTest(unittest.TestCase):
+    """stdio 프레이밍: 줄 단위와 Content-Length 두 가지.
+
+    Content-Length 는 **바이트** 수인데 stdin 은 텍스트 스트림이라 read(n) 이 **문자** 수를 센다.
+    한글 인자를 Content-Length 로 보내는 클라이언트에서 본문이 밀려 다음 메시지까지 깨졌다.
+    """
+
+    def _msgs(self, raw):
+        import io
+        from llmwiki.mcp import _read_message
+        st = io.StringIO(raw)
+        out = []
+        while True:
+            m = _read_message(st)
+            if m is None:
+                break
+            out.append(m)
+        return out
+
+    @staticmethod
+    def _framed(obj):
+        body = json.dumps(obj, ensure_ascii=False)
+        return "Content-Length: %d\r\n\r\n%s" % (len(body.encode("utf-8")), body)
+
+    def test_line_and_content_length_framing(self):
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        self.assertEqual(self._msgs(json.dumps(ping) + "\n"), [ping])
+        self.assertEqual(self._msgs(self._framed(ping)), [ping])
+
+    def test_content_length_counts_bytes_not_characters(self):
+        kr = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+              "params": {"name": "wiki_doc", "arguments": {"id": "한글-문서-아이디"}}}
+        body = json.dumps(kr, ensure_ascii=False)
+        self.assertGreater(len(body.encode("utf-8")), len(body))     # 전제: 바이트 > 문자
+        nxt = {"jsonrpc": "2.0", "id": 3, "method": "ping"}
+        # 한글 프레임 뒤에 줄 단위 메시지가 이어져도 앞 프레임이 그것을 삼키지 않아야 한다
+        got = self._msgs(self._framed(kr) + json.dumps(nxt) + "\n")
+        self.assertEqual(got, [kr, nxt])
+
+    def test_message_without_method_is_invalid_request(self):
+        """method 가 없는 본문을 알림으로 오해해 삼키면 클라이언트가 응답을 기다리며 멈춘다."""
+        from llmwiki.mcp import handle
+        r = handle(None, {"jsonrpc": "2.0"})          # method 이전에 판정하므로 pipe 는 쓰이지 않는다
+        self.assertEqual(r["error"]["code"], -32600)
+        self.assertIsNone(r["id"])
+        r = handle(None, {"jsonrpc": "2.0", "id": 5})
+        self.assertEqual((r["id"], r["error"]["code"]), (5, -32600))
 
 
 if __name__ == "__main__":

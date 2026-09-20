@@ -2,13 +2,16 @@
   "_comment": "규칙 기반 질의 확장 사전. 유형별 적용 방식이 다름 (acronym=동치 구문, synonym=OR 가중, alias=정규화 치환, related=보조 리스트, exclude=NOT+페널티, compound=복합어 분리).",
   "acronym": {
     "PDCCH": [
-      "Physical Downlink Control Channel"
+      "Physical Downlink Control Channel",
+      "하향 제어 채널"
     ],
     "PDSCH": [
-      "Physical Downlink Shared Channel"
+      "Physical Downlink Shared Channel",
+      "하향 공유 채널"
     ],
     "PUSCH": [
-      "Physical Uplink Shared Channel"
+      "Physical Uplink Shared Channel",
+      "상향 공유 채널"
     ],
     "AGC": [
       "Automatic Gain Control",
@@ -26,10 +29,12 @@
       "물리 계층"
     ],
     "HARQ": [
-      "Hybrid ARQ"
+      "Hybrid ARQ",
+      "하이브리드 ARQ"
     ],
     "RF": [
-      "Radio Frequency"
+      "Radio Frequency",
+      "무선 주파수"
     ],
     "FIFO": [
       "First In First Out"
@@ -48,6 +53,190 @@
     "VP": [
       "Virtual Platform",
       "가상 플랫폼"
+    ],
+    "PUCCH": [
+      "Physical Uplink Control Channel",
+      "상향 제어 채널"
+    ],
+    "PRACH": [
+      "Physical Random Access Channel",
+      "랜덤 액세스 채널"
+    ],
+    "PBCH": [
+      "Physical Broadcast Channel"
+    ],
+    "SSB": [
+      "Synchronization Signal Block",
+      "동기 신호 블록"
+    ],
+    "CSI": [
+      "Channel State Information",
+      "채널 상태 정보"
+    ],
+    "CQI": [
+      "Channel Quality Indicator"
+    ],
+    "PMI": [
+      "Precoding Matrix Indicator"
+    ],
+    "RI": [
+      "Rank Indicator"
+    ],
+    "SRS": [
+      "Sounding Reference Signal"
+    ],
+    "DMRS": [
+      "Demodulation Reference Signal"
+    ],
+    "PTRS": [
+      "Phase Tracking Reference Signal"
+    ],
+    "RLC": [
+      "Radio Link Control"
+    ],
+    "MAC": [
+      "Medium Access Control"
+    ],
+    "RRC": [
+      "Radio Resource Control"
+    ],
+    "TA": [
+      "Timing Advance",
+      "타이밍 어드밴스"
+    ],
+    "TDD": [
+      "Time Division Duplex"
+    ],
+    "FDD": [
+      "Frequency Division Duplex"
+    ],
+    "OFDM": [
+      "Orthogonal Frequency Division Multiplexing",
+      "직교 주파수 분할 다중"
+    ],
+    "SCS": [
+      "Subcarrier Spacing",
+      "부반송파 간격"
+    ],
+    "RB": [
+      "Resource Block",
+      "리소스 블록"
+    ],
+    "RE": [
+      "Resource Element"
+    ],
+    "TTI": [
+      "Transmission Time Interval"
+    ],
+    "BLER": [
+      "Block Error Rate",
+      "블록 오류율"
+    ],
+    "EVM": [
+      "Error Vector Magnitude"
+    ],
+    "SNR": [
+      "Signal to Noise Ratio",
+      "신호대잡음비"
+    ],
+    "SINR": [
+      "Signal to Interference plus Noise Ratio"
+    ],
+    "RSSI": [
+      "Received Signal Strength Indicator",
+      "수신 신호 세기"
+    ],
+    "RSRP": [
+      "Reference Signal Received Power"
+    ],
+    "RSRQ": [
+      "Reference Signal Received Quality"
+    ],
+    "AFC": [
+      "Automatic Frequency Control",
+      "자동 주파수 제어"
+    ],
+    "LNA": [
+      "Low Noise Amplifier",
+      "저잡음 증폭기"
+    ],
+    "ADC": [
+      "Analog to Digital Converter"
+    ],
+    "DAC": [
+      "Digital to Analog Converter"
+    ],
+    "PLL": [
+      "Phase Locked Loop",
+      "위상 고정 루프"
+    ],
+    "IQ": [
+      "In-phase Quadrature"
+    ],
+    "FFT": [
+      "Fast Fourier Transform",
+      "고속 푸리에 변환"
+    ],
+    "IFFT": [
+      "Inverse FFT"
+    ],
+    "LDPC": [
+      "Low Density Parity Check"
+    ],
+    "CRC": [
+      "Cyclic Redundancy Check"
+    ],
+    "IRQ": [
+      "Interrupt Request",
+      "인터럽트 요청"
+    ],
+    "RTOS": [
+      "Real Time Operating System",
+      "실시간 운영체제"
+    ],
+    "MMU": [
+      "Memory Management Unit"
+    ],
+    "MPU": [
+      "Memory Protection Unit"
+    ],
+    "SPI": [
+      "Serial Peripheral Interface"
+    ],
+    "I2C": [
+      "Inter-Integrated Circuit"
+    ],
+    "UART": [
+      "Universal Asynchronous Receiver Transmitter"
+    ],
+    "BSP": [
+      "Board Support Package"
+    ],
+    "HAL": [
+      "Hardware Abstraction Layer",
+      "하드웨어 추상화 계층"
+    ],
+    "SoC": [
+      "System on Chip"
+    ],
+    "JTAG": [
+      "Joint Test Action Group"
+    ],
+    "WDT": [
+      "Watchdog Timer",
+      "워치독 타이머"
+    ],
+    "HW": [
+      "Hardware",
+      "하드웨어"
+    ],
+    "SW": [
+      "Software",
+      "소프트웨어"
+    ],
+    "FW": [
+      "Firmware",
+      "펌웨어"
     ]
   },
   "synonym": {
@@ -55,32 +244,38 @@
       "리셋",
       "restart",
       "reset",
-      "재기동"
+      "재기동",
+      "reinit"
     ],
     "오류": [
       "에러",
       "error",
       "실패",
-      "fault"
+      "fault",
+      "failure"
     ],
     "지연": [
       "딜레이",
       "delay",
-      "latency"
+      "latency",
+      "레이턴시"
     ],
     "수정": [
       "fix",
       "패치",
-      "patch"
+      "patch",
+      "수정사항"
     ],
     "검증": [
       "verify",
       "테스트",
-      "validation"
+      "validation",
+      "확인"
     ],
     "타이밍": [
       "timing",
-      "시간"
+      "시간",
+      "타임"
     ],
     "레지스터": [
       "register",
@@ -94,32 +289,207 @@
       "issue",
       "문제",
       "결함",
-      "버그"
+      "버그",
+      "bug",
+      "defect"
+    ],
+    "수렴": [
+      "convergence",
+      "converge",
+      "settle",
+      "정착"
+    ],
+    "언더런": [
+      "underrun",
+      "under-run",
+      "버퍼 부족"
+    ],
+    "오버런": [
+      "overrun",
+      "over-run",
+      "버퍼 넘침"
+    ],
+    "동기": [
+      "sync",
+      "synchronization",
+      "싱크"
+    ],
+    "교정": [
+      "calibration",
+      "calib",
+      "캘리브레이션",
+      "보정"
+    ],
+    "누설": [
+      "leak",
+      "leakage",
+      "릭"
+    ],
+    "경합": [
+      "race",
+      "race condition",
+      "레이스"
+    ],
+    "교착": [
+      "deadlock",
+      "데드락"
+    ],
+    "기아": [
+      "starvation",
+      "스타베이션"
+    ],
+    "스택": [
+      "stack",
+      "스택 오버플로",
+      "stack overflow"
+    ],
+    "최적화": [
+      "optimization",
+      "optimize",
+      "튜닝"
+    ],
+    "회귀": [
+      "regression",
+      "리그레션"
+    ],
+    "양산": [
+      "mass production",
+      "MP",
+      "production"
+    ],
+    "시험": [
+      "test",
+      "테스트",
+      "시험항목"
+    ],
+    "임계값": [
+      "threshold",
+      "임계치",
+      "thr"
+    ],
+    "대역폭": [
+      "bandwidth",
+      "BW"
+    ],
+    "전력": [
+      "power",
+      "소비전력",
+      "power consumption"
+    ],
+    "잡음": [
+      "noise",
+      "노이즈"
+    ],
+    "이득": [
+      "gain",
+      "게인"
+    ],
+    "필터": [
+      "filter",
+      "필터링"
+    ],
+    "버퍼": [
+      "buffer",
+      "링버퍼",
+      "ring buffer"
+    ],
+    "큐": [
+      "queue",
+      "대기열"
+    ],
+    "스케줄러": [
+      "scheduler",
+      "스케줄링",
+      "scheduling"
+    ],
+    "드라이버": [
+      "driver",
+      "디바이스 드라이버",
+      "device driver"
+    ],
+    "펌웨어": [
+      "firmware",
+      "FW",
+      "이미지",
+      "image"
+    ],
+    "부팅": [
+      "boot",
+      "부트",
+      "bring-up",
+      "브링업"
     ]
   },
   "alias": {
     "모뎀B": "MDM9x-B1",
     "modem b1": "MDM9x-B1",
     "코딩룰": "coding rule",
-    "코딩 규칙": "coding rule"
+    "코딩 규칙": "coding rule",
+    "체인지리스트": "Change List",
+    "체인지 리스트": "Change List",
+    "피지컬 레이어": "physical layer",
+    "피지컬레이어": "physical layer",
+    "물리계층": "physical layer",
+    "링버퍼": "ring buffer"
   },
   "related": {
     "DMA underrun": [
       "FIFO overflow",
       "버퍼 언더런",
-      "DMA 타임아웃"
+      "DMA 타임아웃",
+      "descriptor"
     ],
     "AGC": [
       "RSSI",
-      "gain table"
+      "gain table",
+      "LNA",
+      "saturation"
     ],
     "PA": [
       "TX power",
-      "송신 전력"
+      "송신 전력",
+      "backoff",
+      "ACLR"
     ],
     "PHY 재시작": [
       "PHY init",
       "PHY reset sequence"
+    ],
+    "HARQ": [
+      "재전송",
+      "NDI",
+      "RV",
+      "soft buffer"
+    ],
+    "PRACH": [
+      "랜덤 액세스",
+      "preamble",
+      "RA-RNTI"
+    ],
+    "타이밍 어드밴스": [
+      "TA command",
+      "uplink timing",
+      "동기"
+    ],
+    "스택 오버플로": [
+      "stack size",
+      "task stack",
+      "워터마크"
+    ],
+    "워치독": [
+      "reset reason",
+      "hang",
+      "무응답"
+    ],
+    "부팅": [
+      "bootloader",
+      "init sequence",
+      "bring-up"
+    ],
+    "수율": [
+      "양산",
+      "공정",
+      "bin"
     ]
   },
   "exclude": {
@@ -129,7 +499,12 @@
     ],
     "예제": [
       "sample",
-      "example"
+      "example",
+      "샘플코드"
+    ],
+    "템플릿": [
+      "template",
+      "boilerplate"
     ]
   },
   "compound": {
@@ -148,6 +523,46 @@
     "인터럽트핸들러": [
       "인터럽트",
       "핸들러"
+    ],
+    "버퍼오버플로": [
+      "버퍼",
+      "오버플로"
+    ],
+    "스택오버플로": [
+      "스택",
+      "오버플로"
+    ],
+    "주파수오프셋": [
+      "주파수",
+      "오프셋"
+    ],
+    "채널추정": [
+      "채널",
+      "추정"
+    ],
+    "타이밍동기": [
+      "타이밍",
+      "동기"
+    ],
+    "상향링크": [
+      "상향",
+      "링크"
+    ],
+    "하향링크": [
+      "하향",
+      "링크"
+    ],
+    "무선자원": [
+      "무선",
+      "자원"
+    ],
+    "메모리누수": [
+      "메모리",
+      "누수"
+    ],
+    "부트로더": [
+      "부트",
+      "로더"
     ]
   }
 }

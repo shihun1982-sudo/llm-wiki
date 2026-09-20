@@ -29,13 +29,28 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
 from .config import ROOT, path_for
+from . import progress as _pg
 from .providers import BaseLLM, LLMError
 
-RETRY_DEFAULTS: Dict[str, Any] = {"timeout_s": 300, "retries": 3, "retry_backoff_s": 5, "retry_on": ["timeout", "exec", "exit", "empty"]}
+RETRY_DEFAULTS: Dict[str, Any] = {
+    "timeout_s": 300,                 # 1회 실행의 전체 제한(초)
+    "retries": 3,
+    "retry_backoff_s": 5,
+    "retry_on": ["timeout", "exec", "exit", "empty", "stall"],
+    # ---- 무응답 대책 (2026-09-16) ----
+    # opencode 는 붙었다가 **아무 것도 내놓지 않고 매달리는** 일이 잦다. 예전에는 timeout_s(기본 300초)를
+    # 꼬박 기다린 뒤에야 실패했고, retries 까지 더하면 한 번의 질의가 20분을 날렸다.
+    # 이제는 출력이 멎으면 그 자체로 실패로 보고 바로 다음 시도로 넘어간다.
+    "stall_timeout_s": 60,            # 마지막 출력 뒤 이만큼 새 출력이 없으면 '멎었다'고 보고 죽인다 (0 = 끔)
+    "first_output_timeout_s": 120,    # 첫 출력까지 기다리는 시간 (기동이 느린 에이전트용; 0 = stall_timeout_s 와 같게)
+    "keep_partial_on_timeout": True,  # 멎기 전까지 쓸 만한 텍스트를 냈으면 버리지 않고 그것을 쓴다
+    "failure_log_chars": 2000,        # 실패 시 로그에 남길 stdout/stderr 꼬리 길이
+}
 
 DEFAULT_AGENTS: Dict[str, Dict[str, Any]] = {
     "opencode": {
@@ -83,6 +98,15 @@ def with_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     for k, v in RETRY_DEFAULTS.items():
         if k not in out or out[k] in (None, ""):
             out[k] = json.loads(json.dumps(v))
+    # 'stall'(무응답)은 2026-09-16 에 생긴 재시도 사유다. 예전 파일의 retry_on 에는 없어서
+    # 무응답을 잡아내고도 재시도하지 않게 되므로 여기서 채워 준다. 원하지 않으면 파일에서 지우면 되지만,
+    # 그때는 retry_on 에 "-stall" 을 넣어 명시적으로 끈다.
+    ro = out.get("retry_on")
+    if isinstance(ro, list):
+        if "-stall" in ro:
+            out["retry_on"] = [x for x in ro if x not in ("-stall", "stall")]
+        elif "stall" not in ro:
+            out["retry_on"] = list(ro) + ["stall"]
     return out
 
 
@@ -108,8 +132,11 @@ def save_agents(data: Dict[str, Dict[str, Any]]) -> str:
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     out = {"_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. "
                        "command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다. "
-                       "재시도: timeout_s(1회 실행 제한, 기본 300=5분) · retries(재시도 횟수, 기본 3) · retry_backoff_s · retry_on[timeout|exec|exit|empty]. "
-                       "최종 실패는 질의 결과 llm_report / 빌드 alerts 에 보고되고 답변은 추출식으로 대체된다."}
+                       "재시도: timeout_s(1회 실행 전체 제한, 기본 300=5분) · retries(기본 3) · retry_backoff_s · retry_on[timeout|exec|exit|empty|stall]. "
+                       "무응답 대책: stall_timeout_s(마지막 출력 뒤 이만큼 조용하면 죽이고 재시도, 기본 60) · "
+                       "first_output_timeout_s(첫 출력까지, 기본 120) · keep_partial_on_timeout(멎기 전 받은 답을 쓸지, 기본 true) · "
+                       "failure_log_chars(실패 로그에 남길 stdout/stderr 꼬리, 기본 2000). "
+                       "최종 실패는 질의 결과 llm_report / 빌드 alerts 에 보고되고 답변은 추출식으로 대체된다. 설명: docs/BRINGUP_GUIDE.md §4.3"}
     out.update(data)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
@@ -227,6 +254,105 @@ class HeadlessAgentLLM(BaseLLM):
     def _retry_on(self) -> List[str]:
         return [str(x) for x in ((self.cfg or {}).get("retry_on") or RETRY_DEFAULTS["retry_on"])]
 
+    def _num(self, key: str) -> float:
+        try:
+            v = (self.cfg or {}).get(key, RETRY_DEFAULTS.get(key))
+            return float(v if v not in (None, "") else (RETRY_DEFAULTS.get(key) or 0))
+        except (TypeError, ValueError):
+            return float(RETRY_DEFAULTS.get(key) or 0)
+
+    def _run_streaming(self, args: List[str], stdin_text: Optional[str], cwd: Optional[str], env: Dict[str, str],
+                       timeout_s: float, stall_s: float, first_s: float) -> Dict[str, Any]:
+        """자식 프로세스를 띄우고 **출력을 흘려 받으며** 감시한다.
+
+        예전에는 `subprocess.run(timeout=…)` 이라 (1) 출력이 멎어도 전체 제한까지 기다렸고,
+        (2) 진행 상황이 보이지 않았으며, (3) 죽일 때 그때까지 받은 텍스트를 통째로 버렸다.
+        반환: {rc, out, err, reason, waited_s, last_gap_s, lines}
+          reason: "" 정상 종료 · "timeout" 전체 시간 초과 · "stall" 무출력 초과 · "cancelled" 사용자 취소
+        """
+        out_buf: List[str] = []
+        err_buf: List[str] = []
+        state = {"last": time.monotonic(), "lines": 0}
+        lock = threading.Lock()
+        proc = subprocess.Popen(args, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                errors="replace", bufsize=1, cwd=cwd, env=env)
+
+        def pump(stream, buf, count_it):
+            try:
+                for line in stream:
+                    with lock:
+                        buf.append(line)
+                        state["last"] = time.monotonic()
+                        if count_it:
+                            state["lines"] += 1
+            except Exception:
+                pass
+
+        threads = [threading.Thread(target=pump, args=(proc.stdout, out_buf, True), daemon=True),
+                   threading.Thread(target=pump, args=(proc.stderr, err_buf, False), daemon=True)]
+        for t in threads:
+            t.start()
+        if stdin_text is not None:
+            try:
+                proc.stdin.write(stdin_text)
+                proc.stdin.close()
+            except Exception:
+                pass
+
+        t0 = time.monotonic()
+        reason = ""
+        noted = 0.0
+        while True:
+            if proc.poll() is not None:
+                break
+            now = time.monotonic()
+            with lock:
+                last, lines = state["last"], state["lines"]
+            gap = now - last
+            limit = (first_s if (lines == 0 and first_s > 0) else stall_s)
+            if timeout_s > 0 and now - t0 >= timeout_s:
+                reason = "timeout"
+                break
+            if limit > 0 and gap >= limit:
+                reason = "stall"
+                break
+            try:
+                if _pg.cancel_requested() is not None:
+                    reason = "cancelled"
+                    break
+            except Exception:
+                pass
+            if now - noted >= 5.0:      # 진행 상황을 활동 보드/로그에 흘려 준다 (무응답인지 일하는 중인지 구분)
+                noted = now
+                try:
+                    _pg.note("headless %s: %d줄 수신 · 마지막 출력 %.0fs 전 (제한 %.0fs)" % (self.agent, lines, gap, limit or timeout_s))
+                except Exception:
+                    pass
+            time.sleep(0.2)
+        if reason:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        for t in threads:
+            t.join(timeout=3)
+        for s in (proc.stdout, proc.stderr, proc.stdin):   # 서버는 이 호출을 수천 번 한다 — 핸들을 남기지 않는다
+            try:
+                if s and not s.closed:
+                    s.close()
+            except Exception:
+                pass
+        with lock:
+            return {"rc": proc.returncode, "out": "".join(out_buf), "err": "".join(err_buf), "reason": reason,
+                    "waited_s": round(time.monotonic() - t0, 1), "last_gap_s": round(time.monotonic() - state["last"], 1),
+                    "lines": state["lines"]}
+
     def _exe(self) -> str:
         """command[0] 을 실제 실행 파일 경로로 해석. {python} → 현재 인터프리터.
         Windows 에서 npm/bun 이 설치한 opencode 는 opencode.cmd 셸 스크립트인데 CreateProcess 는 PATHEXT 를 보지 않으므로
@@ -302,15 +428,14 @@ class HeadlessAgentLLM(BaseLLM):
         env = dict(os.environ)
         env.update({k: str(v) for k, v in (self.cfg.get("env") or {}).items()})
         cwd = (self.cfg.get("cwd") or "{project_root}").replace("{project_root}", ROOT)
-        timeout_s = int(self.cfg.get("timeout_s") or self.timeout or 300)
+        timeout_s = float(self.cfg.get("timeout_s") or self.timeout or 300)
+        stall_s = self._num("stall_timeout_s")
+        first_s = self._num("first_output_timeout_s") or stall_s
         retry_on = self._retry_on()
         t0 = time.perf_counter()
         try:
-            proc = subprocess.run(args, input=(prompt if mode == "stdin" else None), capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=timeout_s, cwd=cwd if os.path.isdir(cwd) else None, env=env)
-        except subprocess.TimeoutExpired:
-            # subprocess.run 은 타임아웃 시 자식을 kill 한 뒤 예외를 던진다. 재시도 여부는 retry_on 에 'timeout' 이 있을 때.
-            raise LLMError("headless agent timeout (%ss, %s)" % (timeout_s, self.agent), transient=("timeout" in retry_on), kind="timeout")
+            run = self._run_streaming(args, prompt if mode == "stdin" else None,
+                                      cwd if os.path.isdir(cwd) else None, env, timeout_s, stall_s, first_s)
         except OSError as e:
             raise LLMError("headless agent exec failed: %s" % e, transient=("exec" in retry_on), kind="exec")
         finally:
@@ -320,36 +445,88 @@ class HeadlessAgentLLM(BaseLLM):
                 except OSError:
                     pass
         ms = (time.perf_counter() - t0) * 1000
-        raw = (proc.stdout or "")[: int(self.cfg.get("max_output_chars") or 400000)]
+        raw = (run["out"] or "")[: int(self.cfg.get("max_output_chars") or 400000)]
+        stderr = run["err"] or ""
         events = parse_output(raw, self.cfg.get("output", "ndjson"))
-        text = extract_text(events, self.cfg.get("text_paths") or ["text"]).strip()
-        if not text and proc.returncode != 0:
-            raise LLMError("headless agent exit %s: %s" % (proc.returncode, (proc.stderr or raw)[:300]), transient=("exit" in retry_on), kind="exit")
+        parsed = extract_text(events, self.cfg.get("text_paths") or ["text"]).strip()
+        text = parsed or raw.strip()    # 파서가 못 찾으면 원문 (text_paths 보정 필요)
+
+        def _fail(kind: str, msg: str):
+            self._log_failure(kind, args, run, msg)
+            raise LLMError(msg, transient=(kind in retry_on), kind=kind)
+
+        if run["reason"] == "cancelled":
+            raise _pg.Cancelled("headless agent 취소됨 (%s)" % self.agent)
+        if run["reason"] in ("timeout", "stall"):
+            # 멎기 전에 쓸 만한 답을 이미 냈다면 버리지 않는다 — 버리면 재시도에 또 몇 분을 쓴다.
+            # 단 **파서가 실제 텍스트를 찾았을 때만**. 원문 폴백(raw)은 대개 프로토콜 잡음이라
+            # 그것을 답변으로 쓰면 "헛소리를 답으로 돌려주는" 더 나쁜 실패가 된다.
+            text = parsed
+            if text and self.cfg.get("keep_partial_on_timeout", True):
+                self._log_failure(run["reason"], args, run, "부분 출력을 사용합니다 (%d자)" % len(text), level="warning")
+                usage = extract_usage(events, self.cfg.get("usage_paths") or {})
+                if not usage["input_tokens"]:
+                    usage = {"input_tokens": len(prompt) // 3, "output_tokens": len(text) // 3, "estimated": True}
+                return {"text": text, "usage": usage, "ms": ms, "model": self.model or self.agent, "exit_code": run["rc"],
+                        "events": len(events), "partial": True, "stop_reason": run["reason"],
+                        "note": "%s (%s초 무출력) 로 중단했지만 그때까지 받은 답을 사용했습니다" % (run["reason"], run["last_gap_s"])}
+            if run["reason"] == "stall":
+                _fail("stall", "headless agent 가 %.0f초 동안 아무 것도 내놓지 않았습니다 (%s, %d줄 수신, 전체 %.0fs). "
+                               "agents.json 의 stall_timeout_s/first_output_timeout_s 로 조정합니다"
+                               % (run["last_gap_s"], self.agent, run["lines"], run["waited_s"]))
+            _fail("timeout", "headless agent timeout (%.0fs, %s, %d줄 수신)" % (timeout_s, self.agent, run["lines"]))
+        if not text and run["rc"] not in (0, None):
+            _fail("exit", "headless agent exit %s: %s" % (run["rc"], (stderr or raw)[:300]))
         if not text:
-            text = raw.strip()   # 파서가 못 찾으면 원문 (text_paths 보정 필요)
-        if not text:
-            raise LLMError("headless agent returned empty output (exit %s): %s" % (proc.returncode, (proc.stderr or "")[:200]), transient=("empty" in retry_on), kind="empty")
+            _fail("empty", "headless agent returned empty output (exit %s): %s" % (run["rc"], stderr[:200]))
         usage = extract_usage(events, self.cfg.get("usage_paths") or {})
         if not usage["input_tokens"]:
             usage = {"input_tokens": len(prompt) // 3, "output_tokens": len(text) // 3, "estimated": True}
         try:
             from . import logging_setup as _ls
-            _ls.log("debug", "headless agent run", "llm", agent=self.agent, argv=[a[:80] for a in args], exit=proc.returncode,
-                    ms=round(ms, 1), events=len(events), stderr=(proc.stderr or "")[:300])
+            _ls.log("debug", "headless agent run", "llm", agent=self.agent, argv=[a[:80] for a in args], exit=run["rc"],
+                    ms=round(ms, 1), events=len(events), lines=run["lines"], stderr=stderr[:300])
         except Exception:
             pass
-        return {"text": text, "usage": usage, "ms": ms, "model": self.model or self.agent, "exit_code": proc.returncode, "events": len(events)}
+        return {"text": text, "usage": usage, "ms": ms, "model": self.model or self.agent, "exit_code": run["rc"], "events": len(events)}
+
+    def _log_failure(self, kind: str, args: List[str], run: Dict[str, Any], msg: str, level: str = "error") -> None:
+        """실패를 **진단할 수 있을 만큼** 남긴다 — 예전에는 stderr 300자만, 그것도 debug 수준이라 운영에서 안 보였다."""
+        n = int(self._num("failure_log_chars") or 2000)
+        try:
+            from . import logging_setup as _ls
+            _ls.log(level, "headless agent %s: %s" % (kind, msg[:200]), "llm", agent=self.agent, model=self.model,
+                    role=getattr(self, "role", ""), argv=[a[:120] for a in args], exit=run.get("rc"),
+                    lines=run.get("lines"), waited_s=run.get("waited_s"), last_gap_s=run.get("last_gap_s"),
+                    stdout_tail=(run.get("out") or "")[-n:], stderr_tail=(run.get("err") or "")[-n:],
+                    hint="agents.json 의 timeout_s/stall_timeout_s/first_output_timeout_s/retries 를 조정하거나 "
+                         "`python -m llmwiki models test --live` 로 실제 호출을 확인하세요")
+        except Exception:
+            pass
+        try:
+            _pg.note("headless %s %s — %s" % (self.agent, kind, msg[:120]))
+        except Exception:
+            pass
 
 
 def _mock_main() -> int:
     """`python -m llmwiki.headless --mock` : 표준입력 프롬프트를 읽어 MockLLM 과 같은 규칙으로 ndjson 이벤트 출력.
-    테스트 옵션: --sleep N (N초 멈춤 → 타임아웃 재현) · --fail-times N --state FILE (처음 N번은 종료 코드 3 으로 실패 → 재시도 재현) · --empty (빈 출력)"""
+    테스트 옵션: --sleep N (N초 멈춤 → 타임아웃 재현) · --fail-times N --state FILE (처음 N번은 종료 코드 3 으로 실패 → 재시도 재현) · --empty (빈 출력)
+      --stall N (몇 줄 내놓고 N초 조용 → **무응답** 재현) · --partial (부분 텍스트만 내고 멈춤)"""
     prompt = sys.stdin.read()
     files = []
     argv = sys.argv[1:]
     for i, a in enumerate(argv):
         if a == "--file" and i + 1 < len(argv):
             files.append(argv[i + 1])
+    if "--stall" in argv:
+        # 첫 줄(또는 부분 텍스트)만 내놓고 조용해진다 — opencode 가 붙었다가 매달리는 모습
+        sys.stdout.write(json.dumps({"type": "step_start", "session": "mock"}) + "\n")
+        if "--partial" in argv:
+            sys.stdout.write(json.dumps({"type": "text", "part": {"text": "부분 답변입니다."}}, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        time.sleep(float(argv[argv.index("--stall") + 1]))
+        return 0
     if "--sleep" in argv:
         time.sleep(float(argv[argv.index("--sleep") + 1]))
     if "--fail-times" in argv:

@@ -1,0 +1,72 @@
+{
+ "rows": [
+  {
+   "ok": true,
+   "name": "서버 기동",
+   "detail": "http://127.0.0.1:8972"
+  },
+  {
+   "ok": true,
+   "name": "부하 중 증분 빌드 시작",
+   "detail": "HTTP 200 job=a54a293d"
+  },
+  {
+   "ok": true,
+   "name": "빌드 중에도 질의가 응답한다 (soft 락)",
+   "detail": "HTTP 200 · 4.2s"
+  },
+  {
+   "ok": true,
+   "name": "예상 밖 오류(5xx·연결실패) 0건",
+   "detail": "요청 11069건 · 200=11069 · 거절(429/503)=0 · 5xx=0"
+  },
+  {
+   "ok": true,
+   "name": "정상 처리된 요청이 있다",
+   "detail": "200 11069건 · 창구별 {\"web:poll\": 3324, \"mcp:query\": 2053, \"mcp:list\": 2053, \"web:search\": 2111, \"cli:search\": 243, \"web:query\": 1199, \"web:write\": 86}"
+  },
+  {
+   "ok": true,
+   "name": "p95 지연이 60초 미만",
+   "detail": "p50=286ms p95=2236ms max=4745ms"
+  },
+  {
+   "ok": true,
+   "name": "부하 뒤 health 통과",
+   "detail": "HTTP 200 fails=0 warn=2"
+  },
+  {
+   "ok": true,
+   "name": "부하 뒤 색인 무결성",
+   "detail": "HTTP 200 orphans=없음"
+  },
+  {
+   "ok": true,
+   "name": "부하 뒤 실행 중 작업이 남지 않음",
+   "detail": "running=0 queued=0"
+  },
+  {
+   "ok": true,
+   "name": "부하 뒤 정상 질의가 된다",
+   "detail": "HTTP 200"
+  }
+ ],
+ "stats": {
+  "codes": {
+   "200": 11069
+  },
+  "err": [],
+  "n": 11069,
+  "by_kind": {
+   "web:poll": 3324,
+   "mcp:query": 2053,
+   "mcp:list": 2053,
+   "web:search": 2111,
+   "cli:search": 243,
+   "web:query": 1199,
+   "web:write": 86
+  }
+ },
+ "p50_ms": 285.7532501220703,
+ "p95_ms": 2235.731840133667
+}

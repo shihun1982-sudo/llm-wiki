@@ -1,0 +1,122 @@
+[
+ {
+  "ok": true,
+  "name": "일시 실패 뒤 답변이 나온다",
+  "detail": "HTTP 200 · 답변 43자"
+ },
+ {
+  "ok": true,
+  "name": "재시도가 성공해 LLM 답변으로 끝났다",
+  "detail": "mode=llm"
+ },
+ {
+  "ok": true,
+  "name": "500 이 아니라 200 으로 응답한다",
+  "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "근거 기반 답변이 여전히 나온다",
+  "detail": "mode=extractive · 4303자"
+ },
+ {
+  "ok": true,
+  "name": "LLM 답변이 아니라 대체 경로로 표시된다",
+  "detail": "mode=extractive"
+ },
+ {
+  "ok": true,
+  "name": "무엇이 왜 실패했는지 보고가 붙는다",
+  "detail": "expand(mock/mock) 4회 시도 후 실패 (timeout 600s) — mock timeout (테스트 훅 LLMWIKI_MOCK_FAIL, 4회째) "
+ },
+ {
+  "ok": true,
+  "name": "연속 실패 뒤에도 질의가 처리된다",
+  "detail": "HTTP 200 · 0.2s"
+ },
+ {
+  "ok": true,
+  "name": "회로 차단 또는 빠른 실패로 시간을 낭비하지 않는다",
+  "detail": "0.2s"
+ },
+ {
+  "ok": true,
+  "name": "LLM 이 죽어 있어도 health 는 응답한다",
+  "detail": "HTTP 200 ok=True"
+ },
+ {
+  "ok": true,
+  "name": "느린 질의 중에도 활동·진행 조회가 막히지 않는다",
+  "detail": "0.03s"
+ },
+ {
+  "ok": true,
+  "name": "느린 질의도 결국 정상 응답",
+  "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "진행 중 요청에 취소가 접수된다",
+  "detail": "{\"ok\": true, \"token\": \"tmo-cancel-1\", \"status\": \"running\"}"
+ },
+ {
+  "ok": true,
+  "name": "취소된 요청이 깔끔히 끝난다 (499 또는 완료)",
+  "detail": "HTTP 499"
+ },
+ {
+  "ok": true,
+  "name": "취소 직후 다음 질의가 정상",
+  "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "5xx(예상 밖 오류) 없이 처리되거나 거절된다",
+  "detail": "200=2 거절=10 그밖=0 (14s)"
+ },
+ {
+  "ok": true,
+  "name": "상한 안에서는 실제로 처리된다",
+  "detail": "200 2건"
+ },
+ {
+  "ok": true,
+  "name": "폭주 뒤에도 서버가 살아 있다",
+  "detail": "health HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "폭주 뒤 정상 질의가 다시 된다",
+  "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "죽은 외부 소스가 있어도 답이 나온다",
+  "detail": "HTTP 200 · 3.0s"
+ },
+ {
+  "ok": true,
+  "name": "실패한 소스가 trace 에 이유와 함께 남는다",
+  "detail": "{\"k\": 5, \"fallback\": false, \"results\": 0, \"per_source\": {}, \"errors\": [{\"source\": \"deadbox\", \"error\""
+ },
+ {
+  "ok": true,
+  "name": "죽은 소스가 질의를 무한정 붙들지 않는다",
+  "detail": "3.0s"
+ },
+ {
+  "ok": true,
+  "name": "소스 점검이 예외로 죽지 않고 결과를 돌려준다",
+  "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "LLM 이 죽어도 MCP 도구는 결과를 돌려준다",
+  "detail": "HTTP 200 keys=['id', 'jsonrpc', 'result']"
+ },
+ {
+  "ok": true,
+  "name": "도구 목록은 영향을 받지 않는다",
+  "detail": "HTTP 200"
+ }
+]

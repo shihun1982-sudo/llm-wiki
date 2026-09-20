@@ -11,7 +11,7 @@
   python -m llmwiki models show|test|set <role>_<provider|model|effort>=...   (역할별 LLM / 임베딩 설정)
   python -m llmwiki requests [list [--kind query] | show <id> | last]        (요청별 프로파일/디버그 trace)
   python -m llmwiki system [--target-docs 3000 --daily-new 20]               (확장성/캐시/워처 상태)
-  python -m llmwiki maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs
+  python -m llmwiki maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|prune_requests
   python -m llmwiki watch [--interval 300] [--once]                           (코퍼스 변경 감시 → 증분 빌드)
   python -m llmwiki tuning show|set k=v …|reset [k]|doc                         (단계별 튜닝 파라미터, tuning.json / docs/TUNING.md)
   python -m llmwiki arch [--flow query|build|evolve|watch]                    (구조·흐름·토글/CLI 영향 텍스트 도식)
@@ -153,9 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("rules", help="규칙 기반 질의 확장 사전(query_rules.json): show | add <type> <term> <values…> | remove <type> <term> [value] | test \"질의\"")
-    p.add_argument("action", choices=["show", "add", "remove", "test", "stats", "path"], nargs="?", default="show")
+    p = sub.add_parser("rules", help="규칙 기반 질의 확장 사전(query_rules.json): show | add <type> <term> <values…> | remove <type> <term> [value] | test \"질의\" | lint(중복·순환·사슬 점검) | merge <파일> [--graph] [--replace]")
+    p.add_argument("action", choices=["show", "add", "remove", "test", "stats", "path", "lint", "merge"], nargs="?", default="show")
     p.add_argument("args", nargs="*")
+    p.add_argument("--graph", action="store_true", help="merge: query_rules.json 이 아니라 그래프 규칙(data/rules.json) 에 합친다")
+    p.add_argument("--replace", action="store_true", help="merge: 같은 용어의 값을 합치지 않고 통째로 바꾼다")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("pin", help="고정 근거(pins.json): list | add --doc <id부분> | --chunk <chunk_id> [--query \"…\" | --keywords a,b | --always | --doc-types issue,cl] | remove <pin_id>")
@@ -224,6 +226,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--analyze", action="store_true", help="상세 분석 모드로 실행(=--analysis-mode) 하고 리포트 경로·상위 소견을 출력. --print-analysis 로 리포트 전문 출력")
     p.add_argument("--print-analysis", action="store_true", help="--analyze 와 함께: 마크다운 리포트 전문을 stdout 에")
     p.add_argument("--focus", choices=["quality", "speed", "tokens", "all"], default="all", help="--analyze: 렌즈 초점")
+    _add_toggle_flags(p)
+
+    p = sub.add_parser("rerun", help="단계 재실행: 저장해 둔 중간 결과로 <request_id> 를 특정 단계부터 다시 (docs/RERUN.md)")
+    p.add_argument("request_id", nargs="?", help="다시 돌릴 원 요청 id")
+    p.add_argument("--from", dest="from", default="answer_llm", help="재시작점 (기본 answer_llm). 목록: --points")
+    p.add_argument("--points", action="store_true", help="재시작점 목록만 출력")
+    p.add_argument("--list", action="store_true", help="저장된 중간 결과 목록")
+    p.add_argument("--n", type=int, default=20, help="--list 개수")
+    p.add_argument("--no-log", action="store_true")
     _add_toggle_flags(p)
 
     p = sub.add_parser("analyze", help="상세 분석 리포트: <request_id>|last [--focus quality|speed|tokens] [--print] [--out 파일] — logs/analysis/req_<id>.md (docs/ANALYSIS_MODE.md)")
@@ -324,7 +335,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("maintenance", help="DB 유지보수")
-    p.add_argument("action", choices=["vacuum", "fts_optimize", "wal_checkpoint", "clear_cache", "warm_cache", "refresh_doc_refs", "purge_requests"])
+    p.add_argument("action", choices=["vacuum", "fts_optimize", "wal_checkpoint", "clear_cache", "warm_cache", "refresh_doc_refs",
+                                      "purge_requests", "prune_requests"])
     p.add_argument("--yes", action="store_true", help="purge_requests: 확인 문구 생략")
     p.add_argument("--json", action="store_true")
 
@@ -470,9 +482,26 @@ def _mcp_doctor_text(rep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _replayed_names(trace: Dict[str, Any]) -> List[str]:
+    """trace 에서 **재생된**(계산하지 않고 저장값을 쓴) 단계 이름 — 단계 재실행 결과 요약용."""
+    out: List[str] = []
+
+    def walk(n: Dict[str, Any]) -> None:
+        if n.get("replayed"):
+            out.append(str(n.get("name")))
+        for c in n.get("children") or []:
+            walk(c)
+
+    for c in trace.get("children") or []:
+        walk(c)
+    return out
+
+
 def _print_trace(trace: Dict[str, Any], depth: int = 0, total: Optional[float] = None, verbose: bool = False) -> None:
     total = total or trace.get("ms") or 1.0
     flag = "" if trace.get("enabled", True) else " (skipped: %s)" % trace.get("meta", {}).get("reason", "")
+    if trace.get("replayed"):
+        flag = " (재생 — 저장된 결과를 그대로 씀)"
     err = (" !! " + trace["error"]) if trace.get("error") else ""
     cnt = trace.get("counters") or {}
     extra = []
@@ -899,6 +928,55 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             r = _qr.expand(" ".join(ns.args), _tn.T.get("syn_w"), _tn.T.get("related_w"), _tn.T.get("acronym_phrase"))
             _out(r, as_json, json.dumps(r, ensure_ascii=False, indent=1))
             return 0
+        if ns.action == "merge":
+            if not ns.args:
+                print("usage: rules merge <파일.json> [--graph] [--replace]   (예시: setup/query_rules.example.modem.json)")
+                return 1
+            src = ns.args[0]
+            if not os.path.exists(src):
+                print("파일이 없습니다: %s" % src)
+                return 1
+            with open(src, encoding="utf-8") as f:
+                incoming = json.load(f)
+            if ns.graph:
+                # 그래프 규칙(data/rules.json): 절 단위로 덮어쓴다 (entities 는 항목 단위로 합친다)
+                from . import graph_rules as _gr
+                cur = _gr.load_rules()
+                changed = {}
+                for k, v in incoming.items():
+                    if k.startswith("_"):
+                        continue
+                    if k == "entities" and isinstance(v, dict) and isinstance(cur.get(k), dict) and not ns.replace:
+                        n0 = len(cur[k])
+                        cur[k].update({ek: ev for ek, ev in v.items() if not str(ek).startswith("_")})
+                        changed[k] = "%d → %d" % (n0, len(cur[k]))
+                    else:
+                        changed[k] = "덮어씀 (%s개)" % (len(v) if isinstance(v, (list, dict)) else 1)
+                        cur[k] = v
+                _gr.save_rules(cur)
+                _out({"merged": changed, "path": _gr.rules_path()}, as_json,
+                     "그래프 규칙 합침 — %s\n" % _gr.rules_path() + "\n".join("  %-20s %s" % (k, v) for k, v in changed.items())
+                     + "\n\n반영하려면: python -m llmwiki build graph")
+                return 0
+            r = _qr.merge_rules(incoming, replace=ns.replace)
+            p.reload_tuning()
+            lines = ["질의 확장 사전 합침 — %s%s" % (r["path"], " (덮어쓰기)" if r["replace"] else "")]
+            for typ, st in r["merged"].items():
+                lines.append("  %-9s 새 용어 %-3d · 값 늘어난 용어 %-3d · 총 %d" % (typ, st["added"], st["grown"], st["total"]))
+            lines.append("\n점검: python -m llmwiki rules lint")
+            _out(r, as_json, "\n".join(lines))
+            return 0
+        if ns.action == "lint":
+            r = _qr.lint()
+            lines = ["규칙 사전 점검 — %s" % r["path"],
+                     "  항목: " + " · ".join("%s %d" % (k, v) for k, v in r["stats"].items()) + "   (query_rules_max_rounds=%d)" % r["max_rounds"], ""]
+            for i in r["issues"]:
+                lines.append("  %-5s %-11s %-24s %s" % ("오류" if i["level"] == "error" else "경고", i["kind"], i["term"][:24], i["detail"]))
+            if not r["issues"]:
+                lines.append("  문제 없음")
+            lines += ["", "결과: %s (오류 %d · 경고 %d)" % ("정상" if r["ok"] else "고칠 것이 있습니다", r["errors"], r["warnings"])]
+            _out(r, as_json, "\n".join(lines))
+            return 0 if r["ok"] else 1
 
     if ns.cmd == "pin":
         from . import pins as _pins
@@ -1183,6 +1261,40 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                     print("=" * 70)
                     with open(an["md"], "r", encoding="utf-8") as f:
                         print(f.read())
+        return 0
+
+    if ns.cmd == "rerun":
+        from . import rerun as _rr
+        if ns.points:
+            _out({"points": _rr.POINTS}, as_json,
+                 "\n".join("%-12s %s\n             %s" % (x["id"], x["label"], x["note"]) for x in _rr.POINTS))
+            return 0
+        if ns.list:
+            rows = _rr.list_saved(p.s, ns.n)
+            _out({"saved": rows}, as_json,
+                 "\n".join("#%-8s %6.1f KB  %s" % (r["request_id"], r["bytes"] / 1024, time.strftime("%m-%d %H:%M", time.localtime(r["mtime"])))
+                           for r in rows) or "저장된 중간 결과가 없습니다 (toggles.rerun_capture 확인)")
+            return 0
+        if not ns.request_id:
+            print("사용법: rerun <request_id> --from <단계> · 단계 목록은 --points · 저장 목록은 --list")
+            return 2
+        try:
+            res, tr = p.rerun(ns.request_id, ns.__dict__["from"], log=not ns.no_log)
+        except ValueError as e:
+            print("재실행할 수 없습니다: %s" % e)
+            return 2
+        if as_json:
+            _out({"result": res, "trace": tr}, True)
+            return 0
+        rep = _replayed_names(tr)
+        print("재실행 #%s — '%s' 부터 (재생 %d단계: %s)" % (ns.request_id, ns.__dict__["from"], len(rep), ", ".join(rep[:8]) or "-"))
+        print("-" * 70)
+        print(res["answer"])
+        print("-" * 70)
+        print("total %.1f ms | tokens=%s | 새 request_id=%s" % (res["ms"], res.get("tokens", {}).get("total_tokens", 0), res.get("request_id")))
+        if ns.trace:
+            print("=" * 70)
+            _print_trace(tr, verbose=(ns.debug_level or 0) >= 2)
         return 0
 
     if ns.cmd == "eval":

@@ -1,4 +1,35 @@
 {
   "_comment": "고정 근거. when: always | keywords[] | query | doc_types[]. doc(문서 id 부분 문자열) 또는 chunk(청크 id). pin add … 로 관리.",
-  "pins": []
+  "pins": [
+    {
+      "id": "p1",
+      "doc": null,
+      "chunk": "corpus/imported/verify/NOTE-verify_cli_result.md#12",
+      "when": {
+        "query": "ISSUE-2001 의 원인과 수정 CL 은?"
+      },
+      "weight": 1.0,
+      "note": "from query",
+      "source": "web",
+      "created": 1789574206.5941095,
+      "strength": 1.5,
+      "last_reinforced": 1789591908.8647525,
+      "hits": 31
+    },
+    {
+      "id": "p2",
+      "doc": null,
+      "chunk": "corpus/imported/verify/NOTE-verify_cli_result.md#5",
+      "when": {
+        "query": "ISSUE-2001 의 원인과 수정 CL 은?"
+      },
+      "weight": 1.0,
+      "note": "from query",
+      "source": "web",
+      "created": 1789574209.616129,
+      "strength": 1.5,
+      "last_reinforced": 1789591908.8647625,
+      "hits": 31
+    }
+  ]
 }

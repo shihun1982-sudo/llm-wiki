@@ -102,6 +102,66 @@ def run_health(pipe, quick: bool = False, for_build: bool = False) -> Dict[str, 
         return match, "stored=%s current=%s" % (stored, cur)
     checks.append(_check("embedding_dim", _dim, "warn", "임베더/차원이 바뀌었으면 build --full"))
 
+    # ---- 채널이 켜져 있는데 **비어 있지는 않은가** ----
+    # 조용한 품질 손실을 잡는다: 토글은 켜져 있어 질의마다 graph_search 가 돌지만 색인에 엔티티가 없으면
+    # 그 채널은 늘 0건이다. 오류가 아니라 아무 일도 일어나지 않으므로 로그로도 드러나지 않는다.
+    # 실제로 겪은 경우: 코퍼스를 넣은 뒤 증분 빌드만 돌아(changed=0) 그래프가 한 번도 만들어지지 않았다.
+    def _channels():
+        st = pipe.store.stats()
+        empty = []
+        if t.graph and not st.get("entities"):
+            empty.append("graph(entities=0) → `build graph`")
+        if t.vector and st.get("chunks") and not st.get("embeddings"):
+            empty.append("vector(embeddings=0) → `build vector`")
+        if t.doc_vector:
+            try:
+                n = pipe.store.conn.execute("SELECT COUNT(*) FROM doc_vectors").fetchone()[0]
+            except Exception:
+                n = 0
+            if not n:
+                empty.append("doc_vector(doc_vectors=0) → `precompute run` 또는 `build vector`")
+        detail = "켜진 채널이 모두 채워져 있음" if not empty else "비어 있는 채널: " + " · ".join(empty)
+        return not empty, detail
+    checks.append(_check("channels_populated", _channels, "warn",
+                         "토글은 켜져 있는데 색인이 비어 있으면 그 채널은 늘 0건입니다 — 해당 채널만 다시 빌드하세요 (`build graph|vector`)"))
+
+    # ---- auto 가 진짜 임베딩 모델을 못 찾아 hash 로 내려앉았는가 ----
+    # hash 임베딩은 **의미가 아니라 어휘**를 본다. 오프라인 모드로는 정당한 선택이지만,
+    # `auto` 로 두고 모델이 없어서 hash 가 된 경우에는 본인도 모르는 사이에 벡터 채널이
+    # FTS 와 거의 같은 신호가 된다 (하이브리드의 이점이 사라진다). 명시적으로 hash 를 고른 사람은 건드리지 않는다.
+    def _embed_quality():
+        emb = pipe.embedder
+        st = pipe.store.stats()
+        auto = str(s.embed_provider or "auto").strip().lower() == "auto"
+        if not (auto and getattr(emb, "name", "") == "hash" and t.vector):
+            return True, "embedder=%s (provider=%s)" % (getattr(emb, "name", "?"), s.embed_provider)
+        big = int(st.get("chunks") or 0) >= 500
+        detail = ("embed_provider=auto 인데 임베딩 모델을 찾지 못해 hash 로 동작 중 "
+                  "(청크 %d개). hash 는 어휘 기반이라 벡터 채널이 FTS 와 비슷해집니다" % st.get("chunks", 0))
+        return (not big), detail
+    # ---- 코퍼스에 **이 도구 자신**이 섞여 있는가 ----
+    # 자기 소스를 색인하면 도메인 문서를 밀어낸다. 오류가 아니라 순위가 조용히 나빠질 뿐이라
+    # 아무도 눈치채지 못한다. 실측(2026-09-17): 이 도구의 소스·문서 150개를 제외했더니
+    # hit@k 0.64 → 0.88, MRR 0.396 → 0.676.
+    def _self_index():
+        rows = pipe.store.conn.execute(
+            "SELECT doc_id FROM docs WHERE doc_id LIKE '%llmwiki/%' OR doc_id LIKE '%/js/NOTE-%' "
+            "OR doc_id LIKE '%tools/verify%' OR doc_id LIKE '%/schemas/NOTE-%' OR doc_id LIKE '%/prompts/NOTE-%'").fetchall()
+        n = len(rows)
+        total = int((pipe.store.stats() or {}).get("docs") or 0)
+        if not n:
+            return True, "코퍼스에 도구 자신의 파일 없음 (문서 %d개)" % total
+        pct = 100.0 * n / max(1, total)
+        ex = ", ".join(r[0] for r in rows[:3])
+        return (pct < 5), ("이 도구 자신의 소스·문서로 보이는 문서 %d개 (%.0f%%): %s …" % (n, pct, ex))
+    checks.append(_check("corpus_self_index", _self_index, "warn",
+                         "코퍼스에서 빼거나 config.json 의 corpus_exclude 에 추가하세요 "
+                         "(예: [\"imported/llmwiki/\", \"imported/js/\", \"imported/tools/\"]) → 다음 빌드에서 색인에서 빠집니다"))
+
+    checks.append(_check("embedder_quality", _embed_quality, "warn",
+                         "Ollama 면 `ollama pull bge-m3` 후 `build vector --full` · 게이트웨이면 embed_provider=openai + openai_embed_model · "
+                         "의도적으로 오프라인이면 embed_provider=hash 로 명시하세요 (이 경고가 사라집니다)"))
+
     if not quick:
         # ---- 프로바이더 ping ----
         roles: List[str] = []

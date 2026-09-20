@@ -119,6 +119,10 @@ MIGRATIONS = [
     ("entities", "n_docs", "INTEGER DEFAULT 0"),
     ("entities", "n_mentions", "INTEGER DEFAULT 0"),
     ("requests", "run_id", "TEXT DEFAULT ''"),      # logs/ 의 run_id 와 연결
+    # 2026-09-16: 누가 낸 요청인지. 예전에는 origin 에 "web kh82.kim" 처럼 **한 문자열로** 들어가서
+    # '내 요청만 보기' 를 걸 수 없었고 인덱스도 못 걸었다.
+    ("requests", "user", "TEXT DEFAULT ''"),
+    ("requests", "file", "TEXT DEFAULT ''"),        # 결과/trace 를 따로 보관한 파일 경로 (data/requests/…)
     ("relations", "provenance", "TEXT DEFAULT ''"),  # explicit | rule | cooccur | llm | human
     ("proposals", "strength", "REAL DEFAULT 1.0"),   # memory decay
     ("proposals", "last_reinforced", "REAL DEFAULT 0"),
@@ -223,6 +227,11 @@ class Store:
             if col not in cols:
                 self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
                 added.append((table, col))
+        if ("requests", "user") in added:
+            # 예전 행의 origin("web kh82.kim" / "cli") 에서 사용자 이름만 뽑아 채운다.
+            self.conn.execute("UPDATE requests SET user = TRIM(SUBSTR(origin, INSTR(origin, ' ') + 1)) "
+                              "WHERE (user IS NULL OR user='') AND origin LIKE '% %'")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user, id)")
         if ("relations", "provenance") in added or self.conn.execute("SELECT 1 FROM relations WHERE provenance='' LIMIT 1").fetchone():
             # 구버전 관계에 provenance 백필: source 기준
             self.conn.execute("UPDATE relations SET provenance = CASE WHEN rel IN ('co_occurs','mentions','mentions_date','mentions_amount') THEN 'cooccur' "
@@ -1040,11 +1049,12 @@ class Store:
             pass
 
     def log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
-                    error: Optional[str] = None, origin: str = "", keep: int = 2000) -> int:
+                    error: Optional[str] = None, origin: str = "", keep: int = 2000, user: str = "",
+                    archive_dir: str = "") -> int:
         """요청 프로파일 기록. **관측용이므로 실패해도 명령/질의를 죽이지 않는다** — 다른 프로세스가 빌드 중이라
         쓰기 잠금을 못 얻으면 경고만 남기고 0 을 돌려준다 (2026-09-15: 서버 워처와 CLI 질의가 겹쳐 'database is locked' 로 질의가 실패했다)."""
         try:
-            return self._log_request(kind, summary, trace, result, config, error, origin, keep)
+            return self._log_request(kind, summary, trace, result, config, error, origin, keep, user, archive_dir)
         except (sqlite3.OperationalError, UnicodeEncodeError) as e:
             # UnicodeEncodeError: 경계에서 걸러지지만, 어떤 경로로든 SQLite 가 담지 못하는 문자열이
             # 들어와도 관측 기록 때문에 질의가 죽지는 않게 한다.
@@ -1052,47 +1062,122 @@ class Store:
             return 0
 
     def _log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
-                     error: Optional[str] = None, origin: str = "", keep: int = 2000) -> int:
+                     error: Optional[str] = None, origin: str = "", keep: int = 2000, user: str = "",
+                     archive_dir: str = "") -> int:
         sm = (trace or {}).get("summary") or {}
         llm = sm.get("llm") or {}
-        if not origin:
+        if not origin or not user:
             try:
                 from . import progress as _pg
                 cl = (_pg.get(_pg.current_token() or "") or {}).get("client") or {}
-                origin = " ".join(x for x in (cl.get("origin"), cl.get("user")) if x)[:80]
+                origin = origin or " ".join(x for x in (cl.get("origin"), cl.get("user")) if x)[:80]
+                user = user or str(cl.get("user") or "")[:80]
             except Exception:
-                origin = ""
+                pass
         cur = self.conn.execute(
-            "INSERT INTO requests(ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,config,result,trace,error,origin,run_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO requests(ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,config,result,trace,error,origin,run_id,user) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), kind, summary[:300], float((trace or {}).get("ms", 0) or 0), int(llm.get("calls", 0) or 0),
              int(llm.get("input_tokens", 0) or 0), int(llm.get("output_tokens", 0) or 0), int(sm.get("sql_statements", 0) or 0),
              int((trace or {}).get("debug_level", 0) or 0), json.dumps(config, ensure_ascii=False) if config is not None else None,
              json.dumps(result, ensure_ascii=False) if result is not None else None,
-             json.dumps(trace, ensure_ascii=False) if trace is not None else None, error, origin, str((trace or {}).get("run_id") or "")))
+             json.dumps(trace, ensure_ascii=False) if trace is not None else None, error, origin,
+             str((trace or {}).get("run_id") or ""), user))
         rid = int(cur.lastrowid)
-        if keep and rid % 50 == 0:  # 주기적으로 오래된 요청 정리
+        # 결과 원본을 DB 밖 파일로도 남긴다 — keep_requests 로 DB 행이 잘려도 "그때 그 답" 을 다시 볼 수 있게.
+        if archive_dir:
+            try:
+                path = self.archive_request(archive_dir, rid, {
+                    "id": rid, "ts": time.time(), "kind": kind, "summary": summary[:300], "user": user, "origin": origin,
+                    "run_id": str((trace or {}).get("run_id") or ""), "ms": float((trace or {}).get("ms", 0) or 0),
+                    "error": error, "config": config, "result": result, "trace": trace})
+                self.conn.execute("UPDATE requests SET file=? WHERE id=?", (path, rid))
+            except Exception as e:
+                self._warn_locked("요청 결과 파일 보관", e)
+        if keep and rid % 50 == 0:  # 주기적으로 오래된 요청 정리 (파일은 requests_keep_days 로 따로 정리)
             self.conn.execute("DELETE FROM requests WHERE id <= ?", (rid - keep,))
         self.conn.commit()
         return rid
+
+    # ---------- 요청 결과 보관 파일 (data/requests/<yyyy-mm>/req_<id>.json) ----------
+    @staticmethod
+    def archive_request(base_dir: str, rid: int, payload: Dict[str, Any]) -> str:
+        sub = os.path.join(base_dir, time.strftime("%Y-%m"))
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, "req_%d.json" % rid)
+        from . import atomicio
+        atomicio.write_json(path, payload)
+        return path
+
+    @staticmethod
+    def read_archived_request(path: str) -> Optional[Dict[str, Any]]:
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            from . import atomicio
+            d = atomicio.read_json(path)
+            return d if isinstance(d, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def prune_request_archive(base_dir: str, keep_days: int) -> Dict[str, Any]:
+        """보관 파일 정리. keep_days <= 0 이면 아무 것도 지우지 않는다."""
+        if not base_dir or keep_days <= 0 or not os.path.isdir(base_dir):
+            return {"removed": 0, "kept": 0, "skipped": True}
+        cutoff = time.time() - keep_days * 86400
+        removed = kept = 0
+        for root, _dirs, files in os.walk(base_dir):
+            for fn in files:
+                if not fn.startswith("req_") or not fn.endswith(".json"):
+                    continue
+                fp = os.path.join(root, fn)
+                try:
+                    if os.path.getmtime(fp) < cutoff:
+                        os.remove(fp)
+                        removed += 1
+                    else:
+                        kept += 1
+                except OSError:
+                    pass
+        return {"removed": removed, "kept": kept, "dir": base_dir, "keep_days": keep_days}
 
     def request_by_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         r = self.conn.execute("SELECT id FROM requests WHERE run_id=? ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
         return self.get_request(int(r["id"])) if r else None
 
-    def requests(self, kind: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
-        sql = "SELECT id,ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,error,origin,run_id FROM requests"
+    def requests(self, kind: Optional[str] = None, limit: int = 100, user: Optional[str] = None,
+                 q: Optional[str] = None) -> List[Dict[str, Any]]:
+        """요청 목록. user 를 주면 그 사람 것만, q 를 주면 요약에서 찾는다."""
+        sql = "SELECT id,ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,error,origin,run_id,user,file FROM requests"
+        where: List[str] = []
         args: List[Any] = []
         if kind:
-            sql += " WHERE kind=?"
+            where.append("kind=?")
             args.append(kind)
+        if user:
+            where.append("user=?")
+            args.append(user)
+        if q:
+            where.append("summary LIKE ?")
+            args.append("%" + q + "%")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY id DESC LIMIT ?"
         args.append(limit)
         return [dict(r) for r in self.conn.execute(sql, args)]
 
-    def get_request(self, rid: int) -> Optional[Dict[str, Any]]:
+    def get_request(self, rid: int, archive_dir: str = "") -> Optional[Dict[str, Any]]:
         r = self.conn.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
         if not r:
+            # DB 행이 keep_requests 로 잘렸어도 보관 파일이 있으면 그것으로 답한다
+            # (사용자에게는 "그때 그 답이 사라졌다" 가 가장 나쁜 실패다).
+            if archive_dir:
+                for sub in sorted(os.listdir(archive_dir), reverse=True) if os.path.isdir(archive_dir) else []:
+                    d = self.read_archived_request(os.path.join(archive_dir, sub, "req_%d.json" % rid))
+                    if d:
+                        d["from_archive"] = True
+                        return d
             return None
         d = dict(r)
         for k in ("config", "result", "trace"):

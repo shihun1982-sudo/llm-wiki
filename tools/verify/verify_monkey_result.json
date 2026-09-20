@@ -1,23 +1,17 @@
 {
- "seed": 551902975,
+ "seed": 799916200,
  "requests": 1205,
- "elapsed_s": 296.4,
+ "elapsed_s": 267.1,
  "codes": {
-  "200": 525,
-  "404": 160,
-  "400": 153,
-  "501": 55,
-  "405": 9,
-  "-1": 60,
-  "503": 243
+  "200": 476,
+  "400": 150,
+  "501": 56,
+  "404": 166,
+  "405": 6,
+  "-1": 61,
+  "503": 290
  },
- "findings": [
-  {
-   "kind": "cli_error",
-   "argv": "--bogus-flag \u0000",
-   "error": "embedded null character"
-  }
- ],
+ "findings": [],
  "alive": true,
  "healthy_before": true,
  "healthy_after": false,
@@ -25,27 +19,12 @@
   [
    true,
    200,
-   9.6
+   1.4
   ],
   [
    true,
    200,
-   5.5
-  ],
-  [
-   true,
-   200,
-   7.9
-  ],
-  [
-   true,
-   200,
-   3.4
-  ],
-  [
-   true,
-   200,
-   11.6
+   16.3
   ],
   [
    false,

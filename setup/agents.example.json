@@ -44,8 +44,13 @@
       "timeout",
       "exec",
       "exit",
-      "empty"
-    ]
+      "empty",
+      "stall"
+    ],
+    "stall_timeout_s": 60,
+    "first_output_timeout_s": 120,
+    "keep_partial_on_timeout": true,
+    "failure_log_chars": 2000
   },
   "claude": {
     "desc": "Claude Code CLI headless (claude -p --output-format json).",
@@ -85,8 +90,13 @@
       "timeout",
       "exec",
       "exit",
-      "empty"
-    ]
+      "empty",
+      "stall"
+    ],
+    "stall_timeout_s": 60,
+    "first_output_timeout_s": 120,
+    "keep_partial_on_timeout": true,
+    "failure_log_chars": 2000
   },
   "codex": {
     "desc": "OpenAI Codex CLI (codex exec --json).",
@@ -126,8 +136,13 @@
       "timeout",
       "exec",
       "exit",
-      "empty"
-    ]
+      "empty",
+      "stall"
+    ],
+    "stall_timeout_s": 60,
+    "first_output_timeout_s": 120,
+    "keep_partial_on_timeout": true,
+    "failure_log_chars": 2000
   },
   "mock": {
     "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트. {python} = 현재 인터프리터(이식성).",
@@ -163,7 +178,12 @@
       "timeout",
       "exec",
       "exit",
-      "empty"
-    ]
+      "empty",
+      "stall"
+    ],
+    "stall_timeout_s": 60,
+    "first_output_timeout_s": 120,
+    "keep_partial_on_timeout": true,
+    "failure_log_chars": 2000
   }
 }

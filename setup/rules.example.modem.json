@@ -1,0 +1,98 @@
+{
+  "_comment": "모뎀 physical layer / 임베디드 SW 조직용 **그래프 규칙** 출발점 (data/rules.json 에 합칩니다). 적용: `python -m llmwiki rules merge setup/rules.example.modem.json --graph` → 그 다음 `python -m llmwiki build graph` 로 재구축. 각 절의 뜻은 llmwiki/graph_rules.py 첫머리 주석과 docs/BRINGUP_GUIDE.md §5.",
+
+  "_comment_entities": "entities = 별칭 사전. canonical 이름 → {type, aliases}. 여기 있는 말이 본문에 나오면 그 이름의 노드가 됩니다. 조직의 모듈·블록·칩 이름으로 바꾸세요.",
+  "entities": {
+    "RX DMA": {"type": "module", "aliases": ["rx_dma", "rx dma", "수신 DMA", "RXDMA"]},
+    "TX DMA": {"type": "module", "aliases": ["tx_dma", "tx dma", "송신 DMA"]},
+    "AGC 제어": {"type": "module", "aliases": ["agc_ctrl", "agc control", "AGC 루프"]},
+    "채널 추정": {"type": "module", "aliases": ["chan_est", "channel estimation", "채널추정"]},
+    "HARQ 엔진": {"type": "module", "aliases": ["harq_engine", "harq"]},
+    "스케줄러": {"type": "module", "aliases": ["scheduler", "sched", "MAC 스케줄러"]},
+    "부트로더": {"type": "module", "aliases": ["bootloader", "boot loader", "부트 로더"]},
+    "PA 제어": {"type": "module", "aliases": ["pa_ctrl", "전력 증폭기 제어"]},
+
+    "PA_GAIN_TBL": {"type": "register", "aliases": ["PA gain table", "PA 이득 테이블"]},
+    "AGC_THR": {"type": "register", "aliases": ["AGC threshold", "AGC 임계값"]},
+    "DMA_CTRL": {"type": "register", "aliases": ["DMA control"]},
+    "FIFO_LVL": {"type": "register", "aliases": ["FIFO level", "FIFO 수위"]},
+
+    "RF 프론트엔드": {"type": "hw_block", "aliases": ["RF front-end", "RF FE", "프론트엔드"]},
+    "베이스밴드": {"type": "hw_block", "aliases": ["baseband", "BB", "기저대역"]},
+    "모뎀 코어": {"type": "hw_block", "aliases": ["modem core", "모뎀코어"]},
+
+    "_comment_chip": "칩/리비전은 조직의 실제 이름으로 바꾸세요",
+    "MDM9x-B1": {"type": "chip", "aliases": ["모뎀B", "modem b1", "B1 리비전", "rev B1"]},
+    "MDM9x-B2": {"type": "chip", "aliases": ["B2 리비전", "rev B2"]}
+  },
+
+  "_comment_id_patterns": "id_patterns = 문서 ID 표기. 조직이 JIRA-/MR- 을 쓰면 여기와 schemas/*.json 의 id_pattern 을 함께 바꾸세요.",
+  "id_patterns": [
+    {"type": "issue", "regex": "\\bISSUE[-_ ]?(\\d{3,7})\\b", "canonical": "ISSUE-{1}"},
+    {"type": "cl", "regex": "\\bCL[-_ ]?(\\d{3,8})\\b", "canonical": "CL-{1}"},
+    {"type": "tc", "regex": "\\bTC-([A-Z0-9_-]{2,})\\b", "canonical": "TC-{1}"},
+    {"type": "sw_design", "regex": "\\bSWD-([A-Z0-9_-]{2,})\\b", "canonical": "SWD-{1}"},
+    {"type": "hw_design", "regex": "\\bHWD-([A-Z0-9_-]{2,})\\b", "canonical": "HWD-{1}"},
+    {"type": "coding_rule", "regex": "\\bRULE-([A-Z0-9_-]{2,})\\b", "canonical": "RULE-{1}"},
+    {"type": "weekly_report", "regex": "\\bWR-(\\d{4}-W\\d{2})\\b", "canonical": "WR-{1}"},
+    {"type": "spec", "regex": "\\b(3GPP\\s?TS\\s?\\d{2}\\.\\d{3})\\b", "canonical": "{1}"}
+  ],
+
+  "_comment_relation_patterns": "relation_patterns = front matter/본문의 '**키**: 값' 을 관계로. value 가 잡은 문자열을 무엇으로 읽을지(entity|date|money|percent|text|id), in_chunk/in_decision 이 어디서 적용할지를 정합니다. **코드를 고치지 않고** 여기에 줄을 추가하면 됩니다.",
+  "relation_patterns": [
+    {"name": "owner", "regex": "\\*\\*담당\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "entity",
+     "in_decision": {"rel": "owner", "weight": 1.0, "confidence": 0.9, "desc": "담당: "},
+     "in_chunk": {"rel": "responsible", "weight": 0.8, "confidence": 0.7, "desc": "담당: "}},
+    {"name": "deadline", "regex": "\\*\\*(?:마감|적용|일정)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "date",
+     "in_decision": {"rel": "deadline", "weight": 1.0, "confidence": 0.85, "desc": "마감/적용: "}},
+
+    {"name": "affected_module", "regex": "\\*\\*(?:영향\\s*모듈|모듈|module)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "text", "node_type": "module", "split": ",",
+     "in_chunk": {"rel": "affects_module", "weight": 0.8, "confidence": 0.8, "desc": "영향 모듈: "}},
+    {"name": "register", "regex": "\\*\\*(?:레지스터|register)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "text", "node_type": "register", "split": ",",
+     "in_chunk": {"rel": "touches_register", "weight": 0.8, "confidence": 0.8, "desc": "레지스터: "}},
+    {"name": "hw_block", "regex": "\\*\\*(?:HW\\s*블록|hw_block)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "text", "node_type": "hw_block", "split": ",",
+     "in_chunk": {"rel": "in_block", "weight": 0.7, "confidence": 0.8, "desc": "HW 블록: "}},
+    {"name": "chip_rev", "regex": "\\*\\*(?:칩|리비전|hw_rev|chip)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "entity",
+     "in_chunk": {"rel": "on_chip", "weight": 0.7, "confidence": 0.85, "desc": "칩/리비전: "}},
+    {"name": "root_cause_of", "regex": "\\*\\*(?:근본\\s*원인|root\\s*cause)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "id",
+     "in_chunk": {"rel": "root_cause_of", "weight": 1.0, "confidence": 0.9, "desc": "근본 원인: "}},
+    {"name": "spec_ref", "regex": "\\*\\*(?:규격|spec|표준)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "id",
+     "in_chunk": {"rel": "conforms_to", "weight": 0.8, "confidence": 0.85, "desc": "규격: "}},
+    {"name": "measured", "regex": "\\*\\*(?:측정|실측)\\*\\*\\s*[:：]\\s*([^\\n]+)", "value": "percent",
+     "in_chunk": {"rel": "measured_value", "weight": 0.5, "confidence": 0.7, "desc": "측정: "}},
+    {"name": "source", "regex": "출처\\s*[:：]\\s*([^\\n]+)", "value": "entity",
+     "in_chunk": {"rel": "source", "weight": 0.7, "confidence": 0.8, "desc": "출처: "}}
+  ],
+
+  "_comment_link_rules": "link_rules = 본문에 다른 문서 ID 가 나올 때 만들 관계. when_doc_type(쓰는 쪽) × target_type(언급된 쪽). 위에서부터 먼저 맞는 규칙 하나를 씁니다.",
+  "link_rules": [
+    {"when_doc_type": "cl", "target_type": "issue", "rel": "fixes", "weight": 1.0, "confidence": 0.95},
+    {"when_doc_type": "issue", "target_type": "cl", "rel": "fixed_by", "weight": 1.0, "confidence": 0.9},
+    {"when_doc_type": "issue", "target_type": "issue", "rel": "related_issue", "weight": 0.7, "confidence": 0.7},
+    {"when_doc_type": "issue", "target_type": "tc", "rel": "verified_by", "weight": 0.8, "confidence": 0.8},
+    {"when_doc_type": "issue", "target_type": "spec", "rel": "violates_spec", "weight": 0.8, "confidence": 0.8},
+    {"when_doc_type": "sw_design", "target_type": "spec", "rel": "implements", "weight": 0.9, "confidence": 0.85},
+    {"when_doc_type": "hw_design", "target_type": "spec", "rel": "implements", "weight": 0.9, "confidence": 0.85},
+    {"when_doc_type": "tc_list", "target_type": "issue", "rel": "verifies", "weight": 0.8, "confidence": 0.8},
+    {"when_doc_type": "weekly_report", "target_type": "issue", "rel": "reports", "weight": 0.6, "confidence": 0.85},
+    {"when_doc_type": "weekly_report", "target_type": "cl", "rel": "reviews", "weight": 0.6, "confidence": 0.85},
+    {"when_doc_type": "coding_rule", "target_type": "issue", "rel": "motivated_by", "weight": 0.6, "confidence": 0.7},
+    {"when_doc_type": "*", "target_type": "*", "rel": "references", "weight": 0.5, "confidence": 0.7}
+  ],
+
+  "_comment_explicit_rels": "explicit_rels = front matter 의 related.<키> 를 어떤 관계로 볼지. 문서 유형별로 다르게 둘 수 있습니다('*' 는 기본값).",
+  "explicit_rels": {
+    "*": {"issues": "references", "cls": "references", "docs": "references", "tcs": "verified_by", "rules": "follows", "specs": "conforms_to"},
+    "cl": {"issues": "fixes"},
+    "issue": {"cls": "fixed_by", "issues": "related_issue", "specs": "violates_spec"},
+    "tc_list": {"issues": "verifies"},
+    "sw_design": {"specs": "implements"},
+    "hw_design": {"specs": "implements"}
+  },
+  "related_key_type": {"issues": "issue", "cls": "cl", "tcs": "tc", "docs": "document", "rules": "coding_rule", "specs": "spec"},
+
+  "_comment_cooccur": "types_for_cooccur = 같은 청크에 함께 나오면 co_occurs 관계를 만들 노드 유형. 새 node_type 을 relation_patterns 에 추가했다면 여기에도 넣으세요.",
+  "types_for_cooccur": ["org", "role", "org_unit", "product", "topic", "tech", "meeting", "event", "material", "concept",
+                        "issue", "cl", "tc", "sw_design", "hw_design", "coding_rule", "module", "register", "hw_block",
+                        "feature", "component", "chip", "spec"]
+}

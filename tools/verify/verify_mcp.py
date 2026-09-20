@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -55,13 +56,48 @@ def check(name, ok, detail=""):
 
 # ---------------------------------------------------------------- stdio 클라이언트
 class Stdio:
-    """줄 단위 JSON-RPC 로 `python -m llmwiki mcp` 와 말한다."""
+    """줄 단위 JSON-RPC 로 `python -m llmwiki mcp` 와 말한다.
+
+    stdout/stderr 는 **읽기 전용 스레드**가 큐로 옮긴다. `proc.stdout.readline()` 을 직접 부르면
+    블로킹이라 타임아웃 검사(`while time.time() < end`)가 다시 평가되지 못하고 영원히 멈춘다.
+    stderr 도 같이 비워야 한다 — 파이프 버퍼가 차면 서버가 stderr 쓰기에서 멈춘다.
+    """
 
     def __init__(self, env, extra_args=(), cwd=ROOT):
         self.proc = subprocess.Popen([PY, "-m", "llmwiki", "mcp"] + list(extra_args), cwd=cwd, env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, encoding="utf-8", errors="replace", bufsize=1)
+        try:
+            # text=True 의 stdin 은 "\n" 을 os.linesep 으로 바꾼다 → Windows 에서 "\r\n" 이 "\r\r\n" 이 되어
+            # Content-Length 프레이밍의 빈 줄이 두 줄이 된다. 우리가 적은 바이트를 그대로 보내게 한다.
+            self.proc.stdin.reconfigure(newline="")
+        except Exception:
+            pass
         self._id = 0
+        self._q = queue.Queue()
+        self._err = []
+        threading.Thread(target=self._drain_out, daemon=True).start()
+        threading.Thread(target=self._drain_err, daemon=True).start()
+
+    def _drain_out(self):
+        try:
+            for line in self.proc.stdout:
+                self._q.put(line)
+        except Exception as e:
+            self._err.append("stdout 리더 예외: %s\n" % e)
+        finally:
+            self._q.put(None)        # EOF 신호
+
+    def _drain_err(self):
+        try:
+            for line in self.proc.stderr:
+                self._err.append(line)
+                del self._err[:-200]          # 최근 200줄만 (오래 도는 검증에서 메모리 방지)
+        except Exception:
+            pass
+
+    def stderr_text(self):
+        return "".join(self._err)[-800:]
 
     def send_raw(self, payload):
         self.proc.stdin.write(payload)
@@ -83,21 +119,30 @@ class Stdio:
 
     def _read(self, timeout=180):
         end = time.time() + timeout
-        while time.time() < end:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError("서버가 닫힘: " + (self.proc.stderr.read() or "")[:300])
+        while True:
+            left = end - time.time()
+            if left <= 0:
+                raise RuntimeError("timeout(%ss) — stderr: %s" % (timeout, self.stderr_text()[-200:]))
+            try:
+                line = self._q.get(timeout=min(left, 1.0))
+            except queue.Empty:
+                continue                      # 타임아웃 검사로 되돌아간다 (여기가 예전에 멈추던 자리)
+            if line is None:
+                raise RuntimeError("서버가 닫힘(rc=%s): %s" % (self.proc.poll(), self.stderr_text()[:300]))
             line = line.strip()
             if line:
                 return json.loads(line)
-        raise RuntimeError("timeout")
 
     def close(self):
         try:
             self.proc.stdin.close()
             self.proc.wait(timeout=5)
         except Exception:
-            self.proc.kill()
+            try:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------- HTTP 클라이언트
@@ -130,7 +175,13 @@ class Http:
         self._id += 1
         st, hd, body = self.post({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}, **kw)
         if st != 200:
-            raise RuntimeError("HTTP %s %s" % (st, body[:200]))
+            # 본문을 그대로 실으면 한글이 \uXXXX 로 부풀어 정작 필요한 code 가 잘린다 — 요지만 뽑는다.
+            try:
+                e = (json.loads(body.decode("utf-8")) or {}).get("error") or {}
+                det = "code=%s rpc=%s %s" % ((e.get("data") or {}).get("code") or "-", e.get("code"), str(e.get("message"))[:60])
+            except Exception:
+                det = repr(body[:120])
+            raise RuntimeError("HTTP %s %s" % (st, det))
         return json.loads(body.decode("utf-8"))
 
     def call(self, tool, args=None, **kw):
@@ -188,9 +239,13 @@ def sec_protocol(cli):
     check("없는 메서드 → -32601", (r.get("error") or {}).get("code") == -32601, r.get("error"))
     cli.send("notifications/cancelled", {"requestId": 1}, notify=True)
 
-    # Content-Length 프레이밍
+    # Content-Length 프레이밍 (ASCII + 한글 — 헤더는 바이트 수, 텍스트 read 는 문자 수라 예전에는 본문이 밀렸다)
     r = cli.send("ping", framing="content-length")
     check("Content-Length 프레이밍", r.get("result") == {}, r.get("result"))
+    r = cli.send("tools/call", {"name": "wiki_doc", "arguments": {"id": "한글-없는-문서", "max_chars": 10}}, framing="content-length")
+    check("Content-Length 프레이밍 (한글 본문 = 바이트≠문자)", "한글-없는-문서" in text_of(r), text_of(r)[:70])
+    r = cli.send("ping")
+    check("한글 프레이밍 뒤에도 스트림 정렬 유지", r.get("result") == {}, r.get("result"))
 
     # 배치
     cli.send_raw(json.dumps([{"jsonrpc": "2.0", "id": 901, "method": "ping"},
@@ -220,6 +275,11 @@ TOOL_CALLS = [
     ("wiki_sources", {}, "sources"),
     ("wiki_external_search", {"query": "AGC", "k": 2}, "외부 검색"),
     ("wiki_propose", {"kind": "synonym", "payload": {"term": "AGC", "synonyms": ["자동이득제어"]}, "reason": "verify"}, "proposal_id"),
+    # 지난 요청 조회: 목록 → 한 건 상세 (앞의 wiki_query 가 만든 기록이 있어야 한다)
+    ("wiki_requests", {"limit": 5}, "kind"),
+    ("wiki_requests", {"kind": "query", "limit": 3}, "query"),
+    # 단계 재실행: 인자 없이 부르면 재시작점 목록 (붙는 LLM 이 먼저 보는 화면)
+    ("wiki_rerun", {}, "points"),
 ]
 
 BAD_CALLS = [
@@ -257,6 +317,23 @@ def sec_tools(cli, label="stdio", quick=False):
             m = re.search(r"request_id: (\d+) · query_id: (\d+)", txt)
             if m:
                 ids["request_id"], ids["query_id"] = int(m.group(1)), int(m.group(2))
+    # 재실행은 **실제 request_id** 가 있어야 의미가 있다 — 위 wiki_query 가 만든 것으로 한 번 돌려 본다
+    if ids.get("request_id") and not quick:
+        try:
+            args = {"request_id": ids["request_id"], "from": "answer_llm"}
+            r = cli.send("tools/call", {"name": "wiki_rerun", "arguments": args}) if isinstance(cli, Stdio) else cli.call("wiki_rerun", args)
+            txt = text_of(r)
+            ok = not is_error(r) and "replayed_stages" in txt and '"from": "answer_llm"' in txt
+            check("wiki_rerun (답변부터, request_id=%s)" % ids["request_id"], ok, txt[:100].replace("\n", " "))
+        except Exception as e:
+            check("wiki_rerun (답변부터)", False, "예외: %s" % e)
+        try:
+            args = {"request_id": ids["request_id"]}
+            r = cli.send("tools/call", {"name": "wiki_requests", "arguments": args}) if isinstance(cli, Stdio) else cli.call("wiki_requests", args)
+            txt = text_of(r)
+            check("wiki_requests (한 건 상세)", not is_error(r) and '"answer"' in txt, txt[:100].replace("\n", " "))
+        except Exception as e:
+            check("wiki_requests (한 건 상세)", False, "예외: %s" % e)
     if ids.get("query_id"):
         r = cli.send("tools/call", {"name": "wiki_feedback", "arguments": {"query_id": ids["query_id"], "feedback": 1, "note": "verify"}}) \
             if isinstance(cli, Stdio) else cli.call("wiki_feedback", {"query_id": ids["query_id"], "feedback": 1, "note": "verify"})
@@ -297,8 +374,9 @@ def sec_http(base, api_key):
     arr = json.loads(body.decode("utf-8")) if st == 200 else None
     check("HTTP 배치", isinstance(arr, list) and len(arr) == 2, st)
 
-    st, hd, body = anon.post(b"{ not json", extra_headers={"Content-Type": "application/json"}) if False else anon.post({"jsonrpc": "2.0"})
-    check("잘못된 JSON-RPC → 오류 응답 (크래시 아님)", st in (200, 400), st)
+    st, hd, body = anon.post({"jsonrpc": "2.0"})          # id·method 없는 본문 → 알림으로 오해하고 삼키면 안 된다
+    err = (json.loads(body.decode("utf-8")) if st == 200 and body else {}).get("error") or {}
+    check("method 없는 본문 → -32600 (조용히 버리지 않음)", st in (200, 400) and err.get("code") == -32600, "%s %s" % (st, err or body[:60]))
 
     req = urllib.request.Request(base.rstrip("/") + "/mcp", method="GET")
     try:
@@ -308,7 +386,7 @@ def sec_http(base, api_key):
         code = e.code
     check("GET /mcp → 405 (SSE 미제공)", code == 405, code)
 
-    bad = Http(base, "lwk_없는키_000")
+    bad = Http(base, "lwk_no_such_key_000")     # HTTP 헤더는 latin-1 만 담을 수 있다 (한글 토큰은 클라이언트에서 깨진다)
     try:
         bad.rpc("tools/list")
         ok, det = False, "인증 없이 통과"
@@ -322,12 +400,12 @@ def sec_http(base, api_key):
     return keyed
 
 
-def sec_concurrency(base, api_key, n=8):
-    print("\n[5] 동시 접속 (%d 클라이언트)" % n)
+def _fanout(base, tokens, label):
+    """tokens 하나당 클라이언트 하나로 동시에 wiki_query. [(i, ok, detail)] 반환."""
     out, lock = [], threading.Lock()
 
-    def one(i):
-        c = Http(base, api_key)
+    def one(i, tok):
+        c = Http(base, tok)
         try:
             c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
             r = c.call("wiki_query", {"question": "ISSUE-200%d 요약" % (i % 5 + 1), "k": 3})
@@ -335,16 +413,41 @@ def sec_concurrency(base, api_key, n=8):
                 out.append((i, not is_error(r), len(text_of(r))))
         except Exception as e:
             with lock:
-                out.append((i, False, str(e)[:80]))
+                out.append((i, False, str(e)[:200]))
 
-    ths = [threading.Thread(target=one, args=(i,)) for i in range(n)]
+    ths = [threading.Thread(target=one, args=(i, t)) for i, t in enumerate(tokens)]
     t0 = time.time()
     for t in ths:
         t.start()
     for t in ths:
         t.join(600)
+    print("    (%s: %.1fs)" % (label, time.time() - t0))
+    return out
+
+
+def sec_concurrency(base, keys, limits, quick=False):
+    """서버 제한(server.json)을 읽어, 제한 안에서는 전부 성공하고 넘기면 429 로만 거부되는지 본다.
+
+    예전에는 **API 키 하나**로 N 개 클라이언트를 흉내 내어 `max_parallel_per_user`(기본 3)에 걸렸다.
+    실제로 여러 LLM 이 붙을 때는 키가 클라이언트마다 다르므로, 키를 나눠 써야 이 구간이 의미를 갖는다.
+    """
+    conc = limits.get("concurrency") or {}
+    per_ip = int(conc.get("max_parallel_per_ip") or 6)
+    per_user = int(conc.get("max_parallel_per_user") or 3)
+    n = max(2, min(len(keys), per_ip, 4 if quick else 8))
+    print("\n[5] 동시 접속 (%d 클라이언트 = 서로 다른 API 키 · 서버 제한 per_ip=%d per_user=%d)" % (n, per_ip, per_user))
+
+    out = _fanout(base, keys[:n], "서로 다른 키 %d개" % n)
     ok = sum(1 for _, o, _ in out if o)
-    check("동시 wiki_query %d건" % n, ok == n, "%d/%d 성공 · %.1fs · 실패=%s" % (ok, n, time.time() - t0, [x for x in out if not x[1]][:2]))
+    check("동시 wiki_query %d건 (제한 안)" % n, ok == n, "%d/%d 성공 · 실패=%s" % (ok, n, [x for x in out if not x[1]][:2]))
+
+    # 같은 키로 per_user 한계를 넘겨 본다 — 거부되더라도 429 + code=per_user_limit 로만, 크래시나 5xx 가 아니어야 한다.
+    m = per_user + 3
+    out2 = _fanout(base, [keys[0]] * m, "같은 키 %d개" % m)
+    bad = [d for _, o, d in out2 if not o]
+    clean = all(("HTTP 429" in str(d) and ("per_user_limit" in str(d) or "rate_limited" in str(d))) for d in bad)
+    check("한 키로 한계 초과 → 429 로만 거부 (5xx·크래시 없음)", clean and (len(out2) - len(bad)) >= 1,
+          "%d/%d 성공 · 거부 %d건%s" % (len(out2) - len(bad), m, len(bad), (" · 예: " + str(bad[0])[:90]) if bad else " (동시에 겹치지 않음)"))
 
 
 def sec_bridge(env, base, api_key):
@@ -357,7 +460,7 @@ def sec_bridge(env, base, api_key):
         check("브리지 tools/list", len((r.get("result") or {}).get("tools") or []) >= 12, len((r.get("result") or {}).get("tools") or []))
         r = cli.send("tools/call", {"name": "wiki_status", "arguments": {}})
         check("브리지 tools/call", not is_error(r), text_of(r)[:80].replace("\n", " "))
-        cli2 = Stdio(env, extra_args=["--connect", base.rstrip("/") + "/mcp", "--token", "lwk_없는키"])
+        cli2 = Stdio(env, extra_args=["--connect", base.rstrip("/") + "/mcp", "--token", "lwk_no_such_key"])
         try:
             r = cli2.send("tools/list")
             err = (r.get("error") or {}).get("message", "")
@@ -426,8 +529,10 @@ def sec_extensions(tmp, env, base, api_key):
         check("wiki_sources: 플러그인 오류 보고", any(e.get("file") == "broken.py" for e in (sc.get("plugins") or {}).get("errors") or []),
               (sc.get("plugins") or {}).get("errors"))
         check("wiki_sources: 페더레이션 도구 목록", "mock__search" in (sc.get("federated_tools") or []), sc.get("federated_tools"))
-        check("wiki_sources: 소스 연결 상태", ((sc.get("sources") or [{}])[0] or {}).get("status", {}).get("ok") is not None or
-              any((s or {}).get("status", {}).get("ok") for s in sc.get("sources") or []), [s.get("name") for s in sc.get("sources") or []])
+        # status 는 키가 있어도 값이 None 일 수 있다 (검사 전) — .get("status", {}) 로는 못 막는다
+        statuses = [(s or {}).get("status") or {} for s in sc.get("sources") or []]
+        check("wiki_sources: 소스 연결 상태", any(st.get("ok") for st in statuses),
+              [(s.get("name"), ((s.get("status") or {}).get("ok"))) for s in sc.get("sources") or []])
 
         r = cli.send("tools/call", {"name": "wiki_external_search", "arguments": {"query": "AGC 수렴", "k": 2}})
         check("외부 RAG 직접 검색", not is_error(r) and "ISSUE-9002" in text_of(r), text_of(r)[:90].replace("\n", " "))
@@ -449,6 +554,18 @@ def sec_extensions(tmp, env, base, api_key):
     return env2
 
 
+def sec_doctor_clean(env):
+    """확장을 심기 **전**의 환경 — 결함이 없으면 ok=true 여야 한다 (sec_extensions 가 같은 config 파일을 고치므로 먼저 부른다)."""
+    r = subprocess.run([PY, "-m", "llmwiki", "mcp", "--doctor", "--json"], cwd=ROOT, env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+    try:
+        rep = json.loads(r.stdout)
+    except Exception:
+        rep = {}
+    check("mcp --doctor: 결함 없는 환경은 ok=true", rep.get("ok") is True,
+          "오류 %s · 경고 %s · 도구 %s" % (rep.get("errors"), rep.get("warnings"), len(rep.get("tools") or [])))
+
+
 def sec_doctor(env2):
     print("\n[8] 자가 점검 명령")
     r = subprocess.run([PY, "-m", "llmwiki", "mcp", "--doctor", "--check-sources", "--json"], cwd=ROOT, env=env2,
@@ -458,9 +575,13 @@ def sec_doctor(env2):
     except Exception:
         check("mcp --doctor --json", False, (r.stdout or r.stderr)[:200])
         return
-    check("mcp --doctor --json", rep.get("ok") is True, "오류 %s · 경고 %s · 도구 %d" % (rep.get("errors"), rep.get("warnings"), len(rep.get("tools") or [])))
-    check("doctor: 플러그인 오류 검출", any(not c["ok"] and c["check"] == "플러그인" for c in rep["checks"]) or
-          any("broken.py" in str(c.get("hint", "")) for c in rep["checks"]), "")
+    # 이 환경에는 깨진 플러그인(broken.py)을 **일부러** 심어 두었다 → doctor 는 ok=false 로 그것만 짚어야 한다.
+    errs = [c["check"] for c in rep["checks"] if c.get("level") == "error"]
+    check("mcp --doctor --json (심어 둔 결함만 오류로)", rep.get("ok") is False and errs == ["플러그인"],
+          "ok=%s · 오류 %s · 경고 %s · 도구 %d" % (rep.get("ok"), errs, rep.get("warnings"), len(rep.get("tools") or [])))
+    check("doctor: 플러그인 오류 검출", any(not c["ok"] and c["check"] == "플러그인" and "broken.py" in str(c.get("hint", "")) for c in rep["checks"]),
+          next((c.get("hint") for c in rep["checks"] if c["check"] == "플러그인"), "")[:90])
+    check("doctor: 도구 목록에 확장 포함", {"verify_echo", "mock__search"} <= set(rep.get("tools") or []), len(rep.get("tools") or []))
     check("doctor: 페더레이션 도구 보고", any("mock__search" in str(c.get("detail")) for c in rep["checks"]), "")
     r = subprocess.run([PY, "-m", "llmwiki", "mcp", "--doctor"], cwd=ROOT, env=env2, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=600)
@@ -484,8 +605,32 @@ def main(argv=None):
     base = "http://127.0.0.1:%d" % ns.port
 
     print("MCP 검증 시작 (격리 환경 준비 중…)")
-    tmp, env, proc = isolated_env(ns.port)
-    api_key = ""
+    # security.json 의 mode=auto 는 **127.0.0.1 바인드면 인증을 끈다**(개발 편의). 그대로 두면
+    # "잘못된 Bearer 거부" 같은 인증 항목이 전부 무의미하게 통과한다 → 격리 환경에서는 명시적으로 켠다.
+    sec = json.load(open(os.path.join(ROOT, "security.json"), encoding="utf-8"))
+    sec.update({"mode": "on", "anonymous_role": "viewer", "api_keys": {}})
+    sec["cli"] = dict(sec.get("cli") or {}, default_role="admin", require_login=False)   # apikey add 가 되도록
+    tmp, env, _ = isolated_env(ns.port, extra_files={"security.json": sec}, serve=False)
+
+    # API 키는 **서버를 띄우기 전에** 발급한다 — 서버는 기동 시 security.json 을 읽어 들고 있으므로
+    # 나중에 추가한 키는 그 프로세스에 보이지 않는다 (원격 LLM 이 쓰는 경로가 401 이 된다).
+    # 붙는 LLM 마다 키가 다른 것이 실제 모습이다 (동시성 제한이 사용자별이므로 [5] 가 이것에 달려 있다).
+    limits = json.load(open(os.path.join(tmp, "server.json"), encoding="utf-8"))
+    n_keys = max(4, int((limits.get("concurrency") or {}).get("max_parallel_per_ip") or 6))
+    keys = []
+    for i in range(n_keys):
+        r = subprocess.run([PY, "-m", "llmwiki", "apikey", "add", "verify-mcp-%d" % i, "--role", "class2"], cwd=ROOT, env=env,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        got = [t for t in (r.stdout or "").replace('"', " ").replace(",", " ").split() if t.startswith("lwk_")]
+        if got:
+            keys.append(got[0])
+        elif i == 0:
+            print("  (API 키 발급 출력: %s)" % (r.stdout or r.stderr)[:200])
+    api_key = keys[0] if keys else ""
+    print("  API 키 %d개 발급" % len(keys))
+
+    proc = subprocess.Popen([PY, "-m", "llmwiki", "serve", "--host", "127.0.0.1", "--port", str(ns.port)],
+                            cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(180):
             try:
@@ -493,14 +638,6 @@ def main(argv=None):
                 break
             except Exception:
                 time.sleep(1)
-        # API 키 하나 발급 (원격 LLM 이 쓰는 경로)
-        r = subprocess.run([PY, "-m", "llmwiki", "apikey", "add", "verify-mcp", "--role", "class2"], cwd=ROOT, env=env,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        for tok in (r.stdout or "").replace('"', " ").replace(",", " ").split():
-            if tok.startswith("lwk_"):
-                api_key = tok
-        if not api_key:
-            print("  (API 키 발급 출력: %s)" % (r.stdout or r.stderr)[:200])
 
         cli = Stdio(env)
         try:
@@ -511,8 +648,9 @@ def main(argv=None):
 
         keyed = sec_http(base, api_key)
         sec_tools(keyed, "http", quick=ns.quick)
-        sec_concurrency(base, api_key, n=4 if ns.quick else 8)
+        sec_concurrency(base, keys, limits, quick=ns.quick)
         sec_bridge(env, base, api_key)
+        sec_doctor_clean(env)
         env2 = sec_extensions(tmp, env, base, api_key)
         sec_doctor(env2)
     finally:

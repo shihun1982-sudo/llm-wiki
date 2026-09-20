@@ -115,11 +115,15 @@ class Phase0Test(unittest.TestCase):
         txt = pr.get("answer_system")
         self.assertTrue(txt.startswith("TASK=answer"))
         self.assertTrue(os.path.exists(pr.path("answer_system")))
-        self.assertIn("근거 표", pr.answer_system())
+        # 시스템 프롬프트 뒤에 답변 가이드가 붙는다 — 가이드의 출력 뼈대 제목은 추출식 답변과 같은 것을 쓴다
+        sysp = pr.answer_system()
+        for h in ("## 핵심", "## 상세", "## 근거", "## 미확인"):
+            self.assertIn(h, sysp)
+        self.assertIn("PHY", sysp)                     # 모뎀 PHY 임베디드 개발자 페르소나
         pr.set_text("answer_guide", "# 내 가이드\n짧게.")
         self.assertIn("내 가이드", pr.answer_system())
         pr.reset("answer_guide")
-        self.assertIn("Evidence-rich", pr.answer_system())
+        self.assertIn("출력 뼈대", pr.answer_system())
         self.assertTrue(all(r["exists"] for r in pr.list_prompts()))
         # 답변 단계가 파일 프롬프트를 사용 (샘플에 시스템 프롬프트 기록)
         self.p.build(full=True)

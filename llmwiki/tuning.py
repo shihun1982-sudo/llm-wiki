@@ -107,6 +107,10 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("related_w", "query_rules", "float", 0.4, "related(관련어) 보조 리스트 가중치 — 주 질의에 섞지 않고 별도 리스트로 융합.", "높이면 관련 주제가 상위로 올라와 precision↓.", "0.4", 0.0, 2.0),
     _p("exclude_penalty", "query_rules", "float", 0.5, "exclude 용어를 포함한 후보의 fused 점수 배율 (0=완전 제거).", "", "0.5", 0.0, 1.0),
     _p("acronym_phrase", "query_rules", "bool", True, "acronym 확장어를 구문(phrase) 검색으로 넣을지 (false 면 토큰 OR).", "", "true", choices=[True, False]),
+    _p("query_rules_max_rounds", "query_rules", "int", 2,
+       "규칙을 몇 번 접어 적용할지. 1 이면 한 번만 — 'TAT→Turn Around Time'(acronym) 뒤에 걸린 'Turn Around Time→응답시간'(synonym) 이 무시된다.",
+       "크게 하면 사슬이 긴 사전에서 확장어가 폭증해 precision↓·지연↑. 연관어(related)와 별칭(alias)은 다시 펼치지 않는다.",
+       "2 (기본), 3 (약어→정식명→동의어 사슬이 깊은 사전)", 1, 5),
     # ------------------------------------------------------------------ query_expand
     _p("query_expand_n", "query_expand", "int", 2, "생성할 대체 질의 수.", "많을수록 recall↑ 지연↑ (질의마다 FTS+벡터 실행).", "2", 1, 5),
     _p("query_expand_w", "query_expand", "float", 0.6, "대체 질의 결과 리스트의 융합 가중치 (원 질의 채널 가중치 대비 배율).", "1.0 이면 원 질의와 동등.", "0.6", 0.0, 2.0),
@@ -182,6 +186,15 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("rerank_w_cover", "rerank", "float", 0.6, "local 리랭크: 키워드 커버리지 가중치.", "", "0.6", 0.0, 1.0),
     _p("rerank_w_consensus", "rerank", "float", 0.3, "local 리랭크: 채널 합의(등장 채널 수/3) 가중치.", "", "0.3", 0.0, 1.0),
     _p("rerank_w_length", "rerank", "float", 0.1, "local 리랭크: 길이 보정(400자 미만 감점) 가중치.", "", "0.1", 0.0, 1.0),
+    _p("rerank_fused_w", "rerank", "float", 0.0,
+       "리랭크 최종 순위에 **융합·부스트 점수(fused)** 를 얼마나 섞을지. 0 = 리랭크 점수만으로 정렬(기본, 예전 동작).",
+       "리랭크는 후보를 다시 줄 세우면서 그 앞 단계(채널 융합 rrf_k·채널 가중치·시간/문서유형/pin/provenance 부스트)가 "
+       "매긴 점수를 **버린다**(동점일 때만 참고). 그래서 rrf_k·fusion_method 를 아무리 바꿔도 최종 순위가 거의 그대로다 "
+       "(2026-09-17 실측: rrf_k 2~60 에서 MRR 0.467~0.477). 이 값을 올리면 융합·부스트가 최종 순위에 실제로 반영되어 "
+       "그 손잡이들이 의미를 갖는다. 특히 **pin_boost 로 고정한 근거가 리랭크에 밀리는 것**을 막을 때 쓴다. "
+       "리랭크 점수와 fused 는 척도가 달라 후보 집합 안에서 각각 0~1 로 정규화한 뒤 `rerank + w × fused` 로 합친다.",
+       "0 = 리랭크만 믿는다(기본) · 0.3 = 융합을 참고 · 1.0 = 리랭크와 같은 비중 · pin 을 확실히 올리려면 1.0 이상",
+       0.0, 5.0),
     _p("rerank_heading_bonus", "rerank", "float", 0.1, "local 리랭크: 헤딩에 질의 키워드가 있으면 더하는 보너스.",
        "섹션 제목이 곧 주제인 문서(회의록 결정사항)에서 MRR↑ (실습 코퍼스 all 채널 MRR 0.743→0.799). 단, 제목만 맞고 본문에 답이 없는 문단(일정표)이 올라올 수 있어 단일 채널 평가에서는 1문항 하락 — 0 으로 끄면 원복.",
        "0.1 (기본). 헤딩이 빈약한 PDF 위주 코퍼스면 0.", 0.0, 1.0),
@@ -241,6 +254,12 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("forensic_term_candidates", "forensic", "int", 6, "기대 결과 포렌식: FTS 탈락 청크에서 뽑는 대표 용어(동의어 후보) 수. 헤딩 용어가 먼저, 그다음 빈도순.", "", "6", 1, 30),
     _p("forensic_term_targets", "forensic", "int", 20, "기대 결과 포렌식: 문서 지정 없이 용어만 준 경우 코퍼스에서 그 용어를 담은 청크를 최대 몇 개까지 목표로 삼을지.", "많으면 재실행 판정이 느려진다.", "20", 1, 200),
     _p("forensic_pin_confidence", "forensic", "float", 0.6, "기대 결과 포렌식이 내는 pin 제안의 confidence (evolve 목록 정렬·자동 적용 임계와 비교되는 값).", "", "0.6", 0.0, 1.0),
+    _p("forensic_suggestion_min_confidence", "forensic", "float", 0.5,
+       "기대 결과 포렌식 화면에서 '수정안' 을 바로 펼쳐 보여 줄 최소 confidence. 이 미만은 접어 둔다(버리지는 않는다).",
+       "낮추면 근거가 약한 제안까지 먼저 보이고, 높이면 확실한 것만 남는다.", "0.5", 0.0, 1.0),
+    _p("forensic_targets_shown", "forensic", "int", 3,
+       "기대 결과 포렌식 화면에서 목표 청크의 '탈락 단계' 표를 바로 보여 줄 개수 (가장 멀리 간 것 순). 나머지는 접어 둔다.",
+       "용어만 주고 실행하면 목표가 수십 개가 되어 같은 표가 반복된다.", "3", 1, 200),
 ]
 
 _INDEX: Dict[str, Dict[str, Any]] = {p["key"]: p for p in TUNABLES}

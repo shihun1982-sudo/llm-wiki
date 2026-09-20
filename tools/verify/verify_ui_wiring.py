@@ -43,4 +43,29 @@ for fn in os.listdir(os.path.join(S, "js")):
 paths_js |= set(re.findall(r"fetch\('(/api/[a-z_/]+)", login))
 unknown = sorted(p for p in paths_js if p not in paths_srv and not any(p.startswith(x) for x in ("/api/jobs/", "/api/progress")))
 print("JS 가 부르는 API 경로:", len(paths_js), "| 서버에 없는 경로:", unknown or "-")
-print("RESULT", "OK" if not any(missing.values()) and not unknown and not (tabs - sections) else "PROBLEMS")
+
+# ---- LW 헬퍼를 **쓰는데 구조분해로 가져오지 않은** 곳 ----
+# 왜: 이런 실수는 그 함수를 실제로 호출하는 화면을 열어야 터지고, 터지면 ReferenceError 로
+# `innerHTML = …` 통째로 실패해 **화면이 옛 내용 그대로 남는다**. 오류 메시지도 안 보인다.
+# 실제로 settings.js 가 `dt` 를 안 가져와서, 스케줄 저장이 서버에는 됐는데 표가 갱신되지 않았다.
+_core = open(os.path.join(S, "js", "core.js"), encoding="utf-8").read()
+_tail = _core[_core.rfind("return {"):]
+_ret = re.search(r"return \{(.+?)\};", _tail, re.S)
+_exported = {p.split(":")[0].strip() for p in (_ret.group(1).replace("\n", " ").split(",") if _ret else [])
+             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", p.split(":")[0].strip())}
+lw_missing = {}
+for fn in sorted(os.listdir(os.path.join(S, "js"))):
+    if not fn.endswith(".js") or fn == "core.js":
+        continue
+    src = open(os.path.join(S, "js", fn), encoding="utf-8").read()
+    m = re.search(r"const \{([^}]+)\} = LW;", src)
+    imported = {x.strip().split(":")[0].strip() for x in m.group(1).split(",")} if m else set()
+    body = re.sub(r"\bLW\.[A-Za-z0-9_]+", "", src[m.end():] if m else src)   # LW.foo() 는 언제나 안전
+    used = set(re.findall(r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)\s*\(", body))
+    local = set(re.findall(r"function\s+([A-Za-z_][A-Za-z0-9_]*)", body))
+    local |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", body))
+    miss_lw = sorted((_exported & used) - imported - local)
+    if miss_lw:
+        lw_missing[fn] = miss_lw
+print("LW 헬퍼 구조분해 누락:", (", ".join("%s → %s" % (k, "/".join(v)) for k, v in lw_missing.items()) if lw_missing else "-"))
+print("RESULT", "OK" if not any(missing.values()) and not unknown and not (tabs - sections) and not lw_missing else "PROBLEMS")

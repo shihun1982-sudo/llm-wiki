@@ -85,6 +85,21 @@ DEFAULTS: Dict[str, Any] = {
         "live_dir": "data/live",          # 다른 프로세스(CLI/MCP stdio) 작업 파일 위치
         "live_stale_s": 90,               # heartbeat 가 이보다 오래되면 죽은 것으로 간주
     },
+    # Web UI 협업(휘발성 채팅 + 게시판). **부수 기능** — 토글 collab 으로 끄면 화면에서 사라지고
+    # 질의·빌드·MCP 에는 영향이 없다. 상세: docs/COLLAB.md · llmwiki/collab.py
+    "collab": {
+        "enabled": True,
+        "retain_min": 120,                # 채팅을 메모리에 두는 시간(분) — 지나면 사라진다(휘발성)
+        "max_messages": 500,              # 메모리에 두는 최대 메시지 수
+        "max_chars": 2000,                # 메시지 한 건의 최대 길이
+        "board_max": 2000,                # 게시판 글 최대 수 (data/collab/board.json)
+        "board_keep_days": 365,           # 게시글 보존 기간(일). 0 = 지우지 않음
+        "bubble_font_start_px": 12,       # 말풍선 시작 글자 크기 (admin 이 조정)
+        "bubble_font_step_px": 1,         # 얼마씩 키울지
+        "bubble_font_step_min": 30,       # 몇 분마다 키울지 (기본 30분에 1px)
+        "bubble_font_max_px": 28,         # 상한
+        "idle_hide_min": 240,             # 이만큼 조용하면 캐릭터를 숨긴다(분). 0 = 계속 표시
+    },
 }
 
 SERVER_JSON_NAME = "server"
@@ -712,7 +727,10 @@ class RequestManager:
                 "queue": live.get("queue"), "cancel_requested": bool(live.get("cancel")), "lock_mode": t.get("lock_mode"), "limit_s": t.get("limit_s"),
                 "error": t.get("error") if not viewer else None, "detail": live.get("detail"),
                 # note: 핸들러가 남기는 한 줄 설명(예: '캐시'). 1ms 만에 끝난 요청이 왜 그런지 목록에서 바로 보이게.
-                "note": t.get("note")}
+                "note": t.get("note"),
+                # request_id: 끝난 작업을 눌렀을 때 **저장해 둔 그때 그 결과**(요청 프로파일)로 바로 갈 수 있게.
+                # 핸들러가 결과를 만든 뒤 티켓에 적어 준다 (없으면 진행 기록만 보여 준다).
+                "request_id": t.get("request_id")}
 
     def activity(self, viewer: bool = False, history: int = 20) -> Dict[str, Any]:
         with self._lock:
@@ -801,6 +819,11 @@ def install_cli_publisher() -> None:
 
 def weight_for_level(level: str, op: str = "", body: Optional[Dict[str, Any]] = None) -> str:
     """권한 등급(auth.classify_*) → 락 가중치. read/run → read · index(증분 빌드 등) → soft(정책에 따라) · 나머지 쓰기 → exclusive."""
+    # 협업(채팅·게시)은 색인이나 파이프라인을 건드리지 않는다. 접속자마다 몇 초에 한 번씩 폴링하므로
+    # 읽기 슬롯을 잡게 두면 **30명 환경에서 질의가 밀린다** — 부수 기능이 본체를 막는 셈이라 슬롯 밖에 둔다.
+    # (권한 등급은 그대로 read/admin 이다 — 여기서는 락 가중치만 정한다.)
+    if str(op or "").startswith("collab"):
+        return "none"
     if level in ("read", "run"):
         return "read"
     if level == "index":

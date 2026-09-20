@@ -818,6 +818,49 @@ class StressTest(unittest.TestCase):
         print("\n  [stress] %d concurrent queries in %.1fs (avg %.0f ms, p95 %.0f ms)" % (
             n, el, (st["latency"].get("query") or {}).get("avg_ms", 0), (st["latency"].get("query") or {}).get("p95_ms", 0)))
 
+    def test_collab_traffic_does_not_disturb_queries(self):
+        """협업(채팅·게시)은 **부수 기능**이다 — 질의와 함께 쏟아져도 질의를 막거나 느리게 하면 안 된다.
+
+        채팅 폴링은 4초마다 모든 접속자가 보내므로, 이것이 읽기 슬롯을 잡으면 30명 환경에서 질의가 밀린다.
+        그래서 collab 은 `read` 등급이지만 파이프라인 락을 쓰지 않는다 — 여기서 그것을 확인한다.
+        """
+        n_q, n_c = 8, 40
+        res = {"q": [], "c": [], "err": []}
+
+        def query(i):
+            try:
+                code, j = self._req("POST", "/api/query", {"q": "ISSUE-200%d 원인" % (i % 3 + 1), "log": False})
+                res["q"].append((code, (j.get("result") or {}).get("ms")))
+            except Exception as e:  # noqa: BLE001
+                res["err"].append("query %s: %s" % (type(e).__name__, e))
+
+        def chat(i):
+            try:
+                c1, _ = self._req("POST", "/api/collab", {"action": "say", "text": "부하 %d" % i})
+                c2, _ = self._req("GET", "/api/collab")
+                res["c"].append((c1, c2))
+            except Exception as e:  # noqa: BLE001
+                res["err"].append("collab %s: %s" % (type(e).__name__, e))
+
+        ths = [threading.Thread(target=query, args=(i,)) for i in range(n_q)]
+        ths += [threading.Thread(target=chat, args=(i,)) for i in range(n_c)]
+        [t.start() for t in ths]
+        [t.join(300) for t in ths]
+        self.assertEqual(res["err"], [])
+        self.assertEqual(len(res["q"]), n_q)
+        self.assertTrue(all(code == 200 for code, _ in res["q"]), res["q"])     # 질의가 전부 성공
+        self.assertTrue(all(a == 200 and b == 200 for a, b in res["c"]), res["c"][:3])
+        # 채팅이 읽기 슬롯을 잡지 않았다 → 대기열에 쌓이지 않고 끝났다
+        st = self.mgr.stats()
+        self.assertEqual((st["running"], st["queued"]), (0, 0))
+        # 가중치 자체를 못 박는다: collab 은 락 밖(none)이어야 한다.
+        # read 로 두면 30명이 몇 초마다 폴링하는 것만으로 읽기 슬롯이 차서 질의가 밀린다
+        # (2026-09-16 멍키 테스트에서 폭격 중 정상 질의가 0/22 로 떨어져 발견).
+        from llmwiki import reqmgr as _rq
+        self.assertEqual(_rq.weight_for_level("read", "collab say"), "none")
+        self.assertEqual(_rq.weight_for_level("admin", "collab admin"), "none")
+        self.assertEqual(_rq.weight_for_level("read", "/api/query"), "read")   # 질의는 그대로 읽기 슬롯
+
     def test_queries_during_build_and_activity_visible(self):
         """증분 빌드(soft 쓰기) 중에도 질의가 처리되고, 활동 목록에 빌드가 보인다."""
         with open(os.path.join(self.corpus, "issues", "ISSUE-9200.md"), "w", encoding="utf-8") as f:

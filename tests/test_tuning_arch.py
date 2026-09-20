@@ -254,8 +254,12 @@ class QualityOptionsTest(unittest.TestCase):
         self.assertEqual(init["result"]["serverInfo"]["name"], "llmwiki")
         self.assertIsNone(mcp.handle(self.p, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         tools = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+        # 도구를 늘리면 여기도 함께 고친다 (MCP.md 의 표와 verify_surface_align.py 의 대조표도)
         self.assertEqual({t["name"] for t in tools}, {"wiki_query", "wiki_search", "wiki_entity", "wiki_status", "wiki_related", "wiki_doc", "wiki_propose",
-                                                      "wiki_feedback", "wiki_forensic", "wiki_sources", "wiki_external_search", "wiki_analysis"})
+                                                      "wiki_feedback", "wiki_forensic", "wiki_sources", "wiki_external_search", "wiki_analysis",
+                                                      "wiki_requests", "wiki_rerun"})
+        # 붙는 LLM 이 "읽기 전용인가" 를 판단하는 근거 — 도구를 늘리면서 빠뜨리기 쉽다
+        self.assertFalse([t["name"] for t in tools if not (t.get("annotations") or {})], "annotations 가 없는 도구가 있습니다")
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "wiki_query", "arguments": {"question": "캐파 확장 담당", "k": 3}}})
         self.assertIn("[C1]", r["result"]["content"][0]["text"])
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "wiki_entity", "arguments": {"name": "CFO"}}})

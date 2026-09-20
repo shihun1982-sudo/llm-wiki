@@ -412,6 +412,35 @@ def _cross_encoder(model: str):
     return _CE_CACHE[model]
 
 
+def final_order(cands: List[Hit], w_fused: float, ranked: Optional[List[Hit]] = None) -> List[Hit]:
+    """리랭크 결과를 최종 순위로 정렬한다 — **네 가지 리랭크 방식이 모두 이 함수를 쓴다**.
+
+    왜 한 곳에 모았나: 예전에는 방식마다 정렬이 달랐다(api·local 은 fused 를 동점 처리에만,
+    cross_encoder 는 아예 무시, llm 은 준 순서 그대로). 그래서 "리랭크 방식을 바꿨더니 pin 이
+    사라졌다" 같은 일이 생겨도 어디를 봐야 할지 알 수 없었다.
+
+    `w_fused`(tuning `rerank_fused_w`) 가 0 이면 예전 동작 그대로 — 리랭크 점수로만 줄을 세우고
+    fused 는 동점일 때만 본다. 0보다 크면 후보 집합 안에서 두 점수를 각각 0~1 로 정규화해
+    `rerank + w × fused` 로 합친다. 정규화하는 이유는 척도가 제각각이기 때문이다
+    (api 0~1 · local 0~2 · llm 은 남은 개수).
+
+    ranked 를 주면 그 순서를 리랭크 점수 대신 쓴다 (LLM 이 순위만 돌려주는 경우).
+    """
+    if ranked is None:
+        ranked = cands
+    if w_fused <= 0:
+        return sorted(ranked, key=lambda h: (-(h.rerank or 0), -h.fused))
+    rr = [(h.rerank or 0.0) for h in ranked]
+    fu = [h.fused for h in ranked]
+    def _norm(vals):
+        lo, hi = min(vals), max(vals)
+        rng = hi - lo
+        return [1.0] * len(vals) if rng <= 0 else [(v - lo) / rng for v in vals]
+    rn, fn = _norm(rr) if rr else [], _norm(fu) if fu else []
+    score = {id(h): rn[i] + w_fused * fn[i] for i, h in enumerate(ranked)}
+    return sorted(ranked, key=lambda h: (-score[id(h)], -(h.rerank or 0), -h.fused))
+
+
 def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[BaseLLM], top_n: int, prof: Profiler,
            effort: str = "low", use_llm: bool = True, n_cands: int = 0, chunk_chars: int = 600, settings: Any = None,
            doc_tokens: Optional[Dict[str, str]] = None) -> List[Hit]:
@@ -420,6 +449,7 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
     doc_tokens: doc_id → 메타 토큰(문서 ID·유형 등) — local 리랭크 커버리지가 청크 본문에 없는 문서 ID 도 인식하도록."""
     T = _T()
     method = T.get("rerank_method")
+    w_fused = float(T.get("rerank_fused_w") or 0.0)   # 융합·부스트 점수를 최종 순위에 섞는 비중 (0 = 예전 동작)
     cands = hits[: (n_cands or max(top_n * 2, 10))]
     before = [h.chunk_id for h in cands]
     if settings is not None and (method == "api" or (method == "auto" and settings.rerank_url)):
@@ -431,8 +461,9 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
                 sc = {i: s for i, s in order}
                 for i, h in enumerate(cands):
                     h.rerank = round(sc.get(i, 0.0), 4)
-                ranked = sorted(cands, key=lambda h: (-(h.rerank or 0), -h.fused))
-                st.note(ms_api=round(meta.get("ms", 0)), model=meta.get("model"), top=[(h.chunk_id, h.rerank) for h in ranked[:5]])
+                ranked = final_order(cands, w_fused)
+                st.note(ms_api=round(meta.get("ms", 0)), model=meta.get("model"), fused_w=w_fused,
+                        top=[(h.chunk_id, h.rerank) for h in ranked[:5]])
                 st.debug(before=before, after=[h.chunk_id for h in ranked[:top_n]])
                 return ranked[:top_n] + hits[len(cands):]
             except LLMError as e:
@@ -448,8 +479,8 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
                 scores = [float(x) for x in ce.predict(pairs)]
                 for h, sc in zip(cands, scores):
                     h.rerank = round(sc, 4)
-                ranked = sorted(cands, key=lambda h: -(h.rerank or 0))
-                st.note(top=[(h.chunk_id, h.rerank) for h in ranked[:5]])
+                ranked = final_order(cands, w_fused)
+                st.note(fused_w=w_fused, top=[(h.chunk_id, h.rerank) for h in ranked[:5]])
                 st.debug(before=before, after=[h.chunk_id for h in ranked[:top_n]])
                 return ranked[:top_n] + hits[len(cands):]
             st.note(error=_CE_CACHE.get(ce_model + ":error", "unavailable"), fallback="local")
@@ -482,9 +513,11 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
                 rest = [h for i, h in enumerate(cands) if i not in seen]
                 for h in rest:
                     h.rerank = 0.0
-                st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), order=order[:top_n])
-                st.debug(before=before, after=[h.chunk_id for h in (ranked + rest)[:top_n]])
-                return (ranked + rest)[:top_n] + hits[len(cands):]
+                # rerank_fused_w 가 0 이면 LLM 이 준 순서 그대로, 0보다 크면 융합·부스트를 섞는다
+                out = final_order(cands, w_fused, ranked=(ranked + rest)) if w_fused > 0 else (ranked + rest)
+                st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), order=order[:top_n], fused_w=w_fused)
+                st.debug(before=before, after=[h.chunk_id for h in out[:top_n]])
+                return out[:top_n] + hits[len(cands):]
             except (LLMError, ValueError) as e:
                 st.note(error=str(e)[:200], fallback="local")
     elif want_llm and llm is not None and not llm.available:
@@ -494,7 +527,8 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
     elif method == "local":
         prof.skipped("rerank_llm", "rerank_method=local")
     w_cover, w_cons, w_len, w_head = T.get("rerank_w_cover"), T.get("rerank_w_consensus"), T.get("rerank_w_length"), T.get("rerank_heading_bonus")
-    with prof.stage("rerank_local", candidates=len(cands), weights={"cover": w_cover, "consensus": w_cons, "length": w_len, "heading": w_head}) as st:
+    with prof.stage("rerank_local", candidates=len(cands),
+                    weights={"cover": w_cover, "consensus": w_cons, "length": w_len, "heading": w_head, "fused": w_fused}) as st:
         kws = [k for k in keywords(query)]
         n_src = max(1, len(set(s for h in cands for s in h.ranks)))
         for h in cands:
@@ -514,8 +548,8 @@ def rerank(hits: List[Hit], chunks: Dict[str, Any], query: str, llm: Optional[Ba
                 ext_ranks = [r for n_, r in h.ranks.items() if n_.startswith("ext_")]
                 consensus = 1.0 / float(min(ext_ranks)) if ext_ranks else 0.0
             h.rerank = round(w_cover * cover + w_cons * consensus + w_len * min(1.0, len(c["text"]) / 400.0) + (w_head if head_hit else 0.0), 4)
-        ranked = sorted(cands, key=lambda h: (-(h.rerank or 0), -h.fused))
-        st.note(top=[(h.chunk_id, h.rerank) for h in ranked[:5]], keywords=kws)
+        ranked = final_order(cands, w_fused)
+        st.note(top=[(h.chunk_id, h.rerank) for h in ranked[:5]], keywords=kws, fused_w=w_fused)
         st.debug(before=before, after=[h.chunk_id for h in ranked[:top_n]],
                  moved=sum(1 for i, h in enumerate(ranked[:top_n]) if i >= len(before) or before[i] != h.chunk_id))
         return ranked[:top_n] + hits[len(cands):]

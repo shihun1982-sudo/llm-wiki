@@ -7,6 +7,11 @@
 - 직전 세션의 검증 기록: [VERIFICATION_0915.md](VERIFICATION_0915.md) (결함 29건과 수정 내역)
 - 이 세션에서 새로 만든 문서: [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) (자동 생성)
 
+> **갱신 (2026-09-16, 이어받은 세션)** — 아래 §2 의 남은 작업 **2.1~2.5 를 모두 끝냈다.**
+> 결과와 그 과정에서 찾은 결함(제품 2건 · 하네스 7건)은 **[VERIFICATION_0916.md](VERIFICATION_0916.md)** 에 있다.
+> 현재 상태: 단위 163/163 · CLI 222/222 · Web 259/259 · **MCP 종단 98/98** · UI 배선 OK · 브라우저 OK.
+> 아래 §2 본문은 "무엇이 왜 남아 있었는가" 의 기록으로 남겨 둔다 — 각 항목의 결론은 소제목의 ✅ 줄을 본다.
+
 ---
 
 ## 1. 이 세션에서 완료한 것
@@ -72,6 +77,11 @@ Web UI 쪽도 체크 시 토글 반영 · 해제 시 원복 · `by-preset` 표�
 
 ### 2.1 `verify_mcp.py` 를 완주시키기 — 먼저 하네스의 결함을 고칠 것
 
+> ✅ **완료 (2026-09-16)** — 98/98 통과. 아래 1번 외에 하네스 결함이 6건 더 있었고, **제품 결함도 2건** 나왔다
+> (stdio `Content-Length` 가 한글 본문에서 다음 메시지를 삼키던 것, `method` 없는 본문을 조용히 버려
+> 클라이언트가 응답을 기다리며 멈추던 것). 전부 [VERIFICATION_0916.md](VERIFICATION_0916.md) §1 에 있다.
+> 아래 3번(느림)은 `--quick`(87항목) 으로 갈음했다 — mock LLM 환경에서는 전체도 수십 초라 전용 코퍼스까지는 필요 없었다.
+
 **알려진 결함 (제품이 아니라 하네스의 문제).**
 
 1. `Stdio._read()` 가 `self.proc.stdout.readline()` 을 그대로 부른다. `readline()` 은 블로킹이라
@@ -102,6 +112,12 @@ Web UI 쪽도 체크 시 토글 반영 · 해제 시 원복 · `by-preset` 표�
 
 ### 2.2 MCP 문서 갱신
 
+> ✅ **완료** — [MCP.md](MCP.md) 는 §2 도구 12개와 힌트 열, §2.1 인자 검증(메시지 예 표), §2.2 annotations·버전 협상·프레이밍,
+> §2.3 키를 클라이언트마다, §3.1 429/503 의 뜻, §4 `mcp --doctor`(실제 출력 + 항목별 대처), §5 문제 해결 확장,
+> §6 다른 RAG 를 붙이는 세 방법(비교표), §6.1 플러그인 작성법, §7 검증으로 다시 썼다.
+> [RAG_FEDERATION.md](RAG_FEDERATION.md) 는 그림의 도구 수·인자 검증 줄, §6 검증(=`verify_mcp.py` 가 확장 경로를 종단으로 돈다),
+> §7 첫 행(doctor) 을 넣었다. [BRINGUP_GUIDE.md](BRINGUP_GUIDE.md) §4.5/§4.6 에 "연결 확인" 단계로 doctor 를 넣었다.
+
 [docs/MCP.md](MCP.md) 와 [docs/RAG_FEDERATION.md](RAG_FEDERATION.md) 에 아직 **1.3 의 개선이 반영되어 있지 않다.**
 넣어야 할 것:
 
@@ -122,6 +138,11 @@ Web UI 쪽도 체크 시 토글 반영 · 해제 시 원복 · `by-preset` 표�
 
 ### 2.3 최적화 묶음 문서화 마무리
 
+> ✅ **완료** — [BRINGUP_GUIDE.md](BRINGUP_GUIDE.md) §7.0 은 이미 있었고, [ANALYSIS_MODE.md](ANALYSIS_MODE.md) §3-3 에
+> "리포트만으로는 부족한 이유 → `optimize` 묶음" 안내를, [WEB_UI.md](WEB_UI.md) §5 에 📦 버튼 3종과
+> "📊 리포트와 📦 묶음의 차이" 를 넣었다. 더해서 `verify_web.py` 에 `/api/optimize/guide`·`/api/optimize/bundle`
+> 4항목을 추가해 그 버튼들이 부르는 경로가 검증에 들어오게 했다.
+
 README 는 이미 갱신했다(문서 안내 §0 의 읽는 순서 행과 문서 설명, §4 CLI 표의 `arch doc`/`optimize`/`mcp --doctor`/검증 스크립트).
 남은 것:
 
@@ -130,6 +151,12 @@ README 는 이미 갱신했다(문서 안내 §0 의 읽는 순서 행과 문서
 - [WEB_UI.md](WEB_UI.md) Ask 절에 📦 버튼 3종 설명
 
 ### 2.4 전체 검증 스위트 재실행
+
+> ✅ **완료** — 결과는 [VERIFICATION_0916.md](VERIFICATION_0916.md) §0·§2.
+> 아래에서 걱정한 `verify_buttons.py` 의 새 버튼 문제는 **수집 대상이 `index.html` 의 정적 `<button id=…>` 뿐**이라
+> 동적으로 그려지는 Ask 패널 버튼(`qa-*`·`<a class="button">`)은 애초에 잡히지 않는 것이었다. 넓히는 대신
+> 범위를 스크립트 주석에 명시하고, 그 버튼들이 부르는 API 를 `verify_web.py` 로 옮겨 확인했다(§2.3).
+> 참고: `run.bat test` 는 프로젝트 루트에서 `.\run.bat test` 로 부르거나 `python -m unittest discover -s tests` 를 쓴다.
 
 이 세션에서 `llmwiki/mcp.py`·`llmwiki/analysis.py`·`llmwiki/web/server.py`·`llmwiki/cli.py`·
 `llmwiki/web/static/js/ask.js`·`tools/verify/verify_buttons.py` 를 고쳤다. 아래를 순서대로 돌려
@@ -151,6 +178,12 @@ python tools\verify\verify_mcp.py --quick :: 2.1 의 결함을 고친 뒤
 잡히지 않는다 — 수집 대상을 넓히든지, 문서에 "이 둘은 링크라 별도 확인" 이라고 적을 것.
 
 ### 2.5 사용자가 물었지만 아직 답하지 못한 것
+
+> ✅ **답함 (2026-09-16)** — 결론: **사용법은 맞다.** 다만 화면이 읽히지 않는 세 가지를 고쳤다 —
+> (1) "원 판정 sufficient + 기대 문서 미해결" 이 모순처럼 보이던 것을 한 문장 안내와 배너로,
+> (2) 목표 청크가 수십 개일 때 같은 표가 반복되던 것을 `forensic_targets_shown`(3) 만 펼치도록,
+> (3) 수정안을 confidence 내림차순으로 정렬하고 `forensic_suggestion_min_confidence`(0.5) 미만은 접도록.
+> 두 임계값은 `tuning.json` 키다. 상세 [VERIFICATION_0916.md](VERIFICATION_0916.md) §3 · [FORENSIC.md](FORENSIC.md) §2.4.
 
 **"기대 결과 포렌식 화면을 이렇게 쓰는 게 맞는가, 개선할 점은?"** (Ask 탭에서 기대 문서 ID `ISSUE-3456`,
 기대 용어 `ICR`, 메모, "수정안을 제안 큐(HITL)에 등록" 체크 후 분석을 실행한 화면에 대한 질문)

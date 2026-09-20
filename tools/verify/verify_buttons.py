@@ -11,6 +11,14 @@
 **격리 환경에서 돈다.** 설정·DB 를 임시 폴더로 복사하고 mock LLM 으로 서버를 띄우므로,
 저장·초기화 같은 버튼을 눌러도 실제 데이터가 바뀌지 않는다.
 
+**무엇을 안 보나 (의도적)** — 대상은 `index.html` 안의 `<button id=…>` 이다. 따라서:
+  - 질의·분석 뒤에 JS 가 만들어 넣는 Ask 패널 버튼(`qa-*`: md 열기·다운로드·🧠 LLM 소견·📦 최적화 자료 묶음 …)과
+    링크 모양 버튼(`<a class="button">`: 묶음 다운로드·손잡이 지도)은 여기서 수집되지 않는다.
+    이들은 `verify_ui_wiring.py`(동적 id 와 핸들러 배선) + `verify_web.py`(그 버튼이 부르는 `/api/analysis`,
+    `/api/optimize/bundle|guide` 응답) 로 나누어 확인한다.
+  - 즉 "모든 버튼" 은 **정적 버튼 전수** 를 뜻한다. 동적 버튼을 여기서도 누르려면 먼저 질의를 실행해야 하는데
+    (`btn-query` 는 HEAVY), 그러면 이 스크립트가 매번 질의 시간을 쓰게 된다.
+
 실행:
     python tools/verify/verify_buttons.py              # 전체 (무거운 것 제외)
     python tools/verify/verify_buttons.py --only evolve,memory
@@ -175,6 +183,75 @@ def isolated_env(port: int, extra_cfg=None, extra_files=None, serve: bool = True
     return tmp, env, proc
 
 
+# 질의를 한 번 실행한 뒤에만 존재하는 버튼들 (Ask 패널). id 또는 CSS 선택자.
+#   check: 눌러서 '화면이 바뀌었는가' 를 판정할 표현식 (없으면 오류 없음 + 무언가 변함)
+DYNAMIC = [
+    ("모든 단계 펼치기", "#trace [data-tr='open']", "document.querySelectorAll('#trace .tr-row.open').length > 0"),
+    ("모두 접기", "#trace [data-tr='close']", "document.querySelectorAll('#trace .tr-row.open').length === 0"),
+    ("trace 복사", "#trace [data-tr='copy']", ""),
+    ("근거 문단 펼치기", "#hits .hit .t", "document.querySelectorAll('#hits .hit.open').length > 0"),
+    ("내 지난 요청 열기", "#myreq-box > summary", "document.querySelector('#myreq-list').innerHTML.length > 10"),
+    ("내 지난 요청 새로고침", "#btn-myreq-refresh", "document.querySelector('#myreq-list').innerHTML.length > 10"),
+    # '챗' 하나로 2줄째(입력칸)와 접속자 아이콘을 함께 켜고 끈다
+    ("챗 끄기 (입력칸·아이콘 함께)", "#btn-chat-toggle",
+     "document.querySelector('#chat-row2').classList.contains('hidden') && "
+     "document.querySelectorAll('#people-layer .person').length === 0"),
+    ("챗 켜기", "#btn-chat-toggle", "!document.querySelector('#chat-row2').classList.contains('hidden')"),
+    # 보낸 말은 채팅창이 아니라 **내 아이콘 위 말풍선**으로 뜬다 (아이폰 메시지 모양)
+    ("채팅 보내기 → 말풍선", "#btn-chat-send",
+     "!!document.querySelector('#people-layer .person.me .bubble') && "
+     "document.querySelector('#people-layer .person.me .bubble').textContent.length > 0"),
+    ("게시 대화상자 열기", "#btn-chat-board", "!document.querySelector('#post-modal').classList.contains('hidden')"),
+    ("게시 대화상자에 작업 목록", "#post-modal", "document.querySelectorAll('#cp-request option').length >= 1"),
+    ("게시 대화상자 닫기", "#btn-cp-cancel", "document.querySelector('#post-modal').classList.contains('hidden')"),
+    ("게시판 열기", "#btn-chat-board", "!document.querySelector('#post-modal').classList.contains('hidden')"),
+    ("게시판으로 이동", "#btn-cp-board", "document.querySelector('#tab-board').classList.contains('active')"),
+    ("게시판 새로고침", "#btn-board-refresh", "document.querySelector('#board-list').innerHTML.length > 5"),
+]
+
+
+def click_dynamic(page, wait: float):
+    """질의를 한 번 돌린 뒤 Ask 패널의 동적 버튼을 눌러 본다. (verdict, tab, name, why, state) 목록 반환."""
+    out = []
+    print("\n동적 버튼 (질의 뒤에 생기는 것들)\n")
+    page.eval("location.hash='#ask/query'; 'ok'")
+    page.eval("new Promise(r=>setTimeout(()=>r(1), 1500))")
+    page.eval("(function(){var q=document.getElementById('q'); if(q) q.value='ISSUE-2001 의 원인과 수정 CL 은?'; return 'ok';})()")
+    page.eval("(function(){var b=document.getElementById('btn-query'); if(b) b.click(); return 'ok';})()")
+    # 질의가 끝나 결과 영역이 보일 때까지 (mock LLM 이라 보통 1~3초)
+    for _ in range(40):
+        vis = page.eval("(function(){var e=document.getElementById('query-out'); return !!e && !e.classList.contains('hidden');})()")
+        if vis is True:
+            break
+        page.eval("new Promise(r=>setTimeout(()=>r(1), 1000))")
+    if page.eval("(function(){var e=document.getElementById('query-out'); return !!e && !e.classList.contains('hidden');})()") is not True:
+        print("  (질의 결과가 나오지 않아 동적 버튼 검사를 건너뜁니다)")
+        return out
+    # 채팅 입력칸은 비어 있으면 아무 일도 안 하므로 미리 채운다
+    page.eval("(function(){var t=document.getElementById('chat-text'); if(t) t.value='버튼 검증'; return 'ok';})()")
+    for name, sel, check in DYNAMIC:
+        page.eval("window.__lwReset(); 'ok'")
+        clicked = page.eval("(function(){var b=document.querySelector(%r); if(!b) return 'no-el';"
+                            " if(b.disabled) return 'disabled'; b.click(); return 'clicked';})()" % sel)
+        page.eval("new Promise(r=>setTimeout(()=>r(1), %d))" % int(max(0.8, wait) * 1000))
+        st = page.eval("(function(){return {errs: __lw.errs.slice(0,3), fetches: __lw.fetches.length,"
+                       " toasts: __lw.toasts.slice(0,2)};})()") or {}
+        errs = st.get("errs") or []
+        ok = True if not check else page.eval(check)
+        verdict, why = "OK  ", ""
+        if clicked != "clicked":
+            verdict, why = "FAIL", str(clicked)
+        elif errs:
+            verdict, why = "FAIL", "오류 " + str(errs[0])[:90]
+        elif ok is not True:
+            verdict, why = "FAIL", "기대 조건 불충족 (%s)" % check[:60]
+        out.append((verdict, "query(동적)", name, why, st))
+        print("%s %-10s %-22s fetch=%-2s %s%s" % (verdict, "query", name, st.get("fetches"),
+                                                  (("알림: " + str((st.get("toasts") or [""])[0])[:36]) if st.get("toasts") else ""),
+                                                  ("  " + why) if why else ""))
+    return out
+
+
 def main(argv=None) -> int:
     if not EDGE:
         print("BUTTONS SKIP: Edge/Chrome 을 찾지 못함 (LLMWIKI_BROWSER 로 지정)")
@@ -307,6 +384,12 @@ def main(argv=None) -> int:
             print("%s %-10s %-22s fetch=%-2s dom=%+-6d %s%s" % (
                 verdict, tab, bid, st.get("fetches"), (st.get("len") or 0) - (before or 0),
                 (("알림: " + str((st.get("toasts") or [""])[0])[:40]) if st.get("toasts") else ""), ("  " + why) if why else ""))
+        # ---------------- 동적 버튼: 질의한 **뒤에** JS 가 그려 넣는 것들 ----------------
+        # 정적 수집(index.html 의 <button id=…>)에 안 잡히므로 여기서 따로 누른다.
+        # 복사·펼치기·접기처럼 화면만 바꾸는 버튼은 fetch 가 없어도 정상이다 → 판정 기준이 다르다.
+        if not ns.live:
+            rows += click_dynamic(page, ns.wait)
+
         bad = [r for r in rows if r[0] == "FAIL"]
         print("\n버튼 %d개 중 %d개 통과 · 실패 %d개" % (len(rows), len(rows) - len(bad), len(bad)))
         for r in bad:

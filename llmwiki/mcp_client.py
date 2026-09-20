@@ -96,14 +96,82 @@ def sources_path() -> str:
     return path_for("mcp_sources")
 
 
-def load_sources() -> Dict[str, Dict[str, Any]]:
+#: `retrieve`/`ingest`/`enrich` 는 **여러 개**를 둘 수 있어서 목록이다. 하나만 쓸 때 객체로 적는 것이
+#: 자연스러워 보이므로 실수가 잦다 — 그대로 두면 dict 를 순회해 **문자열 키**가 spec 자리에 들어가고
+#: `'str' object has no attribute 'get'` 같은 엉뚱한 오류로 나타난다. 읽을 때 한 번에 바로잡는다.
+_SPEC_LISTS = ("retrieve", "ingest", "enrich")
+
+
+def normalize_source(name: str, cfg: Any) -> Dict[str, Any]:
+    """소스 설정 하나를 안전한 형태로 다듬는다. 잘못된 형태는 **어디가 잘못됐는지** 말해 준다."""
+    if not isinstance(cfg, dict):
+        raise ValueError("mcp_sources.json: 소스 '%s' 는 객체여야 합니다 (받은 값: %s)" % (name, type(cfg).__name__))
+    out = dict(cfg)
+    for key in _SPEC_LISTS:
+        v = out.get(key)
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            out[key] = [v]                     # 하나만 적은 흔한 형태를 받아 준다
+            continue
+        if not isinstance(v, list):
+            raise ValueError("mcp_sources.json: 소스 '%s' 의 '%s' 는 목록이어야 합니다 (받은 값: %s)"
+                             % (name, key, type(v).__name__))
+        bad = [i for i, sp in enumerate(v) if not isinstance(sp, dict)]
+        if bad:
+            raise ValueError("mcp_sources.json: 소스 '%s' 의 '%s'[%s] 항목은 객체여야 합니다 "
+                             "(목록 안에는 {\"tool\": …} 형태가 들어갑니다)" % (name, key, ", ".join(str(i) for i in bad)))
+        miss = [i for i, sp in enumerate(v) if not str(sp.get("tool") or "").strip()]
+        if miss:
+            raise ValueError("mcp_sources.json: 소스 '%s' 의 '%s'[%s] 에 'tool' 이 없습니다"
+                             % (name, key, ", ".join(str(i) for i in miss)))
+    return out
+
+
+#: 마지막으로 읽을 때 형식이 잘못돼 **건너뛴** 소스 {이름: 이유}. doctor·CLI·Web 이 보여 준다.
+_LOAD_ERRORS: Dict[str, str] = {}
+
+
+def source_errors() -> Dict[str, str]:
+    """형식이 잘못돼 건너뛴 소스와 그 이유 (마지막 load_sources 기준)."""
+    return dict(_LOAD_ERRORS)
+
+
+def load_sources(strict: bool = False) -> Dict[str, Dict[str, Any]]:
+    """소스 설정을 읽어 형태를 다듬는다.
+
+    `strict=False`(기본): 형식이 잘못된 소스는 **건너뛰고** 이유를 `source_errors()` 에 남긴다.
+    여러 사람이 쓰는 서버에서 소스 하나의 오타가 **모두의 질의를 멈추게 해서는 안 되기** 때문이다.
+    `strict=True`: 저장·점검처럼 "지금 이 파일이 올바른가" 를 묻는 자리에서 쓴다 (예외를 던진다).
+    """
     p = sources_path()
     if not os.path.exists(p):
         save_sources(DEFAULT_SOURCES)
-        return {k: v for k, v in json.loads(json.dumps(DEFAULT_SOURCES)).items() if not k.startswith("_")}
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return {k: v for k, v in data.items() if not k.startswith("_")}
+        data = json.loads(json.dumps(DEFAULT_SOURCES))
+    else:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("mcp_sources.json 의 최상위는 {소스이름: 설정} 객체여야 합니다")
+    out: Dict[str, Dict[str, Any]] = {}
+    errs: Dict[str, str] = {}
+    for k, v in data.items():
+        if k.startswith("_"):
+            continue
+        try:
+            out[k] = normalize_source(k, v)
+        except ValueError as e:
+            if strict:
+                raise
+            errs[k] = str(e)
+            try:
+                from . import logging_setup as _ls
+                _ls.log("error", "mcp_sources: 소스 '%s' 를 건너뜁니다 — %s" % (k, e), "mcp")
+            except Exception:
+                pass
+    _LOAD_ERRORS.clear()
+    _LOAD_ERRORS.update(errs)
+    return out
 
 
 def save_sources(data: Dict[str, Any]) -> str:

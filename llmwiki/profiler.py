@@ -66,6 +66,7 @@ class Stage:
         self.children: List["Stage"] = []
         self.error: Optional[str] = None
         self.enabled = True
+        self.replayed = False        # 계산하지 않고 저장해 둔 결과를 재생했다 (단계 재실행 — rerun.py)
         self.logs: List[str] = []
         self._c0 = _snapshot()
         self.counters: Dict[str, float] = {}
@@ -103,6 +104,8 @@ class Stage:
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {"name": self.name, "ms": round(self.ms, 2), "self_ms": round(self.self_ms, 2),
                              "offset_ms": round(self.offset_ms, 2), "enabled": self.enabled}
+        if self.replayed:
+            d["replayed"] = True
         if self.meta:
             d["meta"] = jsonable(self.meta)
         if self.counters:
@@ -225,6 +228,19 @@ class Profiler:
         st.enabled = False
         st.t1 = st.t0
         self._stack[-1].children.append(st)
+        self._emit(st)
+
+    def replayed(self, name: str, source: str = "", **meta: Any) -> None:
+        """이 단계는 계산하지 않고 **저장해 둔 결과를 재생**했다 (단계 재실행).
+
+        `skipped` 와 달리 `enabled` 는 True 로 둔다 — 그 단계의 결과는 실제로 쓰였기 때문이다.
+        꺼져 있어서 건너뛴 것과 재생한 것을 화면에서 구분할 수 있어야 한다.
+        """
+        st = Stage(name, dict(meta, replay_source=source or "checkpoint"), debug=self.debug, t_origin=self.root.t0)
+        st.replayed = True
+        st.t1 = st.t0
+        with self._lock:
+            self._stack[-1].children.append(st)
         self._emit(st)
 
     @property

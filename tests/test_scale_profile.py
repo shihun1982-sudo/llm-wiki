@@ -180,6 +180,9 @@ class ScaleProfileTest(unittest.TestCase):
     # ---- 성능/토큰 토글 + 프로파일/디버그 ----
     def test_query_perf_toggles_and_profile(self):
         self.p.build(full=True)
+        # query_cache 는 2026-09-16 부터 **기본 off** 다 (설정을 바꿔 가며 볼 때 예전 답이 돌아와서).
+        # 이 테스트는 캐시 동작 자체를 보는 것이므로 명시적으로 켠다.
+        self.p.s.toggles.query_cache = True
         q = "캐파 확장 1차 투자 금액과 담당은?"
         r, t = self.p.query(q, log=False)
         st = _stages(t)

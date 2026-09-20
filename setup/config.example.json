@@ -94,6 +94,8 @@
   "embed_batch": 64,
   "debug_level": 1,
   "keep_requests": 2000,
+  "requests_dir": "data/requests",
+  "requests_keep_days": 90,
   "evolve_min_confidence": 0.8,
   "evolve_low_score_threshold": 0.05,
   "timezone": "Asia/Seoul",
@@ -161,7 +163,7 @@
     "warm_cache": true,
     "fts_optimize": true,
     "rerank_llm": true,
-    "query_cache": true,
+    "query_cache": false,
     "context_trim": true,
     "dedupe_hits": true,
     "query_rules": true,
@@ -198,7 +200,8 @@
     "profile_expansion": false,
     "build_fts": true,
     "doc_expand": true,
-    "llm_failure_report": true
+    "llm_failure_report": true,
+    "collab": true
   },
   "db_busy_timeout_s": 60.0,
   "db_pool_size": 16

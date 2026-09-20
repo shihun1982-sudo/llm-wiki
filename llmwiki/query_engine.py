@@ -118,6 +118,8 @@ class QueryEngine:
         self.pipe = pipe
         self.rounds: List[Dict[str, Any]] = []     # 검색 라운드 내부 상태 캡처 (forensic expect 가 단계별 순위를 읽는다)
         self.record_request = True                 # False 면 requests 테이블에 남기지 않는다 (forensic expect 의 재실행)
+        self.capture: Optional[Any] = None         # rerun.Capture — 단계 재실행용 중간 결과 수집 (None 이면 수집 안 함)
+        self.resume: Optional[Any] = None          # rerun.Resume — 저장해 둔 중간 결과를 재생하며 도는 중
 
     # ---------------------------------------------------------------- 진입
     def run(self, q: str, log: bool = True, debug: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -128,6 +130,11 @@ class QueryEngine:
         prof = Profiler("query", debug=s.debug_level if debug is None else debug, log=t.log_stages)
         _providers.reset_incidents()
         self.rounds = []
+        # 단계 재실행용 중간 결과 수집. 재실행 결과도 **새 request_id 로** 다시 저장한다 —
+        # 원본 파일은 건드리지 않으면서, 방금 재실행한 결과에서 또 이어서 실험할 수 있다.
+        if self.capture is None and self.record_request and getattr(t, "rerun_capture", False):
+            from . import rerun as _rerun
+            self.capture = _rerun.Capture(q, build_version=str(p.store.build_version()), run_id=prof.run_id)
         _log.log("info", "query: %s" % q[:200], "query")
         with prof.stage("sync_index") as st:
             st.note(build_version=p.store.build_version(), reloaded_caches=p.sync_with_db())
@@ -139,7 +146,11 @@ class QueryEngine:
         p._ensure_providers(prof, tuple(roles))
 
         # ---- 캐시: query_cache (메모리) → precompute (영속) ----
-        key = p._cache_key(q) if t.query_cache else None
+        # 단계 재실행 중에는 캐시를 **읽지 않는다**. 재실행은 "설정을 바꿔 가며 뒤 단계를 다시 본다" 는 것인데,
+        # 캐시가 맞으면 아무 단계도 돌지 않은 예전 답이 그대로 돌아와 "눌러도 그대로다" 가 된다.
+        if self.resume is not None:
+            prof.skipped("cache_hit", "단계 재실행 — 캐시를 쓰지 않는다")
+        key = p._cache_key(q) if (t.query_cache and self.resume is None) else None
         cached = p.qcache_get(key) if key else None
         if cached:
             with prof.stage("cache_hit", key=key[:12]) as st:
@@ -149,7 +160,7 @@ class QueryEngine:
             res["request_id"] = p.store.log_request("query", "[cache] " + q, trace, {"cached_from": cached["result"].get("request_id")}, res.get("config"), None, keep=s.keep_requests)
             return res, trace
         pkey = None
-        if t.precompute:
+        if t.precompute and self.resume is None:
             from . import precompute as _pc
             pkey = _pc.cache_key(q, p.store.build_version(), p.answer_signature())
             hit = _pc.get_cached(p.store, pkey)
@@ -164,10 +175,19 @@ class QueryEngine:
                 pass
 
         # ---- 계획 ----
+        # 단계 재실행(rerun): 재시작점이 '계획' 뒤라면 계획 단계들은 **계산하지 않고 저장해 둔 값을 재생**한다.
+        # 특히 query_expand 는 LLM 호출이라 여기서 아끼는 시간과 토큰이 크다.
+        plan_replay: Optional[Dict[str, Any]] = None
+        if self.resume is not None:
+            plan_replay = self.resume.get("plan")
         plan: Dict[str, Any] = {}
         q_search = q
         scope = None
-        if t.time_scope:
+        if plan_replay is not None:
+            q_search = str(plan_replay.get("q_search") or q)
+            scope = plan_replay.get("scope")
+            prof.replayed("time_scope", query=q_search, expr=(scope or {}).get("expr") if scope else None)
+        elif t.time_scope:
             with prof.stage("time_scope", timezone=s.timezone) as st:
                 scope = _time.parse(q, s.timezone, s.week_start)
                 if scope:
@@ -179,7 +199,10 @@ class QueryEngine:
             prof.skipped("time_scope")
         plan["time_scope"] = scope
         qr = None
-        if t.query_rules:
+        if plan_replay is not None:
+            qr = plan_replay.get("qr")
+            prof.replayed("query_rules", fired=len((qr or {}).get("fired") or []), alt=len((qr or {}).get("alt_queries") or []))
+        elif t.query_rules:
             from . import query_rules as _qr
             with prof.stage("query_rules") as st:
                 qr = _qr.expand(q_search, T.get("syn_w"), T.get("related_w"), T.get("acronym_phrase"))
@@ -193,7 +216,11 @@ class QueryEngine:
 
         weights = {"fts": 1.0, "vector": 1.0, "graph": 1.0}
         route_info: Dict[str, Any] = {}
-        if t.router:
+        if plan_replay is not None:
+            route_info = dict(plan_replay.get("route_info") or {})
+            weights = dict(route_info.get("weights") or weights)
+            prof.replayed("router", intent=route_info.get("intent"), doc_types=route_info.get("doc_types"))
+        elif t.router:
             with prof.stage("router") as st:
                 route_info = route(q_search, p.store)
                 route_info["doc_types"] = doc_type_hints(q)
@@ -220,7 +247,11 @@ class QueryEngine:
 
         alt_llm: List[str] = []
         sub_queries: List[str] = []
-        if t.query_expand or t.query_decompose:
+        if plan_replay is not None:
+            alt_llm = [x for x in (plan_replay.get("alt_llm") or []) if isinstance(x, str)]
+            sub_queries = [x for x in (plan_replay.get("sub_queries") or []) if isinstance(x, str)]
+            prof.replayed("query_expand", alt_queries=alt_llm, sub_queries=sub_queries)
+        elif t.query_expand or t.query_decompose:
             rl = p.llm_for("expand")
             if rl.available:
                 with prof.stage("query_expand", model=rl.model, n=T.get("query_expand_n"), decompose=t.query_decompose) as st:
@@ -242,7 +273,10 @@ class QueryEngine:
         else:
             prof.skipped("query_expand")
         pin_info: Dict[str, Any] = {"weights": {}, "inject": [], "matched": []}
-        if t.pins:
+        if plan_replay is not None:
+            pin_info = dict(plan_replay.get("pin_info") or pin_info)
+            prof.replayed("pins", matched=len(pin_info.get("matched") or []), inject=len(pin_info.get("inject") or []))
+        elif t.pins:
             from . import pins as _pins
             with prof.stage("pins") as st:
                 try:
@@ -262,9 +296,20 @@ class QueryEngine:
             from . import memory as _mem
             feedback_w = _mem.feedback_weights(p.store, T.get("memory_half_life_days"))
 
+        if self.capture is not None:
+            # 계획은 **통째로** 남긴다. plan["query_rules"] 는 화면용으로 추려진 것이라
+            # 재생에 필요한 fts_query/seeds 가 빠져 있다.
+            self.capture.put("plan", {"q_search": q_search, "scope": scope, "qr": qr, "route_info": route_info,
+                                      "alt_llm": alt_llm, "sub_queries": sub_queries, "pin_info": pin_info,
+                                      "feedback_w": feedback_w})
+
         # ---- 검색 라운드 ----
         base_cfg = RoundConfig()
-        R = self._retrieve(prof, q, q_search, qr, route_info, weights, alt_llm + sub_queries, pin_info, scope, feedback_w, base_cfg)
+        if self.resume is not None and self.resume.wants("ctx"):
+            # '답변부터' · '검증부터' — 검색과 컨텍스트 구성을 통째로 재생한다 (여기가 가장 크게 아끼는 지점)
+            R = self._replay_retrieval(prof, base_cfg, q_search)
+        else:
+            R = self._retrieve(prof, q, q_search, qr, route_info, weights, alt_llm + sub_queries, pin_info, scope, feedback_w, base_cfg)
         t_start = time.perf_counter()
 
         # ---- 근거 판정 + fallback ----
@@ -272,9 +317,14 @@ class QueryEngine:
         llm_ev: Optional[Dict[str, Any]] = None
         verdict = "sufficient"
         rounds: List[Dict[str, Any]] = []
+        replay_ctx = bool(self.resume is not None and self.resume.wants("ctx"))
         if t.evidence_check:
             ev, llm_ev, verdict = self._assess(prof, q_search, R, stage="evidence_check")
-            if verdict != "sufficient" and t.fallback_loop:
+            # 재생 중에는 fallback 루프를 돌지 않는다: fallback 은 **검색을 다시 하는** 것이라
+            # "앞 단계를 그대로 두고 뒤만 바꿔 본다" 는 재실행의 목적과 어긋난다.
+            if replay_ctx and verdict != "sufficient" and t.fallback_loop:
+                prof.skipped("fallback", "단계 재실행(재생) 중 — 검색을 다시 하지 않는다")
+            elif verdict != "sufficient" and t.fallback_loop:
                 tokens_fn = lambda: int(prof.summary()["llm"]["total_tokens"])  # noqa: E731
                 budget = _ev.Budget(T.get("fallback_max_attempts"), T.get("fallback_token_budget"), T.get("fallback_latency_ms"), t_start, tokens_fn)
                 levels = _ev.plan_levels(T.get("fallback_levels"), t)
@@ -304,9 +354,16 @@ class QueryEngine:
             prof.skipped("evidence_check")
 
         final, chunks, ctx, graph_res, fts_snips = R["final"], R["chunks"], R["ctx"], R["graph_res"], R["fts_snips"]
+        if self.capture is not None:
+            self.capture.put("evidence", {"verdict": verdict, "ev": ev, "llm_ev": llm_ev, "rounds": rounds})
         # ---- 답변 ----
         al = p.llm_for("answer")
-        if t.evidence_check and verdict == "insufficient":
+        answer_replay = self.resume.get("answer") if self.resume is not None else None
+        if answer_replay is not None:
+            # '검증부터' — 답변을 다시 만들지 않고 그때의 답변을 그대로 쓴다 (검증 설정만 바꿔 볼 때)
+            ans = dict(answer_replay)
+            prof.replayed("answer_llm", chars=len(str(ans.get("answer") or "")), mode=ans.get("mode"), model=ans.get("model"))
+        elif t.evidence_check and verdict == "insufficient":
             with prof.stage("answer_insufficient", reasons=(ev or {}).get("reasons")) as st:
                 hd = self._hit_dicts(final, chunks, ctx, fts_snips)
                 text = _ev.insufficient_text(q, ev or {}, llm_ev, rounds, hd)
@@ -321,6 +378,8 @@ class QueryEngine:
                                   meta=p.store.doc_meta_map(), graph=graph_res)
             if verdict == "weak" and ans["mode"] == "llm":
                 ans["answer"] = "> ⚠ 근거가 약합니다 (%s). 아래 답변은 제한된 근거에 기반합니다.\n\n" % "; ".join((ev or {}).get("reasons") or []) + ans["answer"]
+        if self.capture is not None:
+            self.capture.put("answer", {k: ans.get(k) for k in ("answer", "mode", "cited", "model")})
 
         # ---- claim check ----
         claims_info: Optional[Dict[str, Any]] = None
@@ -417,9 +476,21 @@ class QueryEngine:
         result["hits_brief"] = [{"chunk_id": h["chunk_id"], "n": h.get("n"), "in_context": bool(h.get("in_context")), "why": h.get("why"),
                                  "fused": h.get("fused"), "rerank": h.get("rerank")} for h in hit_dicts]
         if self.record_request:
-            result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None, keep=s.keep_requests)
+            result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None,
+                                                      keep=s.keep_requests, archive_dir=s.requests_archive_dir())
         else:
             result["request_id"] = None
+        # ---- 단계 재실행용 중간 결과 저장 ----
+        # trace 를 이미 닫은 **뒤에** 저장한다: 저장 자체는 질의 결과가 아니므로 단계로 잡히지 않아야 하고,
+        # 실패해도 (디스크 가득·권한) 질의는 성공으로 끝나야 한다.
+        if self.capture is not None:
+            from . import rerun as _rerun
+            self.capture.put("request_id", result["request_id"])
+            self.capture.put("q", q)
+            self.capture.put("tuning", _tuning.T.to_dict())
+            result["rerun"] = _rerun.save(s, result["request_id"], self.capture)
+        elif self.resume is not None:
+            result["rerun"] = self.resume.summary()
         # ---- 포렌식 자동 ----
         need_forensic = self.record_request and t.forensic_auto and (verdict != "sufficient" or ans["mode"] == "insufficient" or
                                                                      (groundedness is not None and groundedness < float(T.get("claim_min_groundedness"))))
@@ -456,6 +527,50 @@ class QueryEngine:
             except Exception:
                 pass
         return result, trace
+
+    # ---------------------------------------------------------------- 단계 재실행 (재생)
+    def _replay_retrieval(self, prof: Profiler, cfg: "RoundConfig", q_search: str) -> Dict[str, Any]:
+        """검색~컨텍스트 구성을 저장해 둔 결과로 대신한다 ('답변부터'·'검증부터' 재실행).
+
+        청크 본문은 저장돼 있지 않으므로 색인에서 id 로 다시 읽는다. 색인이 바뀌어 사라진 id 는
+        조용히 버리지 않고 trace 에 남긴다 — 근거가 줄어든 채 답이 나오면 원인을 알 수 없기 때문이다.
+        """
+        from . import rerun as _rerun
+        rp = self.resume
+        d = rp.data
+        store = self.pipe.store
+        ctx = dict(d.get("ctx") or {})
+        final = _rerun.hits_from(d, "final")
+        ext_chunks = {str(k): v for k, v in (d.get("ext_chunks") or {}).items() if isinstance(v, dict)}
+        want = [h.chunk_id for h in final] + [str(c.get("chunk_id")) for c in (ctx.get("citations") or [])]
+        want = [c for c in dict.fromkeys(want) if c and c not in ext_chunks]
+        chunks: Dict[str, Any] = dict(store.get_chunks(want))
+        chunks.update(ext_chunks)
+        missing = [c for c in want if c not in chunks]
+        prof.replayed("fts_search", source="checkpoint")
+        prof.replayed("vector_search", source="checkpoint")
+        prof.replayed("graph_search", source="checkpoint")
+        prof.replayed("rrf_fuse", source="checkpoint")
+        prof.replayed("boost", source="checkpoint")
+        prof.replayed("rerank", source="checkpoint", n=len(final))
+        prof.replayed("context", source="checkpoint", chars=ctx.get("chars"), citations=len((ctx.get("citations") or [])),
+                      missing_chunks=missing[:5] or None)
+        rp.used["ctx"] = True
+        if self.capture is not None:
+            # 재생한 값도 그대로 다시 저장해 둔다 — 이 재실행 결과에서 또 이어서 실험할 수 있게.
+            for k in ("lists", "list_weights", "fts_snips", "graph_res", "ext_chunks", "fused", "boosted", "reranked", "final", "boost_stats"):
+                if d.get(k) is not None:
+                    self.capture.put(k, d[k])
+            self.capture.put("ctx", ctx)
+        R = {"lists": d.get("lists") or {}, "weights": d.get("list_weights") or {}, "hits": final, "final": final,
+             "chunks": chunks, "ctx": ctx, "graph_res": d.get("graph_res") or {}, "fts_snips": d.get("fts_snips") or {},
+             "cfg": cfg, "boost_stats": d.get("boost_stats") or {}, "expand": [], "expand_info": {}, "ext_chunks": ext_chunks,
+             "fused_order": [h["chunk_id"] for h in (d.get("fused") or [])], "boost_order": [h["chunk_id"] for h in (d.get("boosted") or [])],
+             "rerank_before": [h["chunk_id"] for h in (d.get("boosted") or [])], "final_order": [h.chunk_id for h in final],
+             "context_ids": [c.get("chunk_id") for c in (ctx.get("citations") or [])], "q_search": q_search,
+             "replayed": True, "missing_chunks": missing}
+        self.rounds.append(R)
+        return R
 
     # ---------------------------------------------------------------- 보조
     def _expand_now(self, prof: Profiler, q_search: str, s: Any, T: Any) -> List[str]:
@@ -621,6 +736,14 @@ class QueryEngine:
         p = self.pipe
         s, t, T = p.s, p.s.toggles, _tuning.T
         store = p.store
+        # 단계 재실행: 첫 라운드에서만 재생한다. fallback 라운드는 **다시 계산**해야
+        # 바뀐 설정(넓힌 k, 다른 확장 질의)이 반영된다.
+        rp = self.resume
+        if rp is not None:
+            if rp.round > 0:
+                rp = None
+            else:
+                self.resume.round += 1
         lists: Dict[str, List[Tuple[str, float]]] = {}
         w = dict(weights)
         k_fts, k_vec, k_gr = int(s.top_k_fts * cfg.k_mult), int(s.top_k_vector * cfg.k_mult), int(s.top_k_graph * cfg.k_mult)
@@ -637,7 +760,22 @@ class QueryEngine:
                 seen.add(txt)
                 alts.append((txt, wgt, kind))
         alts = alts[:6]
-        if t.fts:
+        # 채널 검색을 통째로 재생할 것인가 (융합·부스트·리랭크부터 다시 돌 때)
+        lists_replay = rp.get("lists") if rp is not None else None
+        graph_replay: Dict[str, Any] = {}
+        ext_replay: Dict[str, Any] = {}
+        if lists_replay is not None:
+            lists = {str(k): [(str(c), float(sc)) for c, sc in v] for k, v in lists_replay.items() if isinstance(v, list)}
+            w = {str(k): float(v) for k, v in (rp.data.get("list_weights") or {}).items()} or w
+            fts_snips = {str(k): str(v) for k, v in (rp.data.get("fts_snips") or {}).items()}
+            graph_replay = rp.data.get("graph_res") or {}
+            ext_replay = rp.data.get("ext_chunks") or {}
+            prof.replayed("fts_search", channels=sorted(lists), hits={k: len(v) for k, v in lists.items()})
+            prof.replayed("vector_search")
+            prof.replayed("graph_search", chunks=len(graph_replay.get("chunks") or []))
+        if lists_replay is not None:
+            pass
+        elif t.fts:
             # 원 질의는 항상 그대로 검색 (규칙/LLM 확장은 별도 리스트로 융합 → 원 질의 신호를 희석하지 않음)
             rows = fts_search(store, q_search, k_fts, syn, prof, mode=cfg.fts_mode)
             lists["fts"] = [(cid, sc) for cid, sc, _ in rows]
@@ -663,15 +801,19 @@ class QueryEngine:
                 w["fts_rel%d" % (i + 1)] = w.get("fts", 1.0) * wgt
         else:
             prof.skipped("fts_search")
-        if t.vector:
+        if lists_replay is not None:
+            pass
+        elif t.vector:
             lists["vector"] = vector_search(store, p.embedder, q_search, k_vec, prof)
             for i, (aq, wgt, kind) in enumerate(alts[:3]):
                 lists["vector_alt%d" % (i + 1)] = vector_search(store, p.embedder, aq, k_vec, prof)
                 w["vector_alt%d" % (i + 1)] = w.get("vector", 1.0) * wgt
         else:
             prof.skipped("vector_search")
-        graph_res: Dict[str, Any] = {}
-        if t.graph:
+        graph_res: Dict[str, Any] = dict(graph_replay)
+        if lists_replay is not None:
+            pass
+        elif t.graph:
             seeds = [(e, sc) for e, sc in route_info.get("entities", [])] if route_info.get("entities") else []
             if qr and qr["seeds"]:
                 idx = {n: e["entity_id"] for e in store.entity_index() for n in e["names"]}
@@ -683,15 +825,20 @@ class QueryEngine:
             lists["graph"] = graph_res["chunks"]
         else:
             prof.skipped("graph_search")
-        if t.doc_vector:
+        if lists_replay is not None:
+            pass
+        elif t.doc_vector:
             from . import precompute as _pc
             lists["doc_vector"] = _pc.doc_vector_search(store, p.embedder, q_search, max(3, k_vec // 2), prof)
             w["doc_vector"] = float(T.get("channel_w_doc_vector"))
         else:
             prof.skipped("doc_vector_search")
         # ---- 외부 RAG 채널 (mcp_sources.json retrieve 매핑) — 결과는 가상 청크 ext:<source>:<id> 로 융합에 참여 ----
-        ext_chunks: Dict[str, Dict[str, Any]] = {}
-        if t.external_rag:
+        ext_chunks: Dict[str, Dict[str, Any]] = {str(k): v for k, v in ext_replay.items() if isinstance(v, dict)}
+        if lists_replay is not None:
+            if ext_chunks:
+                prof.replayed("external_rag", results=len(ext_chunks))
+        elif t.external_rag:
             from . import mcp_client as _mcp
             with prof.stage("external_rag", k=int(T.get("external_rag_k") * cfg.k_mult), fallback=bool(cfg.mcp_enrich)) as st:
                 try:
@@ -714,7 +861,9 @@ class QueryEngine:
                     st.note(error=str(e)[:200])
         else:
             prof.skipped("external_rag")
-        if cfg.mcp_enrich and t.mcp_sources:
+        if lists_replay is not None:
+            pass
+        elif cfg.mcp_enrich and t.mcp_sources:
             from . import mcp_client as _mcp
             with prof.stage("mcp_enrich") as st:
                 try:
@@ -725,12 +874,25 @@ class QueryEngine:
                 except Exception as e:
                     st.note(error=str(e)[:200])
         # ---- 융합 ----
+        from . import rerun as _rerun
         method = T.get("fusion_method")
-        with prof.stage("rrf_fuse", rrf_k=s.rrf_k, method=method, weights=w, sources={n: len(v) for n, v in lists.items()}) as st:
-            hits, fmeta = _fusion.fuse(lists, w, s.rrf_k, method, T.get("fusion_multi_bonus"))
-            st.note(**fmeta, top=[(h.chunk_id, round(h.fused, 4), h.why) for h in hits[:6]])
-            st.debug(order=[h.chunk_id for h in hits[:60]])
+        fused_replay = rp.get("fused") if rp is not None else None
+        if fused_replay is not None:
+            hits = _rerun.hits_from(rp.data, "fused")
+            prof.replayed("rrf_fuse", n=len(hits), top=[h.chunk_id for h in hits[:6]])
+        else:
+            with prof.stage("rrf_fuse", rrf_k=s.rrf_k, method=method, weights=w, sources={n: len(v) for n, v in lists.items()}) as st:
+                hits, fmeta = _fusion.fuse(lists, w, s.rrf_k, method, T.get("fusion_multi_bonus"))
+                st.note(**fmeta, top=[(h.chunk_id, round(h.fused, 4), h.why) for h in hits[:6]])
+                st.debug(order=[h.chunk_id for h in hits[:60]])
         fused_order = [h.chunk_id for h in hits]
+        if self.capture is not None and not self.rounds:
+            self.capture.put("lists", {k: [[c, round(float(sc), 6)] for c, sc in v] for k, v in lists.items()})
+            self.capture.put("list_weights", {k: round(float(v), 6) for k, v in w.items()})
+            self.capture.put("fts_snips", fts_snips)
+            self.capture.put("graph_res", graph_res)
+            self.capture.put("ext_chunks", ext_chunks)
+            self.capture.hits("fused", hits)
         # pin 주입 (후보에 없으면 추가)
         have = {h.chunk_id for h in hits}
         for cid in pin_info.get("inject", []):
@@ -750,20 +912,35 @@ class QueryEngine:
             if r.get("chunk_id") and r.get("provenance"):
                 prov_chunks.setdefault(r["chunk_id"], r["provenance"])
         time_mode = T.get("time_mode") if cfg.time_filter else "boost"
-        with prof.stage("boost", time_mode=time_mode if scope else None, doc_types=route_info.get("doc_types"), pins=len(pin_info.get("weights", {})),
-                        feedback=len(feedback_w), exclude=(qr["exclude"] if (qr and cfg.exclude) else [])) as st:
-            stats = _fusion.apply_boosts(
-                hits, chunks, store.doc_meta_map(), time_scope=scope, time_mode=time_mode, time_w=float(T.get("time_boost_w")),
-                recency_half_life_days=int(T.get("recency_half_life_days")), doc_type_boost=parse_weight_map(T.get("doc_type_boost"), 1.0) if cfg.type_boost else {},
-                router_doc_types=route_info.get("doc_types") if cfg.type_boost else [], pinned=pin_info.get("weights") or {}, pin_w=float(T.get("pin_boost")),
-                provenance_chunks=prov_chunks, provenance_w=float(T.get("provenance_boost")), feedback=feedback_w, feedback_w=float(T.get("feedback_boost_w")),
-                exclude_terms=(qr["exclude"] if (qr and cfg.exclude) else []), exclude_penalty=float(T.get("exclude_penalty")))
-            if scope and time_mode == "filter" and not hits:
-                st.note(filter_relaxed=True)
-                # filter 로 0건 → boost 로 완화 재적용은 다음 라운드(wide) 에서; 여기서는 통계만
-            st.note(**stats, top=[(h.chunk_id, round(h.fused, 4), h.boosts) for h in hits[:5]])
-            st.debug(order=[h.chunk_id for h in hits[:60]])
+        boosted_replay = rp.get("boosted") if rp is not None else None
+        stats: Dict[str, Any] = {}
+        if boosted_replay is not None:
+            hits = _rerun.hits_from(rp.data, "boosted")
+            # 재생한 순위에 맞춰 청크 본문을 다시 읽는다 (본문은 저장하지 않는다 — 색인에서 읽으면 된다)
+            chunks = dict(store.get_chunks([h.chunk_id for h in hits if h.chunk_id not in ext_chunks]))
+            for cid in (h.chunk_id for h in hits):
+                if cid in ext_chunks:
+                    chunks[cid] = ext_chunks[cid]
+            stats = dict(rp.data.get("boost_stats") or {})
+            prof.replayed("boost", n=len(hits), top=[h.chunk_id for h in hits[:5]])
+        else:
+            with prof.stage("boost", time_mode=time_mode if scope else None, doc_types=route_info.get("doc_types"), pins=len(pin_info.get("weights", {})),
+                            feedback=len(feedback_w), exclude=(qr["exclude"] if (qr and cfg.exclude) else [])) as st:
+                stats = _fusion.apply_boosts(
+                    hits, chunks, store.doc_meta_map(), time_scope=scope, time_mode=time_mode, time_w=float(T.get("time_boost_w")),
+                    recency_half_life_days=int(T.get("recency_half_life_days")), doc_type_boost=parse_weight_map(T.get("doc_type_boost"), 1.0) if cfg.type_boost else {},
+                    router_doc_types=route_info.get("doc_types") if cfg.type_boost else [], pinned=pin_info.get("weights") or {}, pin_w=float(T.get("pin_boost")),
+                    provenance_chunks=prov_chunks, provenance_w=float(T.get("provenance_boost")), feedback=feedback_w, feedback_w=float(T.get("feedback_boost_w")),
+                    exclude_terms=(qr["exclude"] if (qr and cfg.exclude) else []), exclude_penalty=float(T.get("exclude_penalty")))
+                if scope and time_mode == "filter" and not hits:
+                    st.note(filter_relaxed=True)
+                    # filter 로 0건 → boost 로 완화 재적용은 다음 라운드(wide) 에서; 여기서는 통계만
+                st.note(**stats, top=[(h.chunk_id, round(h.fused, 4), h.boosts) for h in hits[:5]])
+                st.debug(order=[h.chunk_id for h in hits[:60]])
         boost_order = [h.chunk_id for h in hits]
+        if self.capture is not None and not self.rounds:
+            self.capture.hits("boosted", hits)
+            self.capture.put("boost_stats", stats)
         # ---- 리랭크 · 컨텍스트 ----
         n_cands = int(s.rerank_candidates * cfg.k_mult)
         if ext_chunks and int(T.get("external_rag_inject") or 0) > 0:
@@ -789,7 +966,17 @@ class QueryEngine:
                 with prof.stage("external_inject", moved=moved, window=win) as st:
                     st.note(n=len(moved))
         rerank_before = [h.chunk_id for h in hits[: (n_cands or max(s.top_k_final * 2, 10))]]
-        if t.rerank:
+        reranked_replay = rp.get("reranked") if rp is not None else None
+        if reranked_replay is not None:
+            hits = _rerun.hits_from(rp.data, "reranked")
+            need = [h.chunk_id for h in hits if h.chunk_id not in chunks and h.chunk_id not in ext_chunks]
+            if need:
+                chunks.update(store.get_chunks(need))
+            for cid in (h.chunk_id for h in hits):
+                if cid in ext_chunks:
+                    chunks[cid] = ext_chunks[cid]
+            prof.replayed("rerank", n=len(hits), top=[h.chunk_id for h in hits[:5]])
+        elif t.rerank:
             rl = p.llm_for("rerank")
             meta = store.doc_meta_map()
             doc_tokens = {d: "%s %s" % (m.get("ext_id") or "", m.get("doc_type") or "") for d, m in meta.items() if m.get("ext_id") or m.get("doc_type")}
@@ -798,6 +985,9 @@ class QueryEngine:
         else:
             prof.skipped("rerank")
         final = hits[: s.top_k_final]
+        if self.capture is not None and not self.rounds:
+            self.capture.hits("reranked", hits[: max(s.top_k_final * 3, 30)])
+            self.capture.hits("final", final)
         # ---- 문서 단위 확장 ----
         extra: List[Tuple[str, str, float]] = []
         expand_info: Dict[str, Any] = {}
@@ -818,6 +1008,8 @@ class QueryEngine:
             ctx = build_context(final, chunks, graph_res if t.graph else None, s.context_max_chars, query=q_search, trim=t.context_trim, dedupe=t.dedupe_hits,
                                 chunk_chars=s.context_chunk_chars, stage=st, store=store, neighbors=(T.get("context_neighbors") + cfg.neighbors_extra), extra=extra)
             st.note(chars=ctx["chars"], citations=len(ctx["citations"]), doc_expand_in_context=sum(1 for c in ctx["citations"] if c.get("kind") == "doc_expand"))
+        if self.capture is not None and not self.rounds:
+            self.capture.put("ctx", ctx)
         R = {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": ctx, "graph_res": graph_res, "fts_snips": fts_snips,
              "cfg": cfg, "boost_stats": stats, "expand": extra, "expand_info": expand_info, "ext_chunks": ext_chunks,
              "fused_order": fused_order, "boost_order": boost_order, "rerank_before": rerank_before, "final_order": [h.chunk_id for h in final],

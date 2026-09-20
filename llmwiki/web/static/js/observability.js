@@ -6,8 +6,13 @@
   // ---------------- REQUESTS ----------------
   async function loadRequests() {
     const kind = $('#req-kind').value, lim = $('#req-limit').value || 60;
-    const rows = await api(`/api/requests?kind=${kind}&limit=${lim}`);
-    $('#req-list').innerHTML = '<table class="req"><tr><th>#</th><th>time</th><th>kind</th><th>summary</th><th>ms</th><th>llm</th><th>tok</th><th>sql</th><th>run</th></tr>' + rows.map((r) => `<tr data-id="${r.id}" class="${r.error ? 'has-err' : ''}"><td>${r.id}</td><td>${ts(r.ts)}</td><td><span class="kind ${r.kind}">${r.kind}</span></td><td class="sum">${esc((r.summary || '').slice(0, 60))}</td><td class="num">${fmt(r.ms, 0)}</td><td class="num">${r.llm_calls || ''}</td><td class="num">${r.llm_calls ? fmtK((r.input_tokens || 0) + (r.output_tokens || 0)) : ''}</td><td class="num">${r.sql_count}</td><td class="mono small muted">${esc((r.run_id || '').slice(0, 8))}</td></tr>`).join('') + '</table>';
+    // 관측 탭은 **서버 전체**를 본다 (권한이 없으면 서버가 내 것만 돌려준다).
+    // 응답은 {rows, live, scope, me, can_all} — 예전에는 배열이었다 (2026-09-16).
+    const j = await api(`/api/requests?kind=${kind}&limit=${lim}&scope=all`);
+    const rows = Array.isArray(j) ? j : ((j && j.rows) || []);
+    const showUser = !Array.isArray(j) && rows.some((r) => r.user);
+    $('#req-list').innerHTML = '<table class="req"><tr><th>#</th><th>time</th><th>kind</th><th>summary</th><th>ms</th><th>llm</th><th>tok</th><th>sql</th>' + (showUser ? '<th>user</th>' : '') + '<th>run</th></tr>' + rows.map((r) => `<tr data-id="${r.id}" class="${r.error ? 'has-err' : ''}"><td>${r.id}</td><td>${ts(r.ts)}</td><td><span class="kind ${r.kind}">${r.kind}</span></td><td class="sum">${esc((r.summary || '').slice(0, 60))}</td><td class="num">${fmt(r.ms, 0)}</td><td class="num">${r.llm_calls || ''}</td><td class="num">${r.llm_calls ? fmtK((r.input_tokens || 0) + (r.output_tokens || 0)) : ''}</td><td class="num">${r.sql_count}</td>${showUser ? '<td class="small muted">' + esc(r.user || '') + '</td>' : ''}<td class="mono small muted">${esc((r.run_id || '').slice(0, 8))}</td></tr>`).join('') + '</table>'
+      + (Array.isArray(j) || j.can_all !== false ? '' : '<div class="muted small">전체 조회 권한이 없어 내 요청만 보입니다 (작업 권한 <code>requests all</code>).</div>');
     $$('#req-list tr[data-id]').forEach((tr) => tr.onclick = () => { $$('#req-list tr').forEach((x) => x.classList.remove('sel')); tr.classList.add('sel'); openRequest(parseInt(tr.dataset.id, 10)); });
   }
   async function openRequest(id) {
@@ -23,7 +28,9 @@
       `<h3>워터폴</h3><div id="req-trace"></div><h3>단계 표 ${other ? '(비교: #' + cid + ')' : ''}</h3><div id="req-table"></div>` +
       (r.config ? `<h3>요청 설정</h3><pre class="small pre">${esc(JSON.stringify(r.config, null, 1).slice(0, 4000))}</pre>` : '') +
       (r.result ? `<h3>결과 요약</h3><pre class="small pre">${esc(JSON.stringify(r.result, null, 1).slice(0, 6000))}</pre>` : '') + `<pre id="req-rawjson" class="small pre hidden"></pre>`;
-    renderTrace($('#req-trace'), tr); renderStageTable($('#req-table'), tr, other);
+    // 워터폴의 각 단계에 ⟲ — 이 요청의 중간 결과로 그 단계부터 다시 실행 (docs/RERUN.md)
+    renderTrace($('#req-trace'), tr, { rerun: r.id, onRerun: (j) => { const nid = (j.result || {}).request_id; loadRequests(); if (nid) openRequest(nid); } });
+    renderStageTable($('#req-table'), tr, other);
     $('#req-open-all').onclick = () => $$('#req-trace .tr-row').forEach((x) => x.classList.add('open'));
     $('#req-raw').onclick = () => { const p = $('#req-rawjson'); p.classList.toggle('hidden'); p.textContent = JSON.stringify(r, null, 1); };
     $('#req-copy').onclick = () => { navigator.clipboard.writeText(JSON.stringify(tr, null, 1)).then(() => toast('복사됨')); };
@@ -137,7 +144,7 @@
     const llm = r.llm && r.llm.active ? `<span class="pill warn">LLM ${esc(r.llm.provider || '')}/${esc(r.llm.model || '')} ${LW.fmtS(r.llm.elapsed_s)}</span>` : '';
     const q = r.queue ? `<span class="pill">대기열 ${r.queue.position}</span>` : '';
     const btn = canCancel && r.status === 'running' && !r.cancel_requested ? `<button class="mini danger" data-cancel="${esc(r.token)}">■ 중지</button>` : (r.cancel_requested ? '<span class="pill warn">중지 중</span>' : '');
-    return `<tr><td class="mono small">${esc(r.token || '')}</td><td>${esc(r.kind || '')}${r.external ? ' <span class="pill">외부</span>' : ''}${r.weight === 'exclusive' ? ' <span class="pill bad">배타</span>' : r.weight === 'soft' ? ' <span class="pill">쓰기</span>' : ''}</td>` +
+    return `<tr data-token="${esc(r.token || '')}"><td class="mono small">${esc(r.token || '')}</td><td>${esc(r.kind || '')}${r.external ? ' <span class="pill">외부</span>' : ''}${r.weight === 'exclusive' ? ' <span class="pill bad">배타</span>' : r.weight === 'soft' ? ' <span class="pill">쓰기</span>' : ''}</td>` +
       `<td>${esc((r.label || '').slice(0, 70))}</td><td>${esc(r.user || '-')}${r.role ? ' <small class="muted">' + esc(r.role) + '</small>' : ''}</td><td class="small">${esc(r.origin || '')}${r.ip ? '<br><span class="muted">' + esc(r.ip) + '</span>' : ''}</td>` +
       `<td class="num">${LW.fmtDur(r.elapsed_s)}</td><td class="small">${esc(r.stage || r.status || '')}${r.note ? ' <span class="pill ok">' + esc(r.note) + '</span>' : ''}${pct}${llm}${q}</td><td>${btn}</td></tr>`;
   }
@@ -159,7 +166,7 @@
     const where = [r.stage, pctN == null ? '' : fmt(pctN, 0) + '%', r.eta_s ? '≈' + LW.fmtS(r.eta_s) : ''].filter(Boolean).join(' · ');
     const pos = kind === 'queued' && r.queue ? `<span class="act-pos">${r.queue.position}</span>` : '';
     const btn = canCancel && !r.cancel_requested ? `<button class="act-x" data-cancel="${esc(r.token)}" title="중지">■</button>` : '';
-    return `<div class="act-item ${esc(kind)} k-${esc(r.kind || 'etc')}${r.mine ? ' mine' : ''}" title="${esc(r.label || '')}">
+    return `<div class="act-item ${esc(kind)} k-${esc(r.kind || 'etc')}${r.mine ? ' mine' : ''}" data-token="${esc(r.token || '')}" title="${esc(r.label || '')}">
       ${pos}<span class="act-ico">${KIND_ICON[r.kind] || '•'}</span>
       <span class="act-main"><span class="act-label">${esc((r.label || r.kind || '-').slice(0, 90))}</span>
         <span class="act-sub">${esc(r.kind || '')}${r.user ? ' · ' + esc(r.user) : ''}${r.origin ? ' · ' + esc(r.origin) : ''}${where ? ' · ' + esc(where) : ''}</span></span>
@@ -167,7 +174,7 @@
   }
   function recentCard(r) {
     const cls = r.status === 'done' ? 'ok' : r.status === 'cancelled' ? 'warn' : 'bad';
-    return `<div class="act-item done ${cls}" title="${esc(r.error || r.label || '')}">
+    return `<div class="act-item done ${cls}" data-token="${esc(r.token || '')}" title="${esc(r.error || r.label || '')}">
       <span class="act-ico">${KIND_ICON[r.kind] || '•'}</span>
       <span class="act-main"><span class="act-label">${esc((r.label || r.kind || '-').slice(0, 90))}</span>
         <span class="act-sub">${esc(r.kind || '')}${r.user ? ' · ' + esc(r.user) : ''}${r.error ? ' · ' + esc(String(r.error).slice(0, 50)) : ''}</span></span>
@@ -213,6 +220,159 @@
       : '<div class="muted">실행 중인 작업이 없습니다.</div>';
     $('#act-recent').innerHTML = rec.length ? head.replace('<th></th>', '<th>결과</th>') + rec.map((r) => actRow(r, false).replace(/<td><\/td>$/, `<td class="small">${esc(r.status || '')}${r.error ? ' ' + esc(String(r.error).slice(0, 60)) : ''}</td>`)).join('') + '</table>' : '<div class="muted">-</div>';
     $$('#tab-activity [data-cancel]').forEach((b) => b.onclick = async () => { b.disabled = true; await LW.cancelToken(b.dataset.cancel, 'activity'); setTimeout(LW.refreshActivity, 600); });
+    // 줄(카드·표)을 누르면 상세를 연다. 각 줄이 자기 token 을 data 속성으로 들고 있으므로
+    // 본문 텍스트를 뒤져 짝을 찾을 필요가 없다 (최근 완료 카드는 token 을 표시하지 않는다).
+    const byToken = {};
+    [].concat(run, qd, ext, rec).forEach((r) => { if (r.token) byToken[r.token] = r; });
+    $$('#tab-activity [data-token]').forEach((el) => {
+      const rec2 = byToken[el.dataset.token];
+      if (!rec2) return;
+      el.classList.add('clickable');
+      el.onclick = (e) => { if (e.target.closest('[data-cancel], .act-x')) return; openActDetail(rec2); };
+    });
+    if (ACT_OPEN && byToken[ACT_OPEN.token]) renderActDetail(byToken[ACT_OPEN.token]);
+  }
+
+  // ---------------- 진행 중 작업 상세 (실시간 진행 + 그때 남긴 기록) ----------------
+  // 실행 중이면 progress.py 의 스냅샷을 1.5초마다 받아 단계·로그를 보여 주고,
+  // 끝난 작업이면 남아 있는 기록과 **저장해 둔 결과(요청 프로파일)** 로 가는 길을 준다.
+  let ACT_OPEN = null, ACT_TIMER2 = null, ACT_SLOW = null;
+  function closeActDetail() {
+    ACT_OPEN = null;
+    if (ACT_TIMER2) { clearInterval(ACT_TIMER2); ACT_TIMER2 = null; }
+    if (ACT_SLOW) { clearTimeout(ACT_SLOW); ACT_SLOW = null; }
+    const el = $('#act-detail'); if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+  }
+  function openActDetail(r) {
+    if (ACT_OPEN && ACT_OPEN.token === r.token) { closeActDetail(); return; }   // 같은 줄을 다시 누르면 닫기
+    ACT_OPEN = { token: r.token };
+    renderActDetail(r);
+    pollActDetail();
+    if (ACT_TIMER2) clearInterval(ACT_TIMER2);
+    ACT_TIMER2 = setInterval(pollActDetail, 1500);
+  }
+  async function pollActDetail() {
+    if (!ACT_OPEN) return;
+    if (!LW.tabVisible('activity')) return;
+    const j = await api('/api/progress?token=' + encodeURIComponent(ACT_OPEN.token));
+    if (!ACT_OPEN) return;
+    ACT_OPEN.live = (j && j.status) ? j : null;
+    renderActDetail(ACT_OPEN.row || {});
+    // 더 볼 게 없으면 **폴링을 멈춘다**. 예전에는 진행 기록이 아예 없는 경우(live === null, 끝나서 서버가
+    // 정리한 작업)에 이 조건이 false 라 타이머가 계속 돌았고, 1.5초마다 화면을 다시 그리는 바람에
+    // '전체 보기' 로 펼친 답변이 곧바로 도로 접혔다.
+    if ((!ACT_OPEN.live || ACT_OPEN.live.status !== 'running') && ACT_TIMER2) { clearInterval(ACT_TIMER2); ACT_TIMER2 = null; }
+  }
+  // 끝난 작업의 **저장해 둔 결과**를 가져온다. 목록은 훑어보는 화면이므로 여기서는 요약만 보여 주고,
+  // 자세히 볼 사람은 Ask 화면 복원이나 요청 프로파일로 한 번에 갈 수 있게 한다.
+  async function loadActResult(rid) {
+    if (!ACT_OPEN || ACT_OPEN.reqLoading || (ACT_OPEN.req && ACT_OPEN.req.id === rid)) return;
+    const mine = ACT_OPEN;                 // 응답이 늦게 와도 **그 사이 다른 줄을 눌렀으면** 버린다
+    mine.reqLoading = true;
+    mine.loadStarted = Date.now();
+    // 느린 질의가 여러 개 떠 있으면 브라우저 연결(호스트당 6개)이 붐벼 이 요청이 늦게 출발한다.
+    // 8초가 지나도 안 오면 "멈춘 것" 이 아니라 "밀려 있는 것" 이라고 화면에 말해 준다.
+    if (ACT_SLOW) clearTimeout(ACT_SLOW);
+    ACT_SLOW = setTimeout(() => { if (ACT_OPEN === mine && mine.reqLoading) { mine.slow = true; renderActDetail(mine.row || {}); } }, 8000);
+    // brief=1 → 단계별 trace 를 뺀 요약 (67KB → 약 19KB). 이 패널에는 답변 요약만 필요하다.
+    const r = await api('/api/request?id=' + rid + '&brief=1');
+    if (ACT_SLOW) { clearTimeout(ACT_SLOW); ACT_SLOW = null; }
+    if (ACT_OPEN !== mine) return;         // 다른 줄로 옮겨 갔다 — 이 응답은 그 줄의 것이 아니다
+    mine.reqLoading = false;
+    mine.slow = false;
+    mine.req = (r && r.id) ? r : { id: rid, missing: true, why: (r && r.error) || "" };
+    renderActDetail(mine.row || {});
+  }
+  function savedBlock(req) {
+    if (!req) {
+      const waited = ACT_OPEN && ACT_OPEN.loadStarted ? Math.round((Date.now() - ACT_OPEN.loadStarted) / 1000) : 0;
+      if (ACT_OPEN && ACT_OPEN.slow) {
+        return '<div class="muted small">저장된 결과를 기다리는 중입니다 (' + waited + '초). ' +
+          '지금 <b>오래 걸리는 질의가 실행 중</b>이면 브라우저가 연결을 재사용할 때까지 이 조회가 밀립니다 — ' +
+          '서버가 멈춘 것이 아니며, 앞선 질의가 끝나면 채워집니다.</div>';
+      }
+      return '<div class="muted small">저장된 결과를 불러오는 중…</div>';
+    }
+    if (req.missing) return '<div class="muted small">저장된 결과를 찾지 못했습니다' +
+      (req.why ? ' (' + esc(String(req.why).slice(0, 80)) + ')' : '') +
+      ' — 보존 기간이 지나 정리되었을 수 있습니다 (<code>keep_requests</code> · <code>requests_keep_days</code>).</div>';
+    const res = req.result || {};
+    const ev = res.evidence || {};
+    const ans = String(res.answer || '');
+    if (!ans) return `<div class="muted small">이 작업에는 저장된 답변이 없습니다 (${esc(req.kind || '')} 작업). 아래 '요청 프로파일' 에서 단계별 기록을 볼 수 있습니다.</div>`;
+    const stat = `<div class="statrow compact"><div class="stat"><b>${fmt(req.ms, 0)}</b>ms</div>` +
+      `<div class="stat"><b>${fmtK((req.input_tokens || 0) + (req.output_tokens || 0))}</b>토큰</div>` +
+      `<div class="stat"><b>${(res.hits_brief || []).length || (res.cited || []).length}</b>근거</div>` +
+      (ev.verdict ? `<div class="stat"><b>${esc(ev.verdict)}</b>근거 판정</div>` : '') +
+      (res.groundedness != null ? `<div class="stat"><b>${fmt(res.groundedness, 2)}</b>groundedness</div>` : '') +
+      (res.cached ? '<div class="stat"><b>캐시</b>응답</div>' : '') + '</div>';
+    // 한 번 펼친 답변은 계속 펼쳐 둔다. 실행 중인 작업은 화면을 주기적으로 다시 그리므로,
+    // 펼침 상태를 기억하지 않으면 새로 그릴 때마다 도로 접힌다.
+    const long = ans.length > 1200 && !(ACT_OPEN && ACT_OPEN.expanded);
+    return stat + `<div class="act-answer${long ? ' clip' : ''}" id="act-answer">${esc(ans)}</div>` +
+      (long ? '<button class="mini secondary" id="btn-act-more">전체 보기</button>' : '');
+  }
+  function renderActDetail(r) {
+    const el = $('#act-detail'); if (!el || !ACT_OPEN) return;
+    ACT_OPEN.row = Object.assign({}, ACT_OPEN.row || {}, r || {});
+    const row = ACT_OPEN.row, live = ACT_OPEN.live;
+    const rid = row.request_id;
+    const done = !live || live.status !== 'running';
+    const head = `<div class="act-detail-head"><b>${esc(row.label || row.kind || row.token || '')}</b>
+      <span class="pill">${esc(row.kind || '')}</span>${row.user ? '<span class="muted small">' + esc(row.user) + '</span>' : ''}
+      <span class="muted small mono">${esc(row.token || '')}</span>
+      <span class="grow"></span>
+      ${rid ? `<button class="mini" id="btn-act-ask" title="Ask 화면에 그때 그 결과를 그대로 복원 (다시 실행하지 않습니다)">↩ Ask 화면에서 열기</button>` : ''}
+      ${rid ? `<button class="mini secondary" id="btn-act-profile">📄 요청 프로파일 #${esc(String(rid))}</button>` : ''}
+      ${rid && row.kind === 'query' ? '<button class="mini secondary" id="btn-act-rerun" title="저장된 중간 결과로 특정 단계부터 다시 실행">⟲ 다시 실행</button>' : ''}
+      ${!done && row.token ? `<button class="mini danger" data-cancel="${esc(row.token)}">■ 중지</button>` : ''}
+      <button class="mini secondary" id="btn-act-close">닫기</button></div>`;
+    let body = '';
+    // 끝난 작업이면 **저장해 둔 결과**를 먼저 보여 준다 — 목록에서 누른 이유는 대개 "그래서 뭐라고 답했지?" 다.
+    if (done && rid) {
+      body += savedBlock(ACT_OPEN.req && ACT_OPEN.req.id === rid ? ACT_OPEN.req : null);
+      if (!ACT_OPEN.req || ACT_OPEN.req.id !== rid) loadActResult(rid);
+    }
+    if (live && live.status) {
+      const path = (live.path_labels || []).join(' › ');
+      body += `<div class="kv small">상태 <b>${esc(live.status)}</b>${live.stage_label ? ' · 단계 <b>' + esc(live.stage_label) + '</b>' : ''}` +
+        `${path ? ' <span class="muted">(' + esc(path) + ')</span>' : ''}${live.pct != null ? ' · ' + fmt(live.pct, 0) + '%' : ''}` +
+        `${live.elapsed_s != null ? ' · 경과 ' + LW.fmtDur(live.elapsed_s) : ''}` +
+        `${live.llm && live.llm.active ? ' · <span class="pill warn">LLM ' + esc(live.llm.model || '') + ' ' + LW.fmtS(live.llm.elapsed_s) + '</span>' : ''}` +
+        `${live.queue ? ' · <span class="pill">대기열 ' + live.queue.position + '</span>' : ''}</div>`;
+      const log = live.log || [];
+      body += log.length
+        ? `<details ${done ? '' : 'open'}><summary class="muted small">진행 기록 ${log.length}줄</summary><pre class="pre small act-log">${esc(log.slice(-200).join('\n'))}</pre></details>`
+        : '<div class="muted small">아직 남은 진행 기록이 없습니다.</div>';
+    } else if (!(done && rid)) {
+      body += `<div class="muted small">이 작업의 실시간 진행 기록은 남아 있지 않습니다${done ? ' (이미 끝났고 서버가 정리했습니다)' : ''}.` +
+        (rid ? ' 아래 버튼으로 <b>그때 저장한 결과와 단계별 프로파일</b>을 볼 수 있습니다.' : '') + '</div>';
+    }
+    if (row.error) body += `<div class="errtxt small">${esc(String(row.error))}</div>`;
+    el.innerHTML = head + body;
+    el.classList.remove('hidden');
+    $('#btn-act-close').onclick = closeActDetail;
+    const pb = $('#btn-act-profile');
+    if (pb) pb.onclick = () => { switchTab('requests'); setTimeout(() => openRequest(rid), 150); };
+    const mb = $('#btn-act-more');
+    if (mb) mb.onclick = (e) => {
+      e.stopPropagation();
+      if (ACT_OPEN) ACT_OPEN.expanded = true;      // 다시 그려도 펼친 채로
+      const a = $('#act-answer'); if (a) a.classList.remove('clip');
+      mb.remove();
+    };
+    const ab = $('#btn-act-ask');
+    // 저장해 둔 결과를 Ask 화면에 그대로 복원한다 — **다시 실행하지 않는다**.
+    // '내 지난 요청' 과 **같은 함수**를 쓴다: 저장된 결과에는 근거 전문(hits)이 없어 그대로 그리면 깨진다.
+    if (ab) ab.onclick = () => { LW.switchGroup('ask'); switchTab('query'); setTimeout(() => LW.openPastRequest(rid), 120); };
+    const rb = $('#btn-act-rerun');
+    if (rb) rb.onclick = () => LW.openRerun(rid, 'answer_llm', 'answer_llm', (j) => {
+      LW.switchGroup('ask'); switchTab('query');
+      setTimeout(() => LW.renderResult(j.result, j.trace, (j.result || {}).query || ''), 120);
+    });
+    $$('#act-detail [data-cancel]').forEach((b) => b.onclick = async (e) => {
+      e.stopPropagation(); b.disabled = true; await LW.cancelToken(b.dataset.cancel, 'activity'); setTimeout(LW.refreshActivity, 600);
+    });
   }
   function actView(v) {
     const board = v !== 'table';

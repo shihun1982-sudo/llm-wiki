@@ -10,9 +10,10 @@
                  └──────────────────────────────────────────────┬───────────────────────────────────────────────────────────┘
                                                                 ▼
    ┌──────────────────────────────── llmwiki MCP 서버 (llmwiki/mcp.py) ─────────────────────────────────────┐
-   │ tools/list = built-in 11개 (wiki_query … wiki_sources · wiki_external_search)                              │
+   │ tools/list = built-in 12개 (wiki_query … wiki_sources · wiki_external_search) + 도구별 annotations(읽기/쓰기)   │
    │            + 플러그인  <mcp_plugins_dir>/*.py  register(add_tool)                                            │
    │            + 페더레이션  <source>__<tool>   (mcp_sources.json expose, 토글 mcp_federation)  ── 호출 그대로 중계 ──┐
+   │ tools/call ─► inputSchema 의 required·type·enum 검증 (위반은 실행 없이 isError) ── 이름 중복은 뒤엣것을 버린다 ──   │
    │ wiki_query ─► Pipeline.query ─► fts | vector | graph | doc_vector | ext_<source> (토글 external_rag) ─► rrf ─► rerank │
    └───────────────────────────────────────────────────────────────────────────────────────────────────────┘   │
                                                                 ▲ retrieve 매핑                                     │
@@ -162,13 +163,16 @@ python -m llmwiki mcp-source retrieve "AGC 수렴" --source kb_rest --json      
 ### D. 외부 LLM 클라이언트에 내준다
 [MCP.md](MCP.md) §1: `apikey add` → 클라이언트 설정(`mcp --client-config`). 페더레이션을 켜면 클라이언트는 아무 것도 바꾸지 않아도 `tools/list` 에 `<source>__<tool>` 이 늘어난다. 도구 설명에 `[source]` 접두가 있어 LLM 이 출처를 구분한다.
 
-## 6. 검증 (실측, 2026-09-15)
+## 6. 검증 (실측, 2026-09-15 / 2026-09-16)
+- **먼저 `python -m llmwiki mcp --doctor --check-sources`** — 소스 선언·연결·토글·페더레이션 이름·플러그인 적재를 한 번에 본다. 항목별 뜻은 [MCP.md](MCP.md) §4.
 - `tests/test_rag_federation.py` 7개: stdio retrieve·융합·inject·off 비교, 소스 오류 격리, when=fallback, rest 전송(retrieve·가중·expose·GET), 플러그인(로드·오류·재적재·예시 파일), http 전송(다른 llmwiki 를 원격으로; 잘못된 토큰 401 격리; 페더레이션; 재귀 방지 헤더).
 - 하네스: `tools/verify/verify_cli.py` 에 `mcp-source tools|retrieve|federated`, `query --external-rag/--no-external-rag`, stdio `mcp` 의 `mock__search`·`wiki_sources`; `verify_web.py` 에 `/api/mcp_sources retrieve|tools|federated`(게스트 401), `/api/query` external_rag 오버라이드, `/mcp` 의 `mock__search`·`wiki_external_search`·깊이 헤더 가드.
+- **`tools/verify/verify_mcp.py`** (2026-09-16 추가, 98/98 통과 — [VERIFICATION_0916.md](VERIFICATION_0916.md)): 이 문서의 확장 경로를 종단으로 돌린다 — 플러그인 등록·호출·인자 검증, **깨진 플러그인이 다른 플러그인을 막지 않음**, `mock__search` 중계, expose 목록 밖 도구 거부, 없는 소스 거부, 외부 RAG 직접 검색과 질의 융합, 재귀 방지(하위 프로세스는 `__` 도구를 내놓지도 중계하지도 않음), `wiki_sources` 의 `federated_tools`/`plugins.errors` 보고.
 
 ## 7. 문제 해결
 | 증상 | 조치 |
 |---|---|
+| 무엇부터 봐야 할지 모르겠다 | `python -m llmwiki mcp --doctor --check-sources` ([MCP.md](MCP.md) §4) |
 | `mcp-source test` 가 `HTTP 401` | 그쪽 서버의 API 키(`token_env` 의 환경변수가 .env 에 있는지, 폐기되지 않았는지). llmwiki 는 잘못된 `lwk_` 키를 게스트로 강등하지 않는다 |
 | `HTTP 599 timed out` | url/방화벽. 원격이 llmwiki 인데 서로 expose 했다면 재귀 방지 헤더가 있는 버전(0.5.0+)인지 |
 | retrieve 결과 0건 | `mcp-source fetch <src> <tool> '{…}'` 로 원 응답을 보고 `result_path`/`*_field` 수정. 소스 `enabled` 와 `when` 확인 |
@@ -187,10 +191,10 @@ python -m llmwiki mcp-source retrieve "AGC 수렴" --source kb_rest --json      
 | 파일 | 내용 |
 |---|---|
 | `llmwiki/mcp_client.py` | `MCPClient`(stdio) · `HttpMCPClient` · `RestClient` · `open_source` · 풀(`get_client/drop_client/close_all`) · `retrieve` · `remote_tools` · `call_source_tool` · `source_summary` · 목업 `--mock-server`/`--mock-rest` |
-| `llmwiki/mcp.py` | `register_tool`/`load_plugins`(플러그인) · `federated_tools`/`call_extension`(페더레이션, 재귀 방지 `FED_HEADER`/`FED_ENV`) · `list_tools` · 도구 `wiki_sources`, `wiki_external_search` |
+| `llmwiki/mcp.py` | `register_tool`/`load_plugins`(플러그인) · `federated_tools`/`call_extension`(페더레이션, 재귀 방지 `FED_HEADER`/`FED_ENV`) · `list_tools`(이름 중복 제거) · `validate_args`(플러그인 도구에도 적용) · `doctor` · 도구 `wiki_sources`, `wiki_external_search` |
 | `llmwiki/query_engine.py` | `external_rag` 단계(가상 청크·채널) · `external_inject` · `_hit_dicts` 의 `external` |
 | `llmwiki/retrieval.py` | 로컬 리랭크의 외부 청크 consensus |
 | `llmwiki/config.py` `tuning.py` | 토글 `external_rag`/`mcp_federation`, `mcp_plugins_dir`, `channel_w_external`/`external_rag_k`/`external_rag_inject` |
 | `llmwiki/cli.py` `web/server.py` `web/static/*` | `mcp-source tools|retrieve|federated`, `/api/mcp_sources` action `retrieve|tools|federated`, Corpus › MCP 소스 탭 버튼 |
 | `setup/mcp_sources.example.json` `plugins/mcp_tools/` | 설정 원본 · 플러그인 예시 |
-| `tests/test_rag_federation.py` | 검증 |
+| `tests/test_rag_federation.py` `tools/verify/verify_mcp.py` | 검증 (단위 · 종단) |

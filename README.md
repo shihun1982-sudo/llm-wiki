@@ -16,6 +16,8 @@
 |---|---|
 | **처음 접했고 전체가 궁금하다** | 이 README §1~§5 → `docs/llmwiki_guide.html`(브라우저에서 클릭하며 구조 파악) → [ARCHITECTURE_V3.md](docs/ARCHITECTURE_V3.md) §0 용어·§1 그림·§9 "한 질의의 여정" |
 | **내 PC/서버에 설치해 써보고 싶다** | [setup/INSTALL.md](setup/INSTALL.md) → [BRINGUP_GUIDE.md](docs/BRINGUP_GUIDE.md) §0 체크리스트부터 순서대로 → 막히면 BRINGUP_GUIDE §10 문제 해결 |
+| **다른 곳에서 이미 빌드해 둔 색인이 있다 — 다시 빌드하고 싶지 않다** | [BRINGUP_GUIDE.md §2.2](docs/BRINGUP_GUIDE.md) — 색인은 **파일 하나**(`data/llmwiki.sqlite3`)다. 그것과 `data/rules.json`·`corpus/` 를 **타임스탬프 보존해서** 복사하면 끝. 맞아야 하는 것(임베더·차원·청크 설정)과 받는 쪽 3분 확인 절차, 채널이 비어 온 경우의 부분 리빌드까지 |
+| **코퍼스와 색인을 통째로 다른 서버로 옮긴다** | [BRINGUP_GUIDE.md §2.3](docs/BRINGUP_GUIDE.md) — 경로 설정이 전부 상대 경로라 **폴더째 복사하면 고칠 것이 없다**. 뺄 폴더(`data/snapshots` 가 색인보다 크다)·`robocopy /COPY:DAT`·`rsync -a` 명령과, 받는 쪽에서 **반드시 바꾸는 것**(세션 비밀키 삭제·`.env`·`embed_provider` 고정·`security.json`·`server.json`) 표 |
 | **여러 사람·여러 외부 LLM 이 쓰는 서버로 열고 싶다** | [IMPLEMENTATION_PLAN_0914.md](docs/IMPLEMENTATION_PLAN_0914.md) §0 → [SECURITY.md](docs/SECURITY.md)(역할·권한 표·API 키) → [MCP.md](docs/MCP.md)(원격/다수 LLM) → BRINGUP_GUIDE §4.4~4.5 |
 | **Web UI 를 처음 쓴다 / 화면 기능이 궁금하다** | [WEB_UI.md](docs/WEB_UI.md) §0 한 장 요약 → 필요한 절만. 버튼이 안 먹는 것 같으면 §9 자가 점검 |
 | **일반 사용자(viewer)에게 어떻게 보이는지 확인하고 싶다** | 헤더의 `👁 권한 보기` 에서 viewer 선택 — 서버가 실제로 그 권한으로 처리한다(권한은 낮추기만 한다). 실제 로그인 흐름까지 보려면 `serve --host 0.0.0.0` — [WEB_UI.md](docs/WEB_UI.md) §8 |
@@ -23,14 +25,20 @@
 | **30명이 동시에 쓰는데 느리거나 거절당한다 / 관리자로 제어하고 싶다** | [CONCURRENCY.md](docs/CONCURRENCY.md) §0 한 장 요약 → §3 `server.json` 권장값 → Web 관리 › 서버 모니터 (또는 `python -m llmwiki server stats`) → §9 문제 해결표 |
 | **정해진 시각·주기로 빌드·수집·evolve 를 돌리고 싶다** | [SCHEDULER.md](docs/SCHEDULER.md) §2 시점 지정 → §3 동작 19종 예시 → `setup/schedule.example.json` 복사 → Web 설정 › 스케줄 또는 `python -m llmwiki schedule add` |
 | **오래 걸리는 빌드·질의의 진행률을 보고 중간에 멈추고 싶다** | [CONCURRENCY.md](docs/CONCURRENCY.md) §4 시간 제한과 취소 (Web 진행 패널의 중지 버튼, CLI `Ctrl+C`, `server activity` / `server cancel <token>`) |
+| **진행 중 작업 목록에서 한 줄을 눌러 "지금 어디쯤인지" 또는 "그래서 뭐라고 답했는지" 보고 싶다** | [ACTIVITY_DETAIL.md](docs/ACTIVITY_DETAIL.md) — 실행 중이면 단계·진행 기록 실시간, 끝났으면 **그때 저장한 답변**을 그 자리에서. ↩ Ask 화면 복원 · 📄 요청 프로파일 · ⟲ 다시 실행 |
 | **답에 기대한 문서가 왜 없는지 알고 싶다** | [FORENSIC.md](docs/FORENSIC.md) → `forensic expect last --doc <ID> --term <용어>` (Web Ask 의 🎯, MCP `wiki_forensic`) |
 | **품질·속도·토큰이 마음에 안 드는데 어느 설정을 만질지 모르겠다** | [ANALYSIS_MODE.md](docs/ANALYSIS_MODE.md) → `query "…" --analyze --focus quality|speed|tokens` → `logs/analysis/req_<id>.md` 를 LLM 에게 첨부 (Web 토글 `analysis_mode` + 📊, MCP `wiki_analysis`) |
+| **설정을 바꿔 가며 확인하고 싶은데 매번 처음부터 도는 게 너무 느리다** | [RERUN.md](docs/RERUN.md) — 워터폴의 각 단계 **⟲** 로 그 단계부터만 다시 실행(앞 단계는 저장해 둔 결과를 재생). 답변 프롬프트 실험은 `--from answer_llm`, 검증 임계값은 `--from claim_check`. CLI `python -m llmwiki rerun <request_id> --from <단계>` |
 | **어떤 손잡이가 어느 단계에 작용하는지 한 장으로 보고, 그 자료를 통째로 LLM 에게 주고 싶다** | [OPTIMIZATION_GUIDE.md](docs/OPTIMIZATION_GUIDE.md)(자동 생성: `arch doc`) → `python -m llmwiki optimize last --out bundle.md` 로 **가이드+지금 설정+질의 실측+지시문**을 한 파일로 → 그 파일을 LLM 에게 첨부 (Web Ask 의 📦 최적화 자료 묶음 다운로드) |
 | **다른 RAG·검색 API·MCP 서버를 붙이고 싶다 / 외부 LLM 이 우리 MCP 하나로 여러 RAG 를 쓰게 하고 싶다** | [RAG_FEDERATION.md](docs/RAG_FEDERATION.md) §0 결정표 → §5 절차 → `setup/mcp_sources.example.json` → BRINGUP_GUIDE §4.6 |
-| **옮겨 세운 뒤 전부 정상인지 확인하고 싶다** | [VERIFICATION_0915.md](docs/VERIFICATION_0915.md) §6 → `tools/verify/` 스크립트(CLI 184 · Web 210 · UI 배선 · 브라우저 · 버튼 · 몽키 · MCP) → 실패 행만 BRINGUP_GUIDE §10 |
-| **이 작업을 이어받는다 / 지금 무엇이 남아 있는지 알고 싶다** | [HANDOVER_0916.md](docs/HANDOVER_0916.md) — 2026-09-16 시점의 완료 작업, 남은 작업과 그 실행 방법, 알려진 하네스 결함, 아직 답하지 못한 사용자 질문 |
+| **옮겨 세운 뒤 전부 정상인지 확인하고 싶다** | **`python tools/verify/verify_all.py`** 한 줄이면 모든 하네스(단위·스트레스·문서정합·CLI·Web·MCP·UI·버튼·보안화면·재실행·협업·타임아웃·몽키)를 돌리고 결과 표를 찍는다 → 실패 행만 [BRINGUP_GUIDE §10](docs/BRINGUP_GUIDE.md). 회차별 해설: [VERIFICATION_0917.md](docs/VERIFICATION_0917.md) · [VERIFICATION_0916_2.md](docs/VERIFICATION_0916_2.md) · [VERIFICATION_0916.md](docs/VERIFICATION_0916.md) · [VERIFICATION_0915.md](docs/VERIFICATION_0915.md) |
+| **실패할 때 어떻게 버티는지 알고 싶다 (LLM 무응답·느림·외부 RAG 다운·폭주)** | [VERIFICATION_0917.md §3](docs/VERIFICATION_0917.md) — `verify_timeouts.py` 24항목. mock 테스트 훅(`LLMWIKI_MOCK_FAIL`·`LLMWIKI_MOCK_DELAY_MS`)으로 실패를 **일부러 일으켜** 확인한다 |
+| **이 작업을 이어받는다 / 지금 무엇이 남아 있는지 알고 싶다** | [HANDOVER_0916.md](docs/HANDOVER_0916.md) — 2026-09-16 시점의 완료/남은 작업. 그 문서의 §2.1~§2.5 는 [VERIFICATION_0916.md](docs/VERIFICATION_0916.md) 에서 끝났다 |
+| **내가 지난번에 물어본 것과 그 답을 다시 보고 싶다 / 누가 무엇을 돌리는지 보고 싶다** | [REQUEST_HISTORY.md](docs/REQUEST_HISTORY.md) — Ask 탭의 "🕘 내 지난 요청", 결과 보관 폴더(`requests_dir`)와 보존 기간, 전체 조회 권한(`requests all`) |
+| **팀원과 화면에서 바로 이야기하고, 남길 것만 남기고 싶다** | [COLLAB.md](docs/COLLAB.md) — 사이드바 휘발성 채팅 + `/게시` 로 올리는 게시판(요청과 연결), 접속자 캐릭터·말풍선 설정. 토글 `collab` 하나로 끌 수 있는 부수 기능 |
 | **우리 팀 문서를 넣고 싶다** | [CORPUS_CONTRACT.md](docs/CORPUS_CONTRACT.md) → `corpus lint` → BRINGUP_GUIDE §5 코퍼스 계약 적용 |
 | **명령 하나가 내부에서 무엇을 하는지 알고 싶다** | [CLI_FLOWS.md](docs/CLI_FLOWS.md) §3 해당 명령 (예제 → 내부 단계 → 실제 출력 → 오류) |
+| **답 품질이 기대만큼 안 나온다 — 무엇부터 손대야 하나** | [QUALITY_REVIEW_0917.md](docs/QUALITY_REVIEW_0917.md) — 실제 색인에서 **측정한** 레버 순서. 1위는 튜닝이 아니라 **코퍼스 위생**(색인하면 안 되는 것이 섞이면 hit@k 0.64↔0.88). `health` 의 `corpus_self_index`·`channels_populated`·`embedder_quality` 경고부터 확인 |
 | **품질을 올리고 싶다(튜닝)** | ARCHITECTURE_V3 §5 질의 단계 표 → [TUNING.md](docs/TUNING.md) → CLI_FLOWS 의 `trial` / `fusion compare` / `forensic` |
 | **코드를 고치고 싶다** | ARCHITECTURE_V3 §2 모듈 지도·§3 데이터 모델 → 해당 모듈 → `tests/` |
 | **왜 이렇게 설계됐는지 알고 싶다** | [ANALYSIS_REPORT_0913.md](docs/ANALYSIS_REPORT_0913.md) → [IMPLEMENTATION_PLAN_0913.md](docs/IMPLEMENTATION_PLAN_0913.md) → (이전 세대) ARCHITECTURE_V2 · legacy/ |
@@ -68,23 +76,50 @@
 왜 "관리 암호 하나"가 아니라 계정·역할·권한 표인지(검토한 대안), 역할 6단계(`viewer < class3 < class2 < class1 < builder < admin`)와 작업 등급 7단계(read/run/edit/index/rebuild/admin/destructive)의 기본 최소 역할·확인 방식, admin 이 편집하는 `permissions`(등급별 최소 역할 + 개별 작업 오버라이드), 익명(게스트) 접속, 로컬 ID/비밀번호·SSO(OIDC·프록시 헤더)·API 키 병행, CLI 권한 게이트(`--user`, `cli.default_role`), 확인 문구·비밀번호 재입력·자동 스냅샷, 감사 로그, 서버 공개 체크리스트(기본 admin `kh82.kim` 비밀번호 변경 포함).
 
 **[docs/MCP.md](docs/MCP.md) — 외부 LLM(여러 개, 같은 PC/원격) 연결**
-stdio(같은 PC) · Streamable HTTP(`serve` 의 `POST /mcp`, Bearer API 키, 다수 클라이언트) · 브리지(stdio 전용 클라이언트 → 원격) · 단독 HTTP 서버의 결정표와 설정 예(Windows/Linux, Claude Code/Desktop/Cursor/opencode JSON), 도구 9개(`wiki_query`…`wiki_forensic`), 보안, 동시성, 문제 해결.
+stdio(같은 PC) · Streamable HTTP(`serve` 의 `POST /mcp`, Bearer API 키, 다수 클라이언트) · 브리지(stdio 전용 클라이언트 → 원격) · 단독 HTTP 서버의 결정표와 설정 예(Windows/Linux, Claude Code/Desktop/Cursor/opencode JSON), **도구 12개**와 도구별 힌트(`annotations` 읽기/쓰기 구분), 인자 검증 메시지(붙는 LLM 이 실패 이유를 읽고 스스로 고친다), 프로토콜 버전 협상, **`mcp --doctor` 자가 점검**(bring-up 연결 확인 단계), 보안(키는 클라이언트마다 따로 — 동시성 제한이 키 단위), 429/503 거부의 뜻, **다른 RAG 를 붙이는 세 가지 방법**(검색 채널 융합 · 도구 중계 · 색인), 플러그인 도구 작성법, 종단 검증(`verify_mcp.py`), 문제 해결.
 
 **[docs/OPTIMIZATION_GUIDE.md](docs/OPTIMIZATION_GUIDE.md) — 손잡이 지도: 어떤 토글·튜닝·설정이 어느 단계에 어떻게 작용하는가 (자동 생성)**
 `python -m llmwiki arch doc` 이 코드의 구조 레지스트리(`llmwiki/architecture.py`)와 튜닝 레지스트리(`llmwiki/tuning.py`)에서 생성하므로 단계나 설정이 바뀌면 문서도 바뀐다. §0 세 가지 렌즈(품질·속도·토큰)와 렌즈별 손잡이 우선순위, §1 설정이 사는 곳과 적용 시점(config/tuning/presets/server.json), §2 읽는 법, §3 전체 구조(query·build·evolve·watch 흐름의 단계 나열), §4~§7 흐름별 단계 표(trace 이름 ↔ 토글 ↔ 튜닝 키 ↔ config 키 ↔ 품질/속도/토큰 영향), §9 LLM 에게 최적화를 묻는 법.
 최적화를 물을 때는 이 문서만 주지 말고 **`python -m llmwiki optimize last --out bundle.md`** 가 만드는 묶음을 준다 — A 지금 설정 스냅샷 · B 질의 한 건의 단계별 실측(분석 리포트) · C 요청 지시문 · D 이 손잡이 지도가 한 파일에 담긴다. Web 에서는 Ask › 📊 상세 분석 리포트 › **📦 최적화 자료 묶음 다운로드**(또는 묶음 복사), API 로는 `GET /api/optimize/bundle?request_id=<id>&focus=quality|speed|tokens`, 지도만 보려면 `GET /api/optimize/guide`.
 
 **[docs/FORENSIC.md](docs/FORENSIC.md) — 포렌식 디버깅 (자동 + 기대 결과)**
-자동 포렌식 확인 방법과, 사용자가 "이 문서/용어가 답에 있어야 했다"고 알려주면 같은 설정으로 검색을 재실행해 fts/vector/graph → 융합 → 리랭크 → 컨텍스트 → 답변 중 어느 단계에서 탈락했는지와 수정안(규칙/pin/튜닝/코퍼스)을 내는 `forensic expect` 의 동작·출력 예·해석 가이드·LLM 실패 보고와의 구분.
+자동 포렌식 확인 방법과, 사용자가 "이 문서/용어가 답에 있어야 했다"고 알려주면 같은 설정으로 검색을 재실행해 fts/vector/graph → 융합 → 리랭크 → 컨텍스트 → 답변 중 어느 단계에서 탈락했는지와 수정안(규칙/pin/튜닝/코퍼스)을 내는 `forensic expect` 의 동작·출력 예·해석 가이드·LLM 실패 보고와의 구분. 자주 헷갈리는 **"원 판정 sufficient 인데 기대 문서는 미해결"** 조합의 뜻과 할 일, 목표가 수십 개일 때 화면이 접는 기준(`forensic_targets_shown`), 수정안을 confidence 순으로 보여 주고 약한 것은 접는 기준(`forensic_suggestion_min_confidence`).
 
 **[docs/ANALYSIS_MODE.md](docs/ANALYSIS_MODE.md) — 상세 분석 모드 (2026-09-15)**
 토글 `analysis_mode`(또는 `query --analyze`)로 질의 한 건의 모든 단계 결과·설정 스냅샷·채널/융합/리랭크/컨텍스트 상세·답변 판정·**품질/속도/토큰 세 렌즈의 소견과 조절점(토글·튜닝 키=현재값)**·자동 포렌식·프롬프트 샘플을 `logs/analysis/req_<id>.md` 한 장으로 남긴다. LLM 에게 그대로 첨부해 튜닝을 묻는 절차, 렌즈 규칙 표, `analyze` CLI · Web 📊 · MCP `wiki_analysis` · `GET /api/analysis`.
 
+**[docs/RERUN.md](docs/RERUN.md) — 단계 재실행 (2026-09-17)**
+질의 한 건의 시간은 `answer_llm` 61% · `claim_check` 25% 처럼 뒤쪽에 쏠린다. 프롬프트나 튜닝 하나를 바꿔 볼 때마다 검색부터 전부 다시 도는 낭비를 없애고, **무엇 때문에 답이 바뀌었는지**를 분리해서 보기 위해, 저장해 둔 중간 결과로 **고른 단계부터만** 다시 돈다(앞 단계는 재생). 워터폴 각 줄의 **⟲**, `POST /api/query/rerun`, `python -m llmwiki rerun <id> --from <단계>`. 재시작점 9종 표, 무엇을 저장하고 무엇을 저장하지 않는지(청크 본문은 색인에서 다시 읽는다 → 파일 80~90KB), 색인이 바뀌면 거부하는 이유, 설정 4개(`rerun_capture`·`rerun_dir`·`rerun_keep`·`rerun_max_mb`), 그리고 **재실행이 하지 않는 것**(캐시로 답하지 않음 · fallback 루프를 돌지 않음).
+
 **[docs/RAG_FEDERATION.md](docs/RAG_FEDERATION.md) — 다른 RAG 연동과 MCP 확장 (2026-09-15)**
 `mcp_sources.json` 한 파일로 다른 팀의 LLM Wiki(http)·MCP 를 제공하는 사내 RAG·REST 검색 API(rest)·stdio MCP 서버를 붙이는 방법. 외부 결과를 검색 채널 `ext_<source>` 로 융합하는 `external_rag`, 외부 도구를 우리 `/mcp` 에 `<source>__<tool>` 로 노출하는 `mcp_federation`(재귀 방지 포함), 코드 수정 없이 도구를 늘리는 플러그인 폴더 `plugins/mcp_tools/`. 결정표·설정 필드 표·동작 상세·절차·검증·문제 해결.
 
+**[docs/ACTIVITY_DETAIL.md](docs/ACTIVITY_DETAIL.md) — 진행 중 작업 목록의 한 줄을 눌렀을 때 (2026-09-17)**
+실행 중이면 지금 어느 단계인지·진행 기록을 실시간으로, 끝났으면 **그때 저장한 답변**을 그 자리에서 보여 준다. ↩ Ask 화면 복원(다시 실행하지 않는다) · 📄 요청 프로파일 · ⟲ 다시 실행. 설계에서 정한 것(제자리 요약 + 한 번 더 눌러 깊이, 복원은 '내 지난 요청' 과 같은 함수 재사용, 줄↔작업 연결은 `data-token`)과 한계(진행 기록은 메모리).
+
+**[docs/QUALITY_REVIEW_0917.md](docs/QUALITY_REVIEW_0917.md) — 쿼리·셀프이볼브·리빌드 품질 재검토 (2026-09-17)**
+RAG 위키의 본래 목적 세 축을 실제 색인(문서 352·청크 16,894)에서 **측정으로** 점검한 회차. 가장 큰 발견은 튜닝이 아니라 **코퍼스 위생**이었다 — 이 도구 자신의 소스가 색인돼 도메인 문서를 밀어내고 있었고, 제외하니 hit@k 0.64 → 0.88 · MRR 0.396 → 0.676. 그에 맞춰 `corpus_exclude` 설정과 `health` 경고를 넣었다. 자가진화가 날짜를 동의어로 제안하던 결함(`nvidia → 2026`)을 고쳤고, 융합 설정(`rrf_k`)이 레버라는 **가설은 측정으로 기각**했으며(리랭크가 최종 순위를 정한다), 증분 빌드가 전체 빌드와 어긋나지 않음을 확인했다.
+
+**[docs/VERIFICATION_0917.md](docs/VERIFICATION_0917.md) — 2026-09-17 전면 재검토 보고서**
+코드·문서 전수 재검토 회차. 문서↔코드 정합을 **기계로** 확인하는 `verify_docs.py`, 모든 하네스를 한 번에 돌려 숫자를 한 표로 모으는 `verify_all.py`, 실패 경로를 일부러 일으키는 `verify_timeouts.py` 를 새로 만들고, 그 과정에서 찾은 결함들(질의 캐시가 재실행을 가로채던 것 · `mcp_sources.json` 오타가 엉뚱한 오류로 나타나던 것 · **그래프 채널이 비어 있는 채로 몇 주간 방치되던 것**)을 고쳤다.
+
+**[docs/VERIFICATION_0916_2.md](docs/VERIFICATION_0916_2.md) — 2026-09-16(2차) 검증 보고서 (요청 이력 · 모델 화면 · 답변 페르소나 · 규칙 확장 · headless 내성 · 협업)**
+§0 요약표(단위 181 · 스트레스 9 · CLI 222 · Web 285 · MCP 98 · 버튼 90 · 몽키), §1 요청별로 **무엇을 왜 그렇게 고쳤나**(각 항목에 "예전에는 무엇이 잘못됐나"), §2 검증 상세와 **이 회차에 찾아 고친 결함 2건** — ① **협업 폴링이 읽기 슬롯을 잡아 질의를 밀어내던 것**(같은 시드 멍키 비교로 폭격 중 정상 질의 0/22 → 4/24, 30명 동시 질의 1.1s → 0.7s), ② `argv` 의 NUL 문자가 예외로 새던 것, §3 다른 환경에서 다시 돌리는 순서, §4 바뀐 파일.
+
+**[docs/IMPLEMENTATION_PLAN_0916.md](docs/IMPLEMENTATION_PLAN_0916.md) — 2026-09-16(2차) 구현 계획**
+요청 이력·모델 화면·답변 페르소나·규칙 확장성·headless 무응답·협업(채팅/게시판)을 **왜 그렇게 만들기로 했는가** — 검토한 대안과 버린 이유 포함. 부수 기능이 본체를 망가뜨리지 않게 지킨 네 가지 원칙.
+
+**[docs/VERIFICATION_0916.md](docs/VERIFICATION_0916.md) — 2026-09-16 검증 보고서 (MCP 종단 검증 완주 · 포렌식 화면 정리)**
+§0 요약표(단위 163 · CLI 222 · Web 259 · **MCP 종단 98** · UI 배선 · 브라우저 · 버튼 · 몽키), §1 이 회차에 찾아 고친 결함 — 제품 2건(**stdio `Content-Length` 가 한글 본문에서 다음 메시지를 삼키던 것**, `method` 없는 본문을 조용히 버려 클라이언트가 멈추던 것)과 하네스 7건(블로킹 readline, Windows 개행 변환, latin-1 헤더, `mode=auto` 루프백에서 인증이 꺼지는 것, 키 발급 순서, 키 하나로 동시성 흉내, doctor 기대의 모순), §2 구간별 확인 항목, §3 **기대 결과 포렌식 화면 개선**(“판정은 sufficient 인데 기대 문서는 미해결” 안내, 목표·수정안 정렬과 접기), §4 다른 환경에서 다시 돌리는 순서.
+
 **[docs/VERIFICATION_0915.md](docs/VERIFICATION_0915.md) — 2026-09-15 전 기능 검증 보고서**
 Web UI 와 CLI 가 제공하는 모든 기능을 하나씩 실행해 얻은 결과: 단위 테스트 87, CLI 184 명령(격리 임시 환경), Web 210 요청(게스트/viewer/class1/admin/API 키/MCP 9도구/CSRF), UI 배선 정적 검사, Edge headless 렌더. 검증 중 고친 결함 2건(잘못된 API 키가 게스트로 강등되던 문제, `mcp --client-config` 경로 이스케이프), 요청 6항목 ↔ 검증 매핑, 다른 환경에서 재실행하는 법(`tools/verify/`).
+
+**[docs/REQUEST_HISTORY.md](docs/REQUEST_HISTORY.md) — 지난 요청 목록과 "그때 그 답" 다시 보기 (2026-09-16)**
+Ask 탭의 **🕘 내 지난 요청**(대기·진행 중·완료를 한 목록에서, 한 줄을 누르면 질의를 다시 돌리지 않고 그때의 답변·근거·판정을 그대로 재현), 결과 원본을 DB 밖 파일로 남기는 이유와 위치(`requests_dir` = `data/requests/<yyyy-mm>/req_<id>.json`)·보존 기간(`requests_keep_days`)·정리 명령(`maintenance prune_requests`), `requests` 테이블의 `user` 열과 이관, 남의 요청까지 보는 권한(`requests all`), API 와 증상별 문제 해결.
+
+**[docs/COLLAB.md](docs/COLLAB.md) — 휘발성 채팅과 게시판 (2026-09-16)**
+왼쪽 사이드바 최상단에 고정되는 **휘발성 채팅**(서버 메모리, `retain_min` 뒤 사라짐)과 `/게시 제목` 으로만 남는 **게시판**(`data/collab/board.json`), 게시할 때 **내 최근 작업(요청)을 골라 연결**하는 흐름, 접속자 **캐릭터**(드래그로 이동, 머문 시간에 따라 말풍선 글씨가 커짐 — 시작 크기·증가 주기는 관리자 설정), `server.json` 의 `collab` 절 전체와 권한 표, **본체에 영향을 주지 않게 만든 방법**(토글 하나로 off, 저장 분리, 폴링 자동 중단, 클릭 가로채지 않음).
 
 **[docs/WEB_UI.md](docs/WEB_UI.md) — Web UI 사용 설명서 (2026-09-16)**
 화면을 실제로 쓰는 사람과 "이 화면이 원래 이렇게 동작하는 게 맞나"를 확인하는 엔지니어용. §1 헤더 활동 표시기(작업 하나 = 막대 하나, 내 요청은 초록), §2 탭 고정과 1·2·3·4열 분할 보기(패널별 넓게·접기·이동·새로고침), §3 진행 중 작업 보드와 용량 게이지·중지, §4 **계정별 Web UI 프로파일**(저장되는 항목·서버 설정과의 분리·API), §5 상세 분석 리포트 다운로드와 **LLM 소견 받기**, §6 답변 반복 루프 자동 차단과 캐시 정리, §7 테마(기본 Light), §8 **viewer 화면으로 보는 법**, §9 증상별 자가 점검과 클릭 검증 도구.
@@ -185,7 +220,7 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 - **로그**: `logs/` JSON Lines(정상 동작 포함), `run_id` 로 요청 프로파일과 연결(`logs grep --request <id>`).
 - **Web UI**: 워크플로 기준 7그룹(Ask / Corpus / Knowledge / Quality / Evolve / Settings / Observability), 프리셋 체크박스, 토글 사이드바 자동 생성, **테마**(light/dark/high-contrast/solarized, 확장 가능), 콘솔에서 CLI 전체 실행.
 - **다중 사용자 권한** ([SECURITY.md](docs/SECURITY.md)): 로컬 ID/비밀번호 + SSO(OIDC · 프록시 헤더) + API 키 병행, **역할 6단계 `viewer < class3 < class2 < class1 < builder < admin`**, 작업 등급 7단계(read/run/edit/index/rebuild/admin/destructive)에 **admin 이 편집하는 권한 표**(`security perms`, Web 보안 탭), **익명 접속 = viewer**(DB 무영향 기능 전부), CLI 도 같은 표로 게이트(`--user`), 리빌드/파괴적 작업은 확인 문구 + 비밀번호 + 자동 스냅샷, 감사 로그.
-- **MCP** ([MCP.md](docs/MCP.md)): stdio(같은 PC) + **Streamable HTTP**(`serve` 의 `POST /mcp`, Bearer API 키, 여러 외부 LLM 동시 접속, Windows/Linux) + 브리지(stdio 전용 클라이언트 → 원격). 도구 `wiki_query(mode=deep …)`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`, `wiki_feedback`, `wiki_forensic`, `wiki_status`, `wiki_sources`, `wiki_external_search` — 모두 읽기/제안(색인 불변). use case(구현/코드리뷰/이슈분석/리팩토링/unified search)별 skill·agent 는 이 도구 위에 별도로 만든다.
+- **MCP** ([MCP.md](docs/MCP.md)): stdio(같은 PC) + **Streamable HTTP**(`serve` 의 `POST /mcp`, Bearer API 키, 여러 외부 LLM 동시 접속, Windows/Linux) + 브리지(stdio 전용 클라이언트 → 원격). 도구 **12개** `wiki_query(mode=deep …)`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`, `wiki_feedback`, `wiki_forensic`, `wiki_status`, `wiki_analysis`, `wiki_sources`, `wiki_external_search` — 모두 읽기/제안(색인 불변). `tools/list` 는 도구마다 **annotations**(읽기/쓰기·외부 접근 여부)를 함께 주고, `tools/call` 은 실행 전에 **인자(required·type·enum)를 검증**해 실패 이유와 스키마를 돌려준다 — 붙은 LLM 이 스스로 고쳐 다시 부른다. 프로토콜 버전은 `2025-06-18`/`2025-03-26`/`2024-11-05` 중 협상. 붙기 전 자가 점검 **`python -m llmwiki mcp --doctor`**. use case(구현/코드리뷰/이슈분석/리팩토링/unified search)별 skill·agent 는 이 도구 위에 별도로 만든다.
 - **상세 분석 모드** ([ANALYSIS_MODE.md](docs/ANALYSIS_MODE.md)): 토글 `analysis_mode` / `query --analyze` → 질의가 debug_level 2 로 실행되고 설정 스냅샷·단계 타임라인·채널별 상위·융합/부스트/리랭크 전후·doc_expand·컨텍스트·fallback·최종 근거 표·답변 판정·claim·**품질/속도/토큰 렌즈 소견 + 조절점(현재값)**·포렌식·프롬프트 샘플이 `logs/analysis/req_<id>.md` 한 장으로. `analyze <id|last> [--focus] [--print]`, Web 📊(초점·다운로드·복사), MCP `wiki_analysis`, `GET /api/analysis`. LLM 에게 첨부하는 지시문 포함.
 - **다른 RAG 연동·MCP 확장** ([RAG_FEDERATION.md](docs/RAG_FEDERATION.md)): `mcp_sources.json` 에 소스(전송 stdio/http/rest)를 적으면 (1) **`external_rag`** — 외부 검색 결과가 가상 청크 `ext:<source>:<id>` 로 fts/vector/graph 와 함께 RRF 융합·리랭크·인용(`[C#]`, `hits.external`), (2) **`mcp_federation`** — 외부 서버의 tool 이 우리 `/mcp` 에 `<source>__<tool>` 로 노출·중계(외부 LLM 은 우리 서버 하나만 등록; A↔B 상호 연결도 재귀 방지), (3) **플러그인** `plugins/mcp_tools/*.py` 의 `register(add_tool)` 로 코드 수정 없이 도구 추가. 리허설용 목업 `--mock-server`(stdio)·`--mock-rest`(REST) 포함.
 - **채널별 빌드**: `build fts|vector|graph [--full]` 로 한 채널만 다시 만든다(세 채널은 `chunks` 만 읽어 서로 독립; 끝나면 verify 로 결손 보고). `build --channels fts,vector`, 토글 `build_fts`/`embed`/`rule_graph`, Web 빌드 탭 버튼. — BRINGUP_GUIDE §6.1
@@ -211,7 +246,7 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 | 영역 | 명령 |
 |---|---|
 | 빌드/운영 | `health` · `build [--full] [--channels fts,vector,graph] [status|verify --fix]` · **`build fts|vector|graph [--full]`**(채널 리빌드) · `embed report|status|clear-cache` · `corpus lint|types|example|lint-file|stats` · `mcp-source list|test|tools|retrieve|federated|ingest|enrich|fetch`(다른 RAG/검색 API 연동) · `watch --once` · `maintenance …` · `system` |
-| 질의/디버그 | `query "…" [--preset q] [--trace] [--json] [--no-doc-expand] [--analyze --focus quality|speed|tokens]` · **`analyze <id|last> [--focus] [--print] [--out]`**(상세 분석 리포트) · `search fts|vector|graph` · `rules show|add|test` · `time "…"` · `pin add|list|test|remove` · `precompute run|status|clear` · `forensic last|list|summary|<id>` · **`forensic expect <id|last> --doc … --term … [--propose]`** |
+| 질의/디버그 | `query "…" [--preset q] [--trace] [--json] [--no-doc-expand] [--analyze --focus quality|speed|tokens]` · **`analyze <id|last> [--focus] [--print] [--out]`**(상세 분석 리포트) · `search fts|vector|graph` · `rules show|add|test` · `time "…"` · `pin add|list|test|remove` · `precompute run|status|clear` · `forensic last|list|summary|<id>` · **`forensic expect <id|last> --doc … --term … [--propose]`** · **`rerun <request_id> --from <단계> [--points] [--list] [--trace]`**(저장해 둔 중간 결과로 **그 단계부터만** 다시 — [RERUN.md](docs/RERUN.md)) |
 | 품질 | `eval [--matrix]` · `trial run|list|compare|report` · `fusion show|compare` |
 | 진화 | `evolve status|apply|reject|review|feedback` · `memory status|decay|consolidate|episodes` · `wiki` |
 | 설정 | `config show [--effective]|set|paths` · `models show|test [--live]|set` · **`models list [--role r] [--provider p]`·`models catalog add|remove`·`models discover`·`models policy`**(쓸 수 있는 모델 목록과 역할별 타임아웃/재시도 정책) · `tuning show|set|reset|doc` · `preset list|show|apply|diff` · `prompts list|show|reset` |
@@ -220,7 +255,7 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 | 보안 | `users add|list|set-role|passwd|remove` (역할 viewer/class3/class2/class1/builder/admin) · `security show|init|audit|perms [set k=v|reset]` · `apikey add|list|remove` · `snapshot list|create|restore|prune` — 리빌드/파괴적 명령(`build --full`, `build fts|vector|graph`, `maintenance purge_requests`, `config reset`, `snapshot restore`)은 확인 문구 또는 `--yes`. 전역 `--user <id>`(+`LLMWIKI_PASSWORD`) 로 CLI 실행자 로그인 |
 | 관측 | `requests list|last|show` · `logs tail|grep|files` · `arch [show|doc] [--flow …]`(**`arch doc` = [OPTIMIZATION_GUIDE.md](docs/OPTIMIZATION_GUIDE.md) 재생성**) · **`optimize <id|last> [--focus quality|speed|tokens] [--out bundle.md]`**(가이드+설정+실측+지시문을 한 파일로 — LLM 에게 그대로 준다) · `graph [--provenance …]` · `entity` · `docs` · `stats` |
 | 인터페이스 | `serve [--port] [--host] [--insecure]` (Web UI + `POST /mcp`; 기본값 `config.json web_host/web_port`) · `mcp [--transport stdio|http --host --port] [--connect URL --token …] [--client-config [--url]] [--doctor [--check-sources]]` (기본값 `mcp_transport/mcp_host/mcp_port/mcp_url`; **`--doctor` 는 도구·스키마·플러그인·외부 소스·페더레이션·인증을 한 번에 자가 점검**) |
-| 검증 | `run.bat test`(unittest 135) · `python tools/verify/verify_cli.py|verify_web.py|verify_ui_wiring.py|verify_browser.py|verify_buttons.py|verify_monkey.py`(무작위 입력 내성) · **`verify_mcp.py`**(MCP 전송 3종·도구·확장·동시성) — [docs/VERIFICATION_0915.md](docs/VERIFICATION_0915.md) |
+| 검증 | **`python tools/verify/verify_all.py`** 한 줄로 전부 — 단위·스트레스(30명 동시)·문서정합·CLI·Web·MCP 종단·UI 배선·브라우저·버튼·보안화면·단계 재실행·협업 다중접속·**타임아웃/실패 경로**·몽키. 결과는 `tools/verify/verify_all_result.json` 과 [VERIFICATION_0917.md §0](docs/VERIFICATION_0917.md) 표에 **자동으로** 기록된다(손으로 옮기지 않으므로 낡지 않는다). 개별 실행: `verify_cli.py` `verify_web.py` `verify_mcp.py [--quick]` `verify_docs.py` `verify_timeouts.py` `verify_buttons.py` `verify_security_ui.py`([SECURITY §8.1](docs/SECURITY.md)) `verify_rerun_ui.py` `verify_monkey.py` |
 | 코퍼스 도구 | `python tools/corpus_ingest.py <경로> --out corpus/imported`(형식 없는 문서를 계약 형식으로 **무손실** 변환, `--verify-only` 로 재검증) · `python tools/fetch_rfc_corpus.py --max-mb 8`(공개 RFC 로 실데이터 코퍼스 구성) |
 
 ---

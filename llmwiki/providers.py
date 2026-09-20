@@ -336,8 +336,36 @@ class MockLLM(BaseLLM):
     def ping(self) -> Dict[str, Any]:
         return {"ok": True, "ms": 0.0, "detail": "mock (deterministic, no network)"}
 
+    # ---- 테스트 훅 (환경 변수로만 켜진다 — 기본 동작에는 영향이 없다) ----
+    # 타임아웃·재시도·회로 차단 같은 **실패 경로**는 실제로 실패를 만들어야 확인할 수 있는데,
+    # 진짜 LLM 으로는 재현이 불가능하고 느리다. mock 에 아래 두 손잡이를 둔다:
+    #   LLMWIKI_MOCK_DELAY_MS=1500        호출마다 이만큼 지연 (느린 요청·취소·대기열 시험용)
+    #   LLMWIKI_MOCK_FAIL=timeout         매번 타임아웃으로 실패 (transient → 재시도·회로 차단 경로)
+    #   LLMWIKI_MOCK_FAIL=timeout:2       처음 2회만 실패하고 3회째 성공 (재시도 성공 경로)
+    # 문서: docs/CONCURRENCY.md §타임아웃 검증, tools/verify/verify_timeouts.py
+    _fail_counts: Dict[str, int] = {}
+
+    def _test_hooks(self) -> None:
+        delay = float(os.environ.get("LLMWIKI_MOCK_DELAY_MS") or 0) / 1000.0
+        if delay > 0:
+            _pg.sleep_cancellable(delay)       # 취소 요청이 오면 여기서 깨어난다 (실제 LLM 대기와 같은 성질)
+        spec = str(os.environ.get("LLMWIKI_MOCK_FAIL") or "").strip()
+        if not spec:
+            return
+        kind, _, n = spec.partition(":")
+        kind = kind or "timeout"
+        limit = int(n) if n.isdigit() else -1        # -1 = 계속 실패
+        key = "%s:%s" % (kind, self.role)
+        seen = MockLLM._fail_counts.get(key, 0)
+        if limit >= 0 and seen >= limit:
+            return
+        MockLLM._fail_counts[key] = seen + 1
+        raise LLMError("mock %s (테스트 훅 LLMWIKI_MOCK_FAIL, %d회째)" % (kind, seen + 1),
+                       transient=True, kind=kind)
+
     def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
         t0 = time.perf_counter()
+        self._test_hooks()
         text = ""
         if "TASK=extract" in system:
             ents = []

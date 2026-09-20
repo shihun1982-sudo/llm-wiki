@@ -20,7 +20,8 @@
 | 10 | `security.json` 확인(기본 admin `kh82.kim` 비밀번호 변경) → `users add <id> --role <viewer|class3|class2|class1|builder|admin>` → `security perms`(권한 표) → `serve --host 0.0.0.0` — §4.4 | 게스트로 질의 가능, viewer 로 리빌드가 로그인 안내/403, builder 는 채널 리빌드 문구 모달, `security audit` |
 | 11 | 외부 LLM 연결: `apikey add <이름> --role viewer` → 클라이언트에 `{"type":"http","url":"http://host:8765/mcp","headers":{"Authorization":"Bearer lwk_…"}}` (같은 PC 는 stdio) — §4.5, [MCP.md](MCP.md) | **`python -m llmwiki mcp --doctor`**(도구·스키마·플러그인·외부 소스·페더레이션·인증 자가 점검) 이 "정상", 그리고 `curl …/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` |
 | 12 | 채널별 빌드·문서 단위 확장·LLM 재시도·기대 결과 포렌식 확인 — §6.1, §7.1, §4.3, §9 | `build fts|vector|graph`, `query … --trace` 의 `doc_expand` 단계, `forensic expect last --doc …` |
-| 13 | 전 기능 재검증 — `tools/verify/` 스크립트 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §6, 남은 항목은 [HANDOVER_0916.md](HANDOVER_0916.md) §2.4) | `verify_cli.py`, `verify_web.py` 전부 OK, `verify_ui_wiring.py` OK, `verify_browser.py` OK, `verify_mcp.py --quick` OK |
+| 2.5 | **이미 빌드해 둔 색인이 있으면** 다시 빌드하지 말고 가져다 쓴다 — `data/llmwiki.sqlite3` + `data/rules.json` + `corpus/` 를 **타임스탬프 보존해서** 복사 — 색인 파일만이면 §2.2, **코퍼스와 색인을 통째로**면 §2.3 (복사 명령 · 받는 쪽에서 바꿀 것 표) | `health`(embedding_dim 일치·corpus_dirs 존재·channels_populated) → `build verify` → `build` 가 `changed=0` |
+| 13 | 전 기능 재검증 — `tools/verify/` 스크립트 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §6, 남은 항목은 [HANDOVER_0916.md](HANDOVER_0916.md) §2.4) | `verify_cli.py`, `verify_web.py` 전부 OK, `verify_ui_wiring.py` OK, `verify_browser.py` OK, `verify_mcp.py --quick` OK, **`verify_security_ui.py` OK**(보안·사용자 화면을 인증 꺼짐/admin/admin 아님 세 상태로 눌러 본다 — 증상별 원인은 [SECURITY.md §8.1](SECURITY.md)) |
 | 15 | 품질/속도/토큰 디버깅 준비 — `query "대표 질의" --analyze` 로 `logs/analysis/req_<id>.md` 가 생기는지, 렌즈 소견에 조절점이 붙는지 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md), 그 자료를 LLM 에게 통째로 줄 때는 `optimize last --out bundle.md` — §7.0, [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) | `analyze last --print` 에 §0~§9, `optimize last` 가 A~D 절을 만든다 |
 | 14 | (선택) 다른 RAG / 검색 API / MCP 서버 연결 — `mcp_sources.json`(`setup/mcp_sources.example.json`), 토글 `external_rag`·`mcp_federation` — §4.6, [RAG_FEDERATION.md](RAG_FEDERATION.md) | `mcp-source test <src>`, `mcp-source retrieve "…"`, `query … --external-rag --trace` 에 `external_rag` 단계, `/mcp tools/list` 에 `<src>__<tool>` |
 
@@ -83,6 +84,147 @@ python -m llmwiki build verify
 (FTS·그래프는 그대로 두고 벡터만 재생성). 임베딩 모델이나 `embed_dim` 을 바꿨다면 반드시 이 명령이 필요하다.
 캐시만 비우려면 `python -m llmwiki embed clear-cache`, 현황은 `embed report`.
 
+### 2.2 **이미 빌드해 둔 색인을 가져다 쓰기** (빌드를 다시 하지 않는다)
+
+다른 PC/서버에서 이미 `build --full` 을 끝낸 색인이 있다면 **파일 복사만으로** 그대로 쓸 수 있다.
+352 문서·16,892 청크 색인 기준으로 빌드는 수십 분이지만 복사는 수 분이다.
+
+#### 무엇을 복사하나
+
+색인은 **파일 하나**다 — `data/llmwiki.sqlite3`. FTS·벡터·그래프·문서 메타·캐시가 모두 그 안에 있다
+(임베딩은 별도 폴더가 없다 — §2.1).
+
+```bat
+:: [보내는 쪽] WAL 을 본체로 합치고 나서 복사하면 파일 하나만 들고 가면 된다
+python -m llmwiki maintenance wal_checkpoint
+python -m llmwiki snapshot prune --keep 1      :: 스냅샷은 가져갈 필요가 없다 (가장 큰 용량)
+
+:: [받는 쪽] 색인과 '설정처럼 쓰이는' data 파일만
+copy  <보내는쪽>\data\llmwiki.sqlite3  data\
+copy  <보내는쪽>\data\rules.json       data\
+```
+
+| 파일/폴더 | 가져가나 | 이유 |
+|---|---|---|
+| `data/llmwiki.sqlite3` | **○ 반드시** | 색인 본체 (FTS·`embeddings`·`doc_vectors`·엔티티/관계·`doc_meta`·캐시) |
+| `data/llmwiki.sqlite3-wal`, `-shm` | △ | `wal_checkpoint` 를 돌렸다면 필요 없다. 안 돌렸다면 **셋 다** 함께 복사 (하나만 빠지면 최근 커밋이 사라진다) |
+| `data/rules.json` | **○ 반드시** | id 패턴·링크 규칙. 설정 파일인데 `data/` 안에 산다 |
+| `corpus/` | **○ 반드시** | 아래 "코퍼스가 있어야 한다" 참고 |
+| 루트의 `*.json`, `.env`, `schemas/`, `prompts/`, `eval/` | **○** | 설정·문서 계약·프롬프트 |
+| `data/snapshots/` | ✕ | 보내는 쪽의 백업. 용량만 크다 |
+| `data/.session_secret`, `data/sessions.json` | **✕ 절대** | 로그인 세션이 그대로 넘어간다. 환경마다 새로 만들어야 한다 |
+| `data/requests/`, `data/reruns/`, `logs/` | ✕ (선택) | 보내는 쪽의 기록. 없어도 동작한다 |
+| `wiki/` | ✕ | 빌드의 `wiki_pages` 단계가 다시 만든다 |
+
+#### 맞아야 하는 것 (안 맞으면 조용히 품질이 떨어진다)
+
+| 맞춰야 할 것 | 왜 | 확인 방법 |
+|---|---|---|
+| **`embed_provider` · `embed_dim`** | `embeddings` 행마다 provider·dim 이 함께 저장된다. 다르면 벡터 검색이 무의미해진다 | `health` 의 `embedding_dim` — `stored=[('hash', 4096, 16896)] current=('hash', 4096)` 처럼 **양쪽이 같아야** 한다 |
+| **`embed_provider` 가 `auto` 인 채로 옮기는 것** ⚠ | `auto` 는 *그 환경에서* 고른다 — `VOYAGE_API_KEY` 가 있으면 voyage, Ollama 에 `bge-m3` 등이 받아져 있으면 ollama, 없으면 hash (`providers.make_embedder`). 즉 **보내는 쪽과 받는 쪽이 다른 임베더를 고를 수 있다**. 기본값이 `auto` 라서 가장 흔히 밟는 함정이다 | 색인을 가져갈 때는 config.json 에 **실제로 쓰인 값을 고정**해 적는다 (`"embed_provider": "hash"`). `health` 의 `embedding_dim` 이 stored/current 불일치로 잡아 준다. 바꿀 생각이면 옮긴 뒤 `build vector --full` |
+| **코퍼스가 실제로 있을 것** | 문서 id 는 코퍼스 폴더 기준 **상대 경로**라 절대 경로는 달라도 되지만, 폴더 자체가 없으면 다음 빌드가 "전부 삭제됨" 으로 본다 | `health` 의 `corpus_dirs` 가 **fail** 로 막아 준다. 이때 `--force` 를 붙이지 말 것 |
+| 청크 설정 (`chunk_chars`·`chunk_overlap`) | 새로 넣는 문서만 다른 규칙으로 쪼개져 섞인다 | 보내는 쪽 `config.json` 을 그대로 쓰면 자동으로 맞는다 |
+| `schemas/`, `data/rules.json` | 문서 계약과 그래프 규칙. 다르면 이후 빌드부터 메타·엔티티가 달라진다 | 같이 복사 |
+
+> **복사할 때 타임스탬프를 보존하라.** 증분 빌드는 파일의 **mtime·크기**로 변경을 판단한다
+> (경로가 아니라). 타임스탬프가 바뀌면 다음 빌드가 **전 문서를 다시 읽고 다시 임베딩**한다 —
+> 색인을 가져온 의미가 없어진다. `robocopy /E /COPY:DAT` (Windows) 또는 `cp -a` / `rsync -a` (Linux) 를 쓴다.
+
+#### 받는 쪽에서 확인 (3분)
+
+```bat
+python -m llmwiki health                 :: embedding_dim 일치 · corpus_dirs 존재 · channels_populated
+python -m llmwiki stats                  :: docs/chunks/embeddings/entities 가 보내는 쪽과 같은지
+python -m llmwiki build verify           :: 색인 무결성 (FTS·벡터·그래프 개수 정합)
+python -m llmwiki query "대표 질의" --trace   :: fts/vector/graph 세 채널이 모두 결과를 내는지
+python -m llmwiki build                  :: 증분 — 여기서 changed=0 이면 복사가 깨끗하게 끝난 것
+```
+
+마지막 `build` 가 `changed=0 removed=0` 이면 성공이다. `changed` 가 문서 수만큼 나오면
+**타임스탬프가 보존되지 않은 것**이므로, 그대로 두면 다시 임베딩한다(결과는 같지만 시간이 든다).
+
+#### 채널이 비어 있는 채로 넘어오는 경우
+
+`health` 의 **`channels_populated`** 가 이걸 잡는다. 토글은 켜져 있는데 색인이 비어 있으면
+그 채널은 질의마다 돌지만 **늘 0건**이라, 오류도 로그도 없이 품질만 떨어진다.
+
+```
+△ channels_populated  비어 있는 채널: graph(entities=0) → `build graph`
+```
+
+이때는 전체 리빌드 없이 **그 채널만** 다시 만든다 (실측: 352문서·16,892청크에서 `build graph` 13초,
+엔티티 617 · 관계 13,411 · 커뮤니티 35 생성).
+
+```bat
+python -m llmwiki build graph            :: 그래프만 (FTS·벡터는 그대로)
+python -m llmwiki build vector --full    :: 임베더/차원을 바꿨을 때
+python -m llmwiki build fts              :: 토크나이저·trigram 설정을 바꿨을 때
+```
+
+### 2.3 **코퍼스와 색인을 통째로 가져가기** (가장 간단한 방법 · 권장)
+
+§2.1 은 "색인을 버리고 다시 빌드", §2.2 는 "색인 파일만 가져오기" 다.
+**코퍼스도 색인도 그대로 옮기고 싶다**면 폴더를 통째로 복사하는 것이 가장 확실하다.
+경로 설정이 전부 **상대 경로**(`config.json` 의 `corpus_dirs: ["corpus"]`, `data_dir: "data"`,
+`wiki_dir: "wiki"`)라서 복사한 폴더 위치가 달라도 고칠 것이 없다.
+
+#### ① 보내는 쪽에서 먼저 줄인다
+
+복사본 용량의 대부분은 **가져갈 필요 없는** 자동 백업이다 (실측: `data/snapshots/` 1,472 MB 대
+색인 본체 480 MB + 코퍼스 13 MB).
+
+```bat
+python -m llmwiki snapshot prune --keep 1        :: 자동 백업 정리 — 여기서 가장 많이 줄어든다
+python -m llmwiki maintenance wal_checkpoint     :: WAL 을 본체로 합쳐 sqlite3 파일 하나로
+```
+
+#### ② 복사 — **타임스탬프를 반드시 보존**
+
+```bat
+:: Windows — /COPY:DAT 가 mtime 을 보존한다. 이게 빠지면 다음 빌드가 전 문서를 다시 임베딩한다
+robocopy . \\서버\llmwiki /E /COPY:DAT /XD .git __pycache__ logs data\snapshots data\requests data\reruns
+```
+
+```bash
+# macOS / Linux — -a 가 타임스탬프를 보존한다
+rsync -a --exclude .git --exclude __pycache__ --exclude logs \
+      --exclude data/snapshots --exclude data/requests --exclude data/reruns \
+      ./ user@서버:/opt/llmwiki/
+```
+
+| 폴더 | 실측 | 가져가나 |
+|---|---|---|
+| `corpus/` | 503 파일 · 13 MB | **○ 반드시** — 없으면 다음 빌드가 "전 문서 삭제" 로 본다 |
+| `data/llmwiki.sqlite3` | 480 MB | **○ 반드시** — FTS·벡터·그래프·`doc_meta`·캐시가 전부 이 파일 하나에 있다 |
+| `data/rules.json`, `data/profiles.json` | 작음 | **○** — 설정 파일인데 `data/` 안에 산다 |
+| 루트 `*.json`, `schemas/`, `prompts/`, `eval/`, `setup/`, `llmwiki/`, `tools/` | 작음 | **○** |
+| `data/snapshots/` | 1,472 MB | ✕ — 보내는 쪽 백업 |
+| `data/requests/`(20 MB) · `data/reruns/`(6 MB) · `logs/` | | ✕ — 보내는 쪽 실행 기록 |
+| `wiki/` | 작음 | 선택 — 빌드의 `wiki_pages` 단계가 다시 만든다 |
+
+#### ③ 받는 쪽에서 **반드시 바꾸는 것** (경로는 안 바꿔도 된다)
+
+| 파일 | 무엇을 | 왜 |
+|---|---|---|
+| `data/.session_secret`, `data/sessions.json` | **지운다** | 로그인 세션이 그대로 넘어간다. 서버가 새로 만든다 |
+| `.env` | 그 환경의 API 키·PAT 로 교체 | 키는 환경마다 다르다. 게이트웨이는 §4.1 |
+| `config.json` 의 `embed_provider` | `"auto"` → **실제로 쓰인 값**(`"hash"`) 로 고정 | `auto` 는 환경마다 다른 임베더를 고른다 — §2.2 의 ⚠ 행 |
+| `security.json` | 계정·SSO·역할을 그 환경 기준으로 | 사람이 다르다. `setup/security.example.json` 참고 |
+| `server.json` | `host`/`port`, 동시 실행 슬롯 | 여러 명이 쓰면 [CONCURRENCY.md](CONCURRENCY.md) §3 |
+| `mcp_sources.json` | 외부 RAG 주소 | 사내 주소가 다르면 |
+
+#### ④ 확인 (3분) — §2.2 "받는 쪽에서 확인" 과 같다
+
+```bat
+python -m llmwiki health                 :: embedding_dim 일치 · corpus_dirs 존재 · channels_populated
+python -m llmwiki stats                  :: docs/chunks/embeddings 가 보내는 쪽과 같은지
+python -m llmwiki build verify           :: 색인 무결성
+python -m llmwiki build                  :: changed=0 removed=0 이면 복사가 깨끗하게 끝난 것
+```
+
+`changed` 가 문서 수만큼(예: 352) 나오면 **타임스탬프가 보존되지 않은 것**이다.
+결과는 같지만 전 문서를 다시 읽고 다시 임베딩하므로 색인을 가져온 의미가 없어진다 — ② 로 돌아간다.
+
 ## 3. 설정 파일 (모두 프로젝트 루트, 위치는 `LLMWIKI_<NAME>_PATH` 로 변경 가능 — `config paths`)
 
 | 파일 | 역할 | 언제 바꾸나 | 반영 |
@@ -133,8 +275,11 @@ python -m llmwiki build verify
 | 채널별 빌드 | `config.json toggles` | `build_fts`(on) · `embed`(on) · `rule_graph`(on) · `llm_graph`(off) · `communities`(on) · `wiki_pages`(on) | `config.example.json` | `build fts|vector|graph`, `build verify` |
 | 문서 단위 확장 | `config.json toggles` + `tuning.json` + `presets.json` | `doc_expand`(on); `doc_expand_top_docs`(3) · `doc_expand_max_chunks`(3) · `doc_expand_min_score`(0.2) · **`doc_expand_mode`(keyword·vector·hybrid·`full`)** · `doc_expand_w`(0.5); 프리셋 speed/token 은 off. **`full` = 근거가 나온 문서를 통째로 읽힌다** — 점수로 거르지 않고 문서 순서대로, `doc_expand_max_chunks` 와 `context_max_chars` 로만 제한(품질↑·토큰↑, max_chunks 를 함께 키운다) | `tuning show --stage context`, `preset show quality` | `query … --trace` 의 `doc_expand`, `--no-doc-expand` |
 | LLM 재시도(HTTP 프로바이더) | `config.json` | `llm_timeout`(600) · `llm_retries`(3) · `llm_retry_backoff_s`(2.0) · 토글 `llm_failure_report`(on) | `config.example.json` | `models test --live`, 답변 상단 `⚠ LLM 실행 보고` |
-| headless 재시도(5분×3) | `agents.json` (에이전트별) | `timeout_s`(300) · `retries`(3) · `retry_backoff_s`(5) · `retry_on`([timeout, exec, exit, empty]) · `command`/`cwd`/`env` | `setup/agents.example.json`, `setup/config.example.headless.json` | `models test --live`, mock: `python -m llmwiki.headless --mock --sleep 400` |
-| 기대 결과 포렌식 | `tuning.json` | `forensic_near_miss_mult`(3) · `forensic_term_candidates`(6) · `forensic_term_targets`(20) · `forensic_pin_confidence`(0.6) · (기존) `forensic_min_events`(3) · 토글 `forensic_auto`(on) | `tuning show --stage forensic` | `forensic expect last --doc …` |
+| headless 재시도·**무응답 대책** | `agents.json` (에이전트별) | `timeout_s`(300, 1회 전체 제한) · `retries`(3) · `retry_backoff_s`(5) · `retry_on`([timeout, exec, exit, empty, **stall**]) · **`stall_timeout_s`(60 — 마지막 출력 뒤 이만큼 조용하면 죽이고 재시도)** · **`first_output_timeout_s`(120)** · **`keep_partial_on_timeout`(true — 멎기 전 받은 답을 쓴다)** · **`failure_log_chars`(2000)** · `command`/`cwd`/`env` | `setup/agents.example.json`, `setup/config.example.headless.json` | `models test --live`, mock: `python -m llmwiki.headless --mock --stall 30` |
+| 기대 결과 포렌식 | `tuning.json` | `forensic_near_miss_mult`(3) · `forensic_term_candidates`(6) · `forensic_term_targets`(20) · `forensic_pin_confidence`(0.6) · **`forensic_suggestion_min_confidence`(0.5)** · **`forensic_targets_shown`(3)** · (기존) `forensic_min_events`(3) · 토글 `forensic_auto`(on) | `tuning show --stage forensic` | `forensic expect last --doc …` |
+| **요청 이력·결과 보관** | `config.json` | `keep_requests`(2000, DB 행) · **`requests_dir`(`data/requests`)** · **`requests_keep_days`(90)** | `config.example.json` | `maintenance prune_requests`, Ask › 🕘 내 지난 요청 — [REQUEST_HISTORY.md](REQUEST_HISTORY.md) |
+| **규칙 확장 라운드** | `tuning.json` | **`query_rules_max_rounds`(2)** — 약어→정식명→동의어 사슬을 몇 번 접어 적용할지 | `tuning show --stage query_rules` | `rules test "…"`, `rules lint` |
+| **협업(채팅·게시판)** | `config.json toggles` + `server.json` | 토글 **`collab`**(on); `collab.enabled`(true) · `retain_min`(120) · `max_messages`(500) · `board_keep_days`(365) · `bubble_font_start_px`(12) · `bubble_font_step_px`(1) · `bubble_font_step_min`(30) · `bubble_font_max_px`(28) · `idle_hide_min`(240) | `setup/server.example.json` | `curl …/api/collab` — [COLLAB.md](COLLAB.md) |
 | 다른 RAG 연동(검색 채널) | `mcp_sources.json` + `config.json toggles` + `tuning.json` | 소스 `transport`(stdio/http/rest) · `retrieve`(tool/args/result_path/*_field/weight/when); 토글 `external_rag`(off); `channel_w_external`(1.0) · `external_rag_k`(5) · `external_rag_inject`(2) | `setup/mcp_sources.example.json` | `mcp-source test|retrieve`, `query … --external-rag --trace` |
 | 도구 페더레이션(외부 LLM 에 한 곳으로) | `mcp_sources.json` + `config.json toggles` | 소스 `expose`(true/목록); 토글 `mcp_federation`(off) | 같은 예시 | `mcp-source federated`, `/mcp tools/list` 의 `<source>__<tool>` |
 | MCP 플러그인 도구 | `config.json` + `plugins/mcp_tools/*.py` | `mcp_plugins_dir`(plugins/mcp_tools) | `plugins/mcp_tools/_example_echo.py` | `mcp-source federated` 의 plugins |
@@ -289,7 +434,17 @@ python -m llmwiki mcp --transport http --host 0.0.0.0 --port 8766
 python -m llmwiki mcp --client-config --url http://wiki-host:8765 --token lwk_…
 ```
 플래그를 생략하면 `config.json` 의 `web_host/web_port`(serve), `mcp_transport/mcp_host/mcp_port`(mcp), `mcp_url`(브리지 대상) 이 기본값이다 — 서버마다 다른 포트/바인드는 파일에 적어 두고 명령은 `serve` / `mcp` 만 치면 된다. 클라이언트 쪽 설정 원본은 `setup/mcp_clients.example.json`.
-확인: `curl -s http://wiki-host:8765/mcp -H "Authorization: Bearer lwk_…" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`. 잘못되거나 폐기된 `lwk_` 키는 게스트로 강등되지 않고 **401** 이므로 클라이언트 로그에서 바로 드러난다.
+
+**연결 확인 (클라이언트를 건드리기 전에 서버에서 먼저)** — [MCP.md](MCP.md) §4:
+```bat
+python -m llmwiki mcp --doctor                     :: 도구 12종·스키마·플러그인·소스·토글·인증·전송을 한 번에 (오류가 있으면 종료코드 1)
+python -m llmwiki mcp --doctor --check-sources     :: 외부 소스에 실제로 접속까지 (느림)
+curl -s http://wiki-host:8765/mcp -H "Authorization: Bearer lwk_…" -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+```
+- 잘못되거나 폐기된 `lwk_` 키는 게스트로 강등되지 않고 **401** 이므로 클라이언트 로그에서 바로 드러난다.
+  단 `security.json` 의 `mode` 가 `auto` 인 채로 **`127.0.0.1` 에 바인드하면 인증 자체가 꺼진다** — 루프백에서 키 동작을 시험하려면 `mode: "on"` 으로 두고 봐야 한다.
+- **붙는 클라이언트마다 키를 따로 발급한다.** 동시성 제한(`server.json` 의 `max_parallel_per_user`, 기본 3)이 키 단위라, 여러 LLM 이 한 키를 공유하면 네 번째 동시 호출부터 429(`per_user_limit`)를 받는다 ([CONCURRENCY.md](CONCURRENCY.md)).
+- 도구 호출이 `isError` 로 돌아오면 메시지에 `inputSchema` 가 함께 오므로 붙는 LLM 이 스스로 고쳐 다시 부를 수 있다 ([MCP.md](MCP.md) §2.1).
 
 ### 4.6 다른 RAG · 검색 API · MCP 서버를 붙이기 (외부 LLM 은 우리 /mcp 하나만)
 
@@ -307,7 +462,13 @@ python -m llmwiki config set mcp_federation=true
 python -m llmwiki mcp-source federated                                :: tools=[peer_wiki__wiki_query, kb_rest__search, …], plugins
 :: (4) 코드 수정 없이 도구 추가: plugins/mcp_tools/<이름>.py 의 register(add_tool)  (예시 _example_echo.py)
 ```
-리허설용 목업: `python -m llmwiki.mcp_client --mock-rest 8799`(REST) · `mcp_sources.json` 의 `mock`(stdio). 튜닝 `channel_w_external`·`external_rag_k`·`external_rag_inject`, 소스별 `weight`·`when(always|fallback)`·`timeout_s`. 외부 소스 오류는 trace `external_rag.errors` 에만 남고 질의는 계속된다. 서로 expose 한 두 서버도 재귀 방지 헤더로 안전하다. 도구: `wiki_query`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`, `wiki_feedback`, `wiki_forensic`(기대 결과 포렌식), `wiki_status` — 모두 read 등급(색인을 바꾸지 않음). 여러 LLM 이 동시에 붙으면 서버 락으로 직렬화되어 큐잉된다(실패 없음).
+```bat
+:: (5) 확인 — 무엇이 붙었고 무엇이 안 붙었는지 한 번에
+python -m llmwiki mcp --doctor --check-sources     :: 소스 선언·연결·토글·페더레이션 이름·플러그인 적재
+```
+리허설용 목업: `python -m llmwiki.mcp_client --mock-rest 8799`(REST) · `mcp_sources.json` 의 `mock`(stdio). 튜닝 `channel_w_external`·`external_rag_k`·`external_rag_inject`, 소스별 `weight`·`when(always|fallback)`·`timeout_s`. 외부 소스 오류는 trace `external_rag.errors` 에만 남고 질의는 계속된다. 서로 expose 한 두 서버도 재귀 방지 헤더로 안전하다.
+
+도구는 **12종**이며 모두 read 등급(색인을 바꾸지 않음): `wiki_query`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`(제안 큐), `wiki_feedback`, `wiki_forensic`(기대 결과 포렌식), `wiki_status`, `wiki_analysis`(상세 분석 리포트), `wiki_sources`, `wiki_external_search`. `tools/list` 는 각 도구에 `annotations`(읽기/쓰기 구분)를 함께 준다 — 붙는 LLM 이 "이 도구가 무엇을 바꾸는가" 를 스스로 판단한다. 여러 LLM 이 동시에 붙으면 서버 락으로 직렬화되어 큐잉되고, 제한을 넘으면 429 + `Retry-After` 로 거부된다([MCP.md](MCP.md) §3.1).
 
 ## 5. 코퍼스 계약 적용
 

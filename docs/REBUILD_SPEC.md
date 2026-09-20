@@ -156,7 +156,7 @@ requests(id, ts, kind, summary, ms, llm_calls, input_tokens, output_tokens, sql_
 
 - `Profiler(name, debug=0|1|2)`; `with prof.stage(name, **meta) as st:`; `st.note(**)`(항상), `st.debug(**)`(≥1), `st.sample(**)`(≥2), `st.log(msg)`(≥1, 경과 ms 접두), 예외 시 `error` + traceback 꼬리 800자 기록 후 재발생. `prof.skipped(name, reason)` 은 enabled=False, ms=0 노드.
 - Stage 는 `offset_ms`(루트 기준), `ms`, `self_ms`, 진입/종료 시점 전역 카운터 차이 `counters{sql, llm_calls, llm_input_tokens, llm_output_tokens, embed_calls, embed_texts}`.
-- `finish()` → 트리 JSON + `summary{total_ms, stages[{name,ms,pct,enabled}](depth1), slowest[5], skipped[], errors[], llm{calls,input_tokens,output_tokens,total_tokens}, sql_statements}` + `debug_level`. `flatten_trace(trace)` 유틸.
+- `finish()` → 트리 JSON + `summary{total_ms, stages(depth1)[{name,ms,pct,enabled}], slowest[5], skipped[], errors[], llm{calls,input_tokens,output_tokens,total_tokens}, sql_statements}` + `debug_level`. `flatten_trace(trace)` 유틸.
 
 ---
 

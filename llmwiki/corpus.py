@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import html
@@ -21,6 +22,42 @@ SUPPORTED = (".md", ".txt", ".csv", ".html", ".htm", ".pdf")
 # 코퍼스 폴더 안에 있어도 색인하지 않는 폴더. _originals 는 tools/corpus_ingest.py 가 변환 전 원본을 보관하는 곳이라
 # 색인하면 같은 내용이 두 번 들어간다 (원본은 추적·재변환용으로만 둔다).
 EXCLUDE_DIRS = {"_originals", "_archive", "__pycache__", "node_modules"}
+
+
+def compile_excludes(patterns: Optional[Iterable[str]]) -> List[str]:
+    """`corpus_exclude` 패턴 목록을 정리한다 (빈 값·주석 제거).
+
+    왜 필요한가: 예전에는 제외 폴더가 코드에 박혀 있어서, 코퍼스 안에 **색인하면 안 되는 것**이
+    섞여 있어도 파일을 옮기는 것 말고는 방법이 없었다. 실제로 이 도구 자신의 소스가 코퍼스에
+    들어가 도메인 문서를 밀어낸 적이 있다 (제외하니 hit@k 0.64 → 0.88).
+    """
+    return [str(p).strip() for p in (patterns or []) if str(p).strip() and not str(p).strip().startswith("#")]
+
+
+def is_excluded(doc_id: str, patterns: Iterable[str]) -> bool:
+    """doc_id(코퍼스 루트 기준 상대 경로, '/' 구분)가 제외 패턴에 걸리는가.
+
+    받아들이는 형태 — 셋 다 같은 뜻으로 쓸 수 있게 한다 (사람마다 다르게 적는다):
+      `imported/llmwiki/`  ·  `imported/llmwiki/*`  ·  `imported/llmwiki/**`   → 그 아래 전부
+      `**/NOTE-*.md`  ·  `*.csv`                                              → fnmatch 패턴
+
+    doc_id 는 **코퍼스 폴더 이름으로 시작**한다 (`corpus/imported/cls/CL-1.md`). `docs` 목록에 보이는
+    그대로 적어도 되고, 앞의 코퍼스 폴더 이름을 빼고 적어도 되게 **둘 다** 맞춰 본다 —
+    목록에서 복사해 붙이는 사람과 문서를 보고 적는 사람이 서로 다르게 쓰기 때문이다.
+    """
+    did = str(doc_id or "").replace("\\", "/")
+    cands = [did]
+    if "/" in did:
+        cands.append(did.split("/", 1)[1])      # 맨 앞 코퍼스 폴더 이름을 뗀 형태
+    for pat in patterns:
+        p = pat.replace("\\", "/").lstrip("/")
+        base = p.rstrip("*").rstrip("/")
+        for c in cands:
+            if fnmatch.fnmatch(c, p):
+                return True
+            if base and (c == base or c.startswith(base + "/")):
+                return True
+    return False
 
 
 @dataclass
@@ -159,13 +196,14 @@ def _guess_title(text: str) -> str:
 
 
 def iter_corpus(dirs: Iterable[str], known: Optional[Dict[str, Dict[str, Any]]] = None,
-                stats: Optional[Dict[str, Any]] = None) -> List[Document]:
+                stats: Optional[Dict[str, Any]] = None, exclude: Optional[Iterable[str]] = None) -> List[Document]:
     """코퍼스 폴더를 재귀 스캔. known(doc_id -> {hash,mtime,size,...}) 이 주어지면 stat 이 같은 파일은 읽지 않는다.
-    stats 에 파일 수/스킵 수/종류별 읽기 시간/가장 느린 파일을 채운다 (프로파일 디버그용)."""
+    exclude 는 `corpus_exclude` 패턴 (doc_id 기준). stats 에 파일 수/스킵 수/제외 수/읽기 시간을 채운다."""
     docs: List[Document] = []
     st = stats if stats is not None else {}
     st.update({"files_seen": 0, "unsupported": 0, "skipped_stat": 0, "read": 0, "empty": 0, "read_ms_by_kind": {},
-               "slowest": [], "missing_dirs": []})
+               "slowest": [], "missing_dirs": [], "excluded": 0})
+    ex = compile_excludes(exclude)
     slow: List[Tuple[float, str]] = []
     for d in dirs:
         if not os.path.isdir(d):
@@ -178,6 +216,9 @@ def iter_corpus(dirs: Iterable[str], known: Optional[Dict[str, Dict[str, Any]]] 
                 st["files_seen"] += 1
                 if os.path.splitext(fn)[1].lower() not in SUPPORTED:
                     st["unsupported"] += 1
+                    continue
+                if ex and is_excluded(doc_id_for(p, d), ex):
+                    st["excluded"] += 1
                     continue
                 t0 = time.perf_counter()
                 doc = load_document(p, d, known)
@@ -197,10 +238,16 @@ def iter_corpus(dirs: Iterable[str], known: Optional[Dict[str, Dict[str, Any]]] 
     return docs
 
 
-def scan_changed(dirs: Iterable[str], known: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """빌드 없이 변경 여부만 빠르게 판단 (auto_build 워처용). 파일을 읽지 않고 stat 만 비교."""
+def scan_changed(dirs: Iterable[str], known: Dict[str, Dict[str, Any]],
+                 exclude: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+    """빌드 없이 변경 여부만 빠르게 판단 (auto_build 워처용). 파일을 읽지 않고 stat 만 비교.
+
+    exclude 는 iter_corpus 와 **같은 목록**을 받아야 한다. 다르면 워처가 "바뀐 문서가 있다" 고 보고
+    빌드를 돌리는데 빌드는 그 문서를 제외해서, 매 주기마다 헛빌드가 돈다.
+    """
     seen = set()
     changed: List[str] = []
+    ex = compile_excludes(exclude)
     for d in dirs:
         if not os.path.isdir(d):
             continue
@@ -211,6 +258,8 @@ def scan_changed(dirs: Iterable[str], known: Dict[str, Dict[str, Any]]) -> Dict[
                     continue
                 p = os.path.join(base, fn)
                 did = doc_id_for(p, d)
+                if ex and is_excluded(did, ex):
+                    continue
                 seen.add(did)
                 k = known.get(did)
                 try:

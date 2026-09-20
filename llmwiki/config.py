@@ -113,7 +113,9 @@ class Toggles:
     fts_optimize: bool = True      # 전체 빌드 후 FTS5 세그먼트 병합(optimize) + PRAGMA optimize
     # ---- 성능/속도/토큰 개선 토글 (query) ----
     rerank_llm: bool = True        # rerank 시 LLM 사용 (끄면 로컬 휴리스틱만 → 토큰 0)
-    query_cache: bool = True       # 동일 질의+설정+빌드버전 결과 캐시 (LLM 토큰 절약)
+    # 기본 off (2026-09-16): 캐시가 켜져 있으면 설정을 바꿔 가며 확인할 때 **바뀐 설정이 반영되지 않은 예전 답**이
+    # 그대로 돌아와 "고쳤는데 그대로다" 로 보인다. 토큰을 아끼려면 운영에 올린 뒤 켠다.
+    query_cache: bool = False      # 동일 질의+설정+빌드버전 결과 캐시 (LLM 토큰 절약)
     context_trim: bool = True      # 컨텍스트 청크를 질의 관련 문장 위주로 압축 (입력 토큰 절감)
     dedupe_hits: bool = True       # 같은 문서의 겹치는 청크(오버랩) 중복 제거
     # ---- 질의 확장/검증/루프 (v3) ----
@@ -130,10 +132,14 @@ class Toggles:
     evidence_compress: bool = False  # LLM 이 근거 문단에서 질문 관련 문장만 선택 (토큰↓)
     router_llm: bool = False       # LLM 라우터 (의도/문서유형 분류) — 휴리스틱 라우터 보완
     pins: bool = True              # pins.json 의 고정 근거 주입
-    precompute: bool = False       # 사전 계산 답변 캐시(answer_cache) 사용
+    precompute: bool = False       # 사전 계산 답변 캐시(answer_cache) 사용 — 기본 off (query_cache 와 같은 이유)
     doc_vector: bool = False       # 문서 카드 임베딩 채널 (문서 단위 검색)
     feedback_boost: bool = False   # 긍정 피드백 청크 boost (decay)
     forensic_auto: bool = True     # 근거 부족/미지원 답변 시 포렌식 자동 기록
+    collab: bool = True            # Web UI 협업(휘발성 채팅 + 게시판). 끄면 화면에서 사라지고 API 는 404 — 본체와 무관
+    # 질의마다 단계별 중간 결과(순서·점수·컨텍스트·답변)를 파일로 남겨 **특정 단계부터 다시 돌릴 수 있게** 한다.
+    # 청크 본문은 저장하지 않으므로 보통 수십 KB 다. 끄면 재실행 버튼이 "저장된 중간 결과 없음" 으로 막힌다.
+    rerun_capture: bool = True     # 단계 재실행용 중간 결과 저장 (docs/RERUN.md)
     mcp_sources: bool = False      # 외부 MCP 소스(mcp_sources.json) 사용 (빌드 ingest / 질의 enrich)
     external_rag: bool = False     # 외부 RAG(mcp_sources.json retrieve 매핑) 결과를 검색 채널 ext_<source> 로 융합
     mcp_federation: bool = False   # mcp_sources.json 에서 expose 한 외부 서버 tool 을 우리 MCP tools/list 에 <source>__<tool> 로 노출·중계
@@ -162,6 +168,11 @@ class Toggles:
 @dataclass
 class Settings:
     corpus_dirs: List[str] = field(default_factory=lambda: list(DEFAULT_CORPUS_DIRS))
+    # 코퍼스 안에 있어도 **색인하지 않을** 경로 패턴 (doc_id = 코퍼스 루트 기준 상대 경로).
+    # 예: ["imported/llmwiki/", "imported/js/", "**/NOTE-*.md"]. 빈 목록이면 전부 색인한다.
+    # 왜 필요한가: 색인하면 안 되는 것이 코퍼스에 섞이면 도메인 문서를 밀어낸다. 실측으로
+    # 이 도구 자신의 소스 150개를 제외했더니 hit@k 0.64 → 0.88, MRR 0.396 → 0.676 이었다.
+    corpus_exclude: List[str] = field(default_factory=list)
     data_dir: str = "data"
     wiki_dir: str = "wiki"
     db_name: str = "llmwiki.sqlite3"
@@ -198,6 +209,15 @@ class Settings:
     llm_graph_budget: int = 0      # 빌드당 LLM 추출 호출 상한 (0 = 무제한)
     llm_graph_min_chars: int = 80  # 이보다 짧은 청크는 LLM 추출 생략
     query_cache_size: int = 200
+    # ---- 요청 이력 보관 (2026-09-16) ----
+    # requests 테이블은 keep_requests 행으로 잘린다. 사용자가 "그때 그 답" 을 다시 보려면 결과가 남아 있어야 하므로
+    # 결과/trace 를 DB 밖 파일로도 남긴다. 비우면 파일 보관을 하지 않는다(예전 동작).
+    requests_dir: str = "data/requests"    # <data_dir> 기준 상대 경로 또는 절대 경로. 월별 폴더 + req_<id>.json
+    requests_keep_days: int = 90           # 보관 파일 보존 기간(일). 0 = 지우지 않음. 정리: `maintenance prune_requests`
+    # 단계 재실행용 중간 결과 (toggles.rerun_capture) — docs/RERUN.md
+    rerun_dir: str = "data/reruns"         # <data_dir> 기준 상대 경로 또는 절대 경로. req_<request_id>.json
+    rerun_keep: int = 50                   # 최근 몇 건을 남길지. 0 = 무제한(권장하지 않음)
+    rerun_max_mb: float = 4.0              # 한 건의 상한(MB). 넘으면 저장하지 않고 trace 에 이유를 남긴다
     # 확장/운영
     auto_build_interval: int = 300  # auto_build 스캔 주기(초)
     embed_batch: int = 64
@@ -335,6 +355,32 @@ class Settings:
     @property
     def db_path(self) -> str:
         return os.path.join(self.data_dir, self.db_name)
+
+    def requests_archive_dir(self) -> str:
+        """요청 결과 보관 폴더의 절대 경로. 비어 있으면 "" (보관 안 함).
+        `data/requests` 처럼 data 로 시작하는 상대 경로는 data_dir 아래로 본다 — 격리 환경에서도 따라간다."""
+        d = str(self.requests_dir or "").strip()
+        if not d:
+            return ""
+        if os.path.isabs(d):
+            return d
+        parts = d.replace("\\", "/").split("/")
+        if parts and parts[0] == "data":
+            parts = parts[1:]
+        return os.path.join(self.data_dir, *parts) if parts else self.data_dir
+
+    def rerun_capture_dir(self) -> str:
+        """단계 재실행용 중간 결과 폴더의 절대 경로. `requests_archive_dir()` 과 같은 규칙
+        (`data/…` 는 data_dir 아래로) — 격리 환경에서도 따라간다."""
+        d = str(self.rerun_dir or "").strip()
+        if not d:
+            return ""
+        if os.path.isabs(d):
+            return d
+        parts = d.replace("\\", "/").split("/")
+        if parts and parts[0] == "data":
+            parts = parts[1:]
+        return os.path.join(self.data_dir, *parts) if parts else self.data_dir
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -540,7 +586,7 @@ TOGGLE_HELP: Dict[str, str] = {
     "warm_cache": "[지연] 빌드 직후 벡터 행렬·엔티티 인덱스를 메모리에 적재해 첫 질의 지연 제거.",
     "fts_optimize": "[속도] 전체 빌드 후 FTS5 세그먼트 병합(optimize) + PRAGMA optimize.",
     "rerank_llm": "[토큰] 리랭크에 LLM 사용. 끄면 로컬 휴리스틱만 (토큰 0, 수 ms).",
-    "query_cache": "[토큰/지연] 동일 질의+설정+빌드버전 결과를 메모리 캐시 (LLM 호출 생략). ※ 캐시는 둘이다 — 이것을 꺼도 precompute(영속 answer_cache)가 계속 답을 돌려주므로, 매번 새로 계산하려면 precompute 도 함께 끈다.",
+    "query_cache": "[토큰/지연] 동일 질의+설정+빌드버전 결과를 메모리 캐시 (LLM 호출 생략). **기본 off** — 켜 두면 설정을 바꿔 가며 확인할 때 예전 답이 그대로 돌아와 '고쳤는데 그대로다' 로 보인다. 운영에 올린 뒤 토큰을 아끼려면 켠다. ※ 캐시는 둘이다 — 이것을 꺼도 precompute(영속 answer_cache)가 계속 답을 돌려주므로, 매번 새로 계산하려면 precompute 도 함께 끈다.",
     "context_trim": "[토큰] 긴 청크를 질의 관련 문장 위주로 압축해 답변 프롬프트 입력 토큰 절감.",
     "dedupe_hits": "[토큰] 같은 문서의 겹치는(오버랩) 청크를 컨텍스트에서 제거.",
     "auto_build": "[운영] 서버가 auto_build_interval 초마다 코퍼스를 stat 스캔, 변경 시 증분 빌드.",
@@ -560,10 +606,12 @@ TOGGLE_HELP: Dict[str, str] = {
     "evidence_compress": "[토큰] LLM 이 근거 문단에서 질문 관련 문장만 남김 (context_trim 의 LLM 판).",
     "router_llm": "[품질/토큰] LLM 이 질의 의도·문서 유형을 분류해 라우터/부스트에 반영.",
     "pins": "[품질] pins.json 의 고정 근거(조건부 문서/청크, 질의별 정답)를 검색 결과 상단에 주입.",
-    "precompute": "[속도/토큰] 사전 계산된 답변 캐시(answer_cache, build_version 키)를 우선 사용. query_cache 와 별개의 영속 캐시라, 매번 새로 계산하려면 둘 다 꺼야 한다. 내용 확인·정리: `precompute status|check|clear`.",
+    "precompute": "[속도/토큰] 사전 계산된 답변 캐시(answer_cache, build_version 키)를 우선 사용. **기본 off** (query_cache 와 같은 이유 — 바꾼 설정이 반영되지 않은 답이 돌아온다). query_cache 와 별개의 영속 캐시라, 매번 새로 계산하려면 둘 다 꺼야 한다. 내용 확인·정리: `precompute status|check|clear`.",
     "doc_vector": "[품질] 문서 카드(제목·메타·헤딩 개요) 임베딩 채널 — 긴 설계 문서의 문서 단위 검색.",
     "feedback_boost": "[품질] 긍정 피드백을 받은 청크에 감쇠하는 소량 boost.",
     "forensic_auto": "[운영] 근거 부족·미지원 답변이 나오면 포렌식 진단을 자동 실행해 forensics 테이블에 누적.",
+    "collab": "[협업] Web UI 의 휘발성 채팅 + 게시판(/게시). 부수 기능이라 끄면 화면에서 사라지고 API 는 404 가 되며 질의·빌드·MCP 에는 영향이 없다. 세부 설정은 server.json 의 collab 절. 설명: docs/COLLAB.md",
+    "rerun_capture": "[디버깅] 질의마다 단계별 중간 결과(순서·점수·컨텍스트·답변)를 data/reruns 에 남겨, 워터폴의 ⟲ 로 **그 단계부터만** 다시 돌릴 수 있게 한다. 청크 본문은 저장하지 않아 한 건 수십 KB. 끄면 ⟲ 가 '저장된 중간 결과 없음' 으로 막힌다. 보관 개수·상한: rerun_keep · rerun_max_mb. 설명: docs/RERUN.md",
     "mcp_sources": "[데이터] mcp_sources.json 의 외부 MCP(예: Mango) 에서 raw data 를 가져와 색인(ingest)/질의 보강(enrich).",
     "external_rag": "[품질/지연] mcp_sources.json 의 retrieve 매핑(다른 RAG·검색 API)을 질의마다 호출해 결과를 검색 채널 ext_<source> 로 융합(rrf). 가중치 channel_w_external × 소스 weight, 건수 external_rag_k. 외부 응답 지연이 질의 지연에 더해진다.",
     "mcp_federation": "[MCP] mcp_sources.json 에서 expose 한 외부 서버의 tool 을 우리 MCP tools/list 에 <source>__<tool> 로 노출하고 호출을 중계 — 외부 LLM 은 /mcp 하나로 여러 RAG 를 쓴다.",
@@ -582,17 +630,86 @@ TOGGLE_HELP: Dict[str, str] = {
 }
 
 # 토글 그룹 (Web UI 사이드바 자동 생성용). 이름은 Toggles 필드와 1:1.
+#: 사이드바 토글 묶음. **파이프라인 순서**(질의를 받아 답이 나가기까지)대로 두고, 그 안에서
+#: "무엇을 하는가" 로 묶는다. 화면 왼쪽은 위에서 아래로 읽히므로 순서 자체가 설명이 된다.
+#: `stage` 는 이 묶음이 어느 단계에 붙는지 (화면의 단계 배지), `hint` 는 묶음 한 줄 설명.
 TOGGLE_GROUPS: List[Dict[str, Any]] = [
-    {"key": "build", "title": "Build", "toggles": ["build_fts", "embed", "rule_graph", "llm_graph", "communities", "community_summary", "wiki_pages", "incremental",
-                                                   "explicit_relations", "schema_lint", "doc_vector", "fts_trigram", "mcp_sources"]},
-    {"key": "build_perf", "title": "Build · 속도/안정성", "perf": True, "toggles": ["stat_skip", "idf_refit_incremental", "incremental_communities", "wiki_full_rewrite",
-                                                                              "warm_cache", "fts_optimize", "embed_adaptive", "health_check", "verify_after_build", "precompute_after_build"]},
-    {"key": "query", "title": "Query · 검색", "toggles": ["fts", "vector", "graph", "external_rag", "router", "router_llm", "time_scope", "query_rules", "query_expand", "query_decompose", "pins", "rerank"]},
-    {"key": "answer", "title": "Query · 근거/답변", "toggles": ["doc_expand", "evidence_check", "evidence_check_llm", "fallback_loop", "llm_answer", "evidence_compress", "claim_check",
-                                                          "claim_check_llm", "answer_refine", "forensic_auto", "llm_failure_report", "analysis_mode"]},
-    {"key": "query_perf", "title": "Query · 토큰/지연", "perf": True, "toggles": ["rerank_llm", "query_cache", "precompute", "context_trim", "dedupe_hits", "feedback_boost"]},
-    {"key": "evolve", "title": "Evolve · System", "toggles": ["evolve_capture", "evolve_auto_apply", "evolve_from_forensics", "memory_decay", "auto_build", "log_stages", "profile_expansion", "mcp_federation"]},
+    {"key": "query", "title": "① 검색 — 어디서 찾나", "stage": "질의",
+     "hint": "채널을 켜고 끄고, 질의를 넓히는 단계. 채널을 끄면 그 신호는 아예 없다.",
+     "toggles": ["fts", "vector", "graph", "external_rag", "router", "router_llm", "time_scope",
+                 "query_rules", "query_expand", "query_decompose", "pins", "rerank"]},
+    {"key": "answer", "title": "② 근거와 답변 — 어떻게 답하나", "stage": "질의",
+     "hint": "찾은 것을 검증하고 답을 만드는 단계. LLM 호출이 몰려 있어 시간·토큰의 대부분을 쓴다.",
+     "toggles": ["doc_expand", "evidence_check", "evidence_check_llm", "fallback_loop", "llm_answer",
+                 "evidence_compress", "claim_check", "claim_check_llm", "answer_refine"]},
+    {"key": "query_perf", "title": "③ 질의 속도 · 토큰", "perf": True, "stage": "질의",
+     "hint": "켜면 빨라지고 토큰을 아끼는 것들 (일부는 품질을 조금 내준다).",
+     "toggles": ["rerank_llm", "query_cache", "precompute", "context_trim", "dedupe_hits", "feedback_boost"]},
+    {"key": "debug", "title": "④ 디버깅 · 기록", "stage": "관측",
+     "hint": "답이 왜 그렇게 나왔는지 되짚기 위한 기록. 품질은 그대로이고 약간의 시간·디스크를 쓴다.",
+     "toggles": ["analysis_mode", "forensic_auto", "llm_failure_report", "rerun_capture",
+                 "log_stages", "profile_expansion"]},
+    {"key": "build", "title": "⑤ 빌드 — 무엇을 색인하나", "stage": "빌드",
+     "hint": "색인에 무엇을 넣을지. 여기서 끈 것은 질의에서 켜도 쓸 것이 없다.",
+     "toggles": ["build_fts", "embed", "rule_graph", "llm_graph", "communities", "community_summary",
+                 "wiki_pages", "incremental", "explicit_relations", "schema_lint", "doc_vector", "fts_trigram"]},
+    {"key": "build_perf", "title": "⑥ 빌드 속도 · 안정성", "perf": True, "stage": "빌드",
+     "hint": "빌드 시간을 줄이거나, 빌드 전후에 스스로 점검하게 한다.",
+     "toggles": ["stat_skip", "idf_refit_incremental", "incremental_communities", "wiki_full_rewrite",
+                 "warm_cache", "fts_optimize", "embed_adaptive", "health_check", "verify_after_build",
+                 "precompute_after_build"]},
+    {"key": "integrate", "title": "⑦ 연동 · 자동화", "stage": "운영",
+     "hint": "다른 RAG·MCP 연결, 자동 빌드, 자가진화, 화면 부가 기능.",
+     "toggles": ["mcp_sources", "mcp_federation", "auto_build", "evolve_capture", "evolve_auto_apply",
+                 "evolve_from_forensics", "memory_decay", "collab"]},
 ]
+
+#: 토글을 **켰을 때** 세 축이 어떻게 되는지. `+1` 좋아짐 · `-1` 나빠짐 · 없으면 영향 없음.
+#: q=품질(답의 정확도·근거 충실도) · s=속도(응답 시간; 빌드 토글은 빌드 시간) · t=토큰(LLM 입출력 비용).
+#: 화면 왼쪽에서 토글마다 배지로 보여 준다 — "이걸 켜면 뭐가 좋아지고 뭘 내주나" 를 누르기 전에 알게 하려는 것.
+#: 근거: docs/OPTIMIZATION_GUIDE.md 의 단계별 손잡이 표와 실측(docs/VERIFICATION_0917.md §3).
+TOGGLE_EFFECT: Dict[str, Dict[str, int]] = {
+    # ---- ① 검색 ----
+    "fts": {"q": 1}, "vector": {"q": 1, "s": -1}, "graph": {"q": 1}, "external_rag": {"q": 1, "s": -1},
+    "router": {"q": 1}, "router_llm": {"q": 1, "s": -1, "t": -1},
+    "time_scope": {"q": 1}, "query_rules": {"q": 1},
+    "query_expand": {"q": 1, "s": -1, "t": -1}, "query_decompose": {"q": 1, "s": -1, "t": -1},
+    "pins": {"q": 1}, "rerank": {"q": 1, "s": -1},
+    # ---- ② 근거와 답변 ----
+    "doc_expand": {"q": 1, "t": -1},
+    "evidence_check": {"q": 1}, "evidence_check_llm": {"q": 1, "s": -1, "t": -1},
+    "fallback_loop": {"q": 1, "s": -1, "t": -1},
+    "llm_answer": {"q": 1, "s": -1, "t": -1},
+    "evidence_compress": {"s": -1, "t": 1},        # 압축 호출을 한 번 더 하지만 답변 입력 토큰이 줄어든다
+    "claim_check": {"q": 1, "s": -1}, "claim_check_llm": {"q": 1, "s": -1, "t": -1},
+    "answer_refine": {"q": 1, "s": -1, "t": -1},
+    # ---- ③ 질의 속도·토큰 ----
+    "rerank_llm": {"q": 1, "s": -1, "t": -1},
+    "query_cache": {"s": 1, "t": 1}, "precompute": {"s": 1, "t": 1},
+    "context_trim": {"s": 1, "t": 1}, "dedupe_hits": {"s": 1, "t": 1},
+    "feedback_boost": {"q": 1},
+    # ---- ④ 디버깅·기록 ----
+    "analysis_mode": {"s": -1, "t": -1}, "forensic_auto": {"s": -1},
+    "llm_failure_report": {}, "rerun_capture": {"s": -1},
+    "log_stages": {}, "profile_expansion": {},
+    # ---- ⑤ 빌드 (s = 빌드 시간) ----
+    "build_fts": {"q": 1, "s": -1}, "embed": {"q": 1, "s": -1},
+    "rule_graph": {"q": 1, "s": -1}, "llm_graph": {"q": 1, "s": -1, "t": -1},
+    "communities": {"q": 1, "s": -1}, "community_summary": {"q": 1, "s": -1, "t": -1},
+    "wiki_pages": {"s": -1}, "incremental": {"s": 1},
+    "explicit_relations": {"q": 1}, "schema_lint": {"q": 1},
+    "doc_vector": {"q": 1, "s": -1}, "fts_trigram": {"q": 1, "s": -1},
+    # ---- ⑥ 빌드 속도·안정성 ----
+    "stat_skip": {"s": 1}, "idf_refit_incremental": {"q": 1, "s": -1},
+    "incremental_communities": {"s": 1}, "wiki_full_rewrite": {"s": -1},
+    "warm_cache": {"s": 1}, "fts_optimize": {"s": 1}, "embed_adaptive": {"s": 1},
+    "health_check": {"s": -1}, "verify_after_build": {"s": -1}, "precompute_after_build": {"s": -1},
+    # ---- ⑦ 연동·자동화 ----
+    "mcp_sources": {"q": 1}, "mcp_federation": {}, "auto_build": {},
+    "evolve_capture": {"q": 1}, "evolve_auto_apply": {}, "evolve_from_forensics": {"q": 1},
+    "memory_decay": {}, "collab": {},
+}
+TOGGLE_AXES: Dict[str, str] = {"q": "품질", "s": "속도", "t": "토큰"}
 
 SETTING_HELP: Dict[str, str] = {
     "rerank_candidates": "리랭크 후보 수 (LLM 리랭크 프롬프트 크기 ∝ 후보 수 × rerank_chunk_chars).",
@@ -603,6 +720,12 @@ SETTING_HELP: Dict[str, str] = {
     "llm_graph_budget": "빌드당 LLM 추출 호출 상한 (0=무제한). 신규 문서 20개/일 × 10청크 ≈ 200회.",
     "llm_graph_min_chars": "이보다 짧은 청크는 LLM 추출 생략.",
     "query_cache_size": "질의 캐시 항목 수.",
+    "requests_dir": "요청 결과/trace 를 따로 보관할 폴더 (월별 하위 폴더 + req_<id>.json). data_dir 기준 상대 경로 가능. 비우면 파일로 남기지 않는다 — 그러면 keep_requests 로 DB 행이 잘릴 때 '그때 그 답' 을 다시 볼 수 없다.",
+    "requests_keep_days": "요청 보관 파일의 보존 기간(일). 0 = 지우지 않음. 정리: `python -m llmwiki maintenance prune_requests` 또는 스케줄 작업.",
+    "corpus_exclude": "코퍼스 안에 있어도 색인하지 않을 경로 패턴 목록 (doc_id = 코퍼스 루트 기준 상대 경로). 예: [\"imported/llmwiki/\", \"**/NOTE-*.md\"]. 폴더는 `경로/` 또는 `경로/**`, 파일은 fnmatch 패턴. 색인하면 안 되는 것이 섞이면 도메인 문서를 밀어낸다 — 실측: 도구 자신의 소스 150개를 제외하니 hit@k 0.64→0.88. 바꾸면 다음 빌드에서 그 문서들이 색인에서 빠진다.",
+    "rerun_dir": "단계 재실행용 중간 결과 폴더 (req_<request_id>.json). data_dir 기준 상대 경로 가능. 화면의 단계별 ⟲ 버튼이 이 파일을 읽는다 — docs/RERUN.md.",
+    "rerun_keep": "재실행용 중간 결과를 최근 몇 건까지 남길지. 오래된 것부터 지운다. 0 = 무제한.",
+    "rerun_max_mb": "재실행용 중간 결과 한 건의 상한(MB). 넘으면 저장하지 않고 trace 에 이유를 남긴다.",
     "auto_build_interval": "auto_build 스캔 주기(초).",
     "embed_batch": "임베딩 배치 크기 (API 임베더는 64 이하 권장).",
     "debug_level": "프로파일 상세도: 0 요약 · 1 디버그 메타/로그 · 2 프롬프트/응답 원문 샘플.",

@@ -1,7 +1,10 @@
 /* Settings — 모델/프로바이더/엔드포인트/agents, 프리셋, 튜닝, 질의 규칙 사전, pin, 프롬프트, config. */
 (function (LW) {
   'use strict';
-  const { $, $$, esc, fmt, fmtK, api, toast, STATE, setTogglesFrom, loadStatus, loaders } = LW;
+  // dt(시각 포맷)는 스케줄 표의 '다음 실행'·'마지막'·실행 이력이 쓴다. 예전에는 가져오지 않아
+  // 그 줄을 그리다 ReferenceError 가 나고, `innerHTML = …` 자체가 실패해 **표가 통째로 옛 내용으로 남았다**.
+  // 저장은 서버에 됐는데 화면만 안 바뀌어서 "스케줄 저장이 안 된다" 로 보였다.
+  const { $, $$, esc, fmt, fmtK, ts, dt, api, toast, STATE, setTogglesFrom, loadStatus, loaders } = LW;
 
   // ---------------- MODELS ----------------
   function sel(id, opts, cur, allowEmpty) { return `<select id="${id}">${allowEmpty ? '<option value="">(상속)</option>' : ''}${opts.map((o) => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`; }
@@ -10,12 +13,19 @@
   // 역할별 정책 편집 열. 비워 두면 전역값(또는 단계 기본값)을 상속한다.
   const POLICY_COLS = [['timeout_s', '타임아웃(초)'], ['retries', '재시도'], ['backoff_s', '대기(초)'],
                        ['budget_s', '총예산(초)'], ['max_tokens', '출력토큰']];
-  // 모델 드롭다운: models.json 카탈로그(사람이 추가/삭제) + 현재 값 + '직접 입력'. 역할이 주어지면 그 역할용 모델만 (roles 가 빈 항목은 전 역할).
-  function modelSelect(id, cur, role, allowInherit, placeholderText) {
-    const list = (CATALOG.models || []).filter((m) => m.enabled !== false && (!role || !(m.roles || []).length || (m.roles || []).indexOf(role) >= 0));
+  // 모델 드롭다운: models.json 카탈로그(사람이 추가/삭제) + 현재 값 + '직접 입력'.
+  // kind='llm'(기본)이면 역할 필터를 적용한다(roles 가 빈 항목은 전 역할). kind='embed'|'rerank' 는 그 절의 목록을 쓴다.
+  // 예전에는 임베딩은 datalist, 리랭크 API 모델은 맨 텍스트 입력이라 "무엇을 고를 수 있는지" 가 화면에 안 보였다 (2026-09-16).
+  function catalogList(kind, role) {
+    if (kind === 'embed') return (CATALOG.embed || []).filter((m) => m.enabled !== false);
+    if (kind === 'rerank') return (CATALOG.rerank || []).filter((m) => m.enabled !== false);
+    return (CATALOG.models || []).filter((m) => m.enabled !== false && (!role || !(m.roles || []).length || (m.roles || []).indexOf(role) >= 0));
+  }
+  function modelSelect(id, cur, role, allowInherit, placeholderText, kind) {
+    const list = catalogList(kind || 'llm', role);
     const ids = list.map((m) => m.id);
     let opts = (allowInherit ? `<option value="">(상속${placeholderText ? ': ' + esc(placeholderText) : ''})</option>` : '');
-    opts += list.map((m) => `<option value="${esc(m.id)}"${m.id === cur ? ' selected' : ''}>${esc(m.id)} — ${esc(m.provider)}${m.label ? ' · ' + esc(m.label) : ''}</option>`).join('');
+    opts += list.map((m) => `<option value="${esc(m.id)}"${m.id === cur ? ' selected' : ''}>${esc(m.id || '(비움)')} — ${esc(m.provider)}${m.label ? ' · ' + esc(m.label) : ''}${m.dim ? ' · ' + m.dim + 'd' : ''}</option>`).join('');
     if (cur && ids.indexOf(cur) < 0) opts += `<option value="${esc(cur)}" selected>${esc(cur)} — (카탈로그에 없음)</option>`;
     opts += '<option value="__custom__">직접 입력…</option>';
     return `<select id="${id}" data-model-select="1">${opts}</select>`;
@@ -31,19 +41,51 @@
       });
     });
   }
+  // 역할 표의 마지막 두 행 — 임베딩과 리랭크(API).
+  // 이 둘은 LLM 역할이 아니라 별도 경로지만 **"지금 무슨 모델이 쓰이나"** 라는 질문에는 같이 답해야 하므로
+  // 같은 표에 넣고, 이 표 하나에서 전부 고칠 수 있게 한다 (예전에는 왼쪽 폼과 위쪽 요약표로 흩어져 있었다).
+  function embedRerankRows(s, p, showPol) {
+    const span = 1 + (showPol ? POLICY_COLS.length : 0);      // effort 열 + (보이면) 정책 열들
+    const emb = p.embedder || {};
+    const rrOn = !!String(s.rerank_url || '').trim();
+    const embRow =
+      `<tr class="extra-row" data-role="embed"><td><b>embed</b></td><td class="muted small">벡터 검색 임베딩 (빌드·질의)</td>` +
+      `<td>${sel('m-embed-provider', CATALOG.embed_providers || ['auto', 'hash', 'voyage', 'openai', 'ollama', 'st'], s.embed_provider)}</td>` +
+      `<td>${modelSelect('m-embed-model', s.embed_model, '', false, '', 'embed')}</td>` +
+      `<td colspan="${span}" class="small">` +
+      `dim <input id="m-embed-dim" type="number" value="${s.embed_dim}" style="width:78px" title="${esc(STATE.settingHelp.embed_dim || '모든 차원 지원 · 변경 시 전체 리빌드')}"> ` +
+      `dtype ${sel('m-embed-dtype', ['float32', 'float16'], s.embed_store_dtype)} ` +
+      `batch <input id="m-embed-batch" type="number" value="${s.embed_batch}" style="width:62px"> ` +
+      `max <input id="m-embed-batch-max" type="number" value="${s.embed_batch_max}" style="width:62px">` +
+      `<div class="muted small">embed URL: <input id="m-openai-embed-url" value="${esc(s.openai_embed_base_url || '')}" placeholder="(비우면 openai_base_url)" style="width:200px"> ` +
+      `model <input id="m-openai-embed" value="${esc(s.openai_embed_model)}" placeholder="text-embedding-3-small / bge-m3" style="width:190px"></div></td>` +
+      `<td class="small">${esc(emb.name || '-')}/${esc(emb.model || '')}<br><span class="muted">dim=${emb.dim} · 변경 시 전체 리빌드</span></td>` +
+      `<td>${emb.available ? '<span class="ok">available</span>' : '<span class="bad">unavailable</span>'}</td>` +
+      `<td><button class="mini secondary" data-test-extra="embed" title="지금 입력한 값으로 임베딩 연결 확인">테스트</button></td></tr>`;
+    const rrRow =
+      `<tr class="extra-row" data-role="rerank_api"><td><b>rerank(API)</b></td><td class="muted small">전용 리랭크 엔드포인트 (역할 <code>rerank</code> = LLM 리랭크와 다름)</td>` +
+      `<td>${sel('m-rerank-style', CATALOG.rerank_providers || ['cohere', 'voyage'], s.rerank_api_style)}</td>` +
+      `<td>${modelSelect('m-rerank-model', s.rerank_api_model || '', '', false, '', 'rerank')}</td>` +
+      `<td colspan="${span}" class="small">url <input id="m-rerank-url" value="${esc(s.rerank_url)}" placeholder="http://host:8000/v1/rerank" style="width:280px">` +
+      `<div class="muted small">비우면 API 리랭크를 쓰지 않는다. 튜닝 <code>rerank_method</code>=auto 면 URL 이 있을 때 API 를 먼저 쓴다. 키: .env RERANK_API_KEY</div></td>` +
+      `<td class="small">${rrOn ? esc(s.rerank_api_style) + '/' + esc(s.rerank_api_model || '(모델 미지정)') : '<span class="muted">사용 안 함</span>'}</td>` +
+      `<td>${rrOn ? '<span class="ok">설정됨</span>' : '<span class="muted">꺼짐</span>'}</td>` +
+      `<td><button class="mini secondary" data-test-extra="rerank" title="지금 입력한 값으로 리랭크 엔드포인트 확인">테스트</button></td></tr>`;
+    return embRow + rrRow;
+  }
+
   async function loadModels() {
     const j = await api('/api/models'); const p = j.providers, s = j.settings, cat = p.catalog; STATE.providers = p;
     CATALOG = j.catalog_models || (await api('/api/models/catalog')) || CATALOG;
     PROVIDERS = CATALOG.providers || PROVIDERS;
     STATE.rolePolicy = j.policy || {};
     STATE.roleAttrs = j.role_attrs || [];
-    const embModels = [].concat.apply([], Object.keys(cat.embed).map((k) => cat.embed[k])).filter((m) => !m.startsWith('('));
-    $('#embed-form').innerHTML = `<label>provider ${sel('m-embed-provider', ['auto', 'hash', 'voyage', 'openai', 'ollama', 'st'], s.embed_provider)}</label>` +
-      `<label>model <input id="m-embed-model" list="dl-embed" value="${esc(s.embed_model)}" placeholder="hash: 비움 · voyage-3.5 · bge-m3 · nomic-embed-text"><datalist id="dl-embed">${embModels.map((m) => `<option value="${esc(m)}">`).join('')}</datalist></label>` +
-      `<label>embed_dim (hash) <input id="m-embed-dim" type="number" value="${s.embed_dim}" style="width:90px" title="${esc(STATE.settingHelp.embed_dim || '')}"> <small>모든 차원 지원 · 변경 시 전체 리빌드</small></label>` +
-      `<label>embed_store_dtype ${sel('m-embed-dtype', ['float32', 'float16'], s.embed_store_dtype)} <small>float16 = 저장/행렬 메모리 절반</small></label>` +
-      `<label>embed_batch <input id="m-embed-batch" type="number" value="${s.embed_batch}" style="width:70px"> max <input id="m-embed-batch-max" type="number" value="${s.embed_batch_max}" style="width:70px"></label>` +
-      `<div class="muted small">현재: <b>${p.embedder.name}</b> model=${esc(p.embedder.model)} dim=${p.embedder.dim} available=${p.embedder.available} · auto = VOYAGE_API_KEY 있으면 voyage → Ollama 에 bge-m3/nomic 있으면 ollama → hash.</div>`;
+    // 임베딩·리랭크(API) 는 이제 오른쪽 "역할별" 표 안에서 직접 고친다 (한 표에서 전부 제어).
+    // 여기에는 되돌아보기용 요약만 남긴다 — 입력칸을 두 군데 두면 어느 쪽이 적용되는지 헷갈린다.
+    $('#embed-form').innerHTML =
+      `<div class="muted small">임베딩·리랭크(API) 설정은 왼쪽 <b>「모델 · 역할 전체」</b> 표의 <code>embed</code> · <code>rerank(API)</code> 행에서 바꿉니다.<br>` +
+      `지금: <b>${esc(p.embedder.name)}</b> model=${esc(p.embedder.model)} dim=${p.embedder.dim} available=${p.embedder.available}<br>` +
+      `auto = VOYAGE_API_KEY 있으면 voyage → Ollama 에 bge-m3/nomic 있으면 ollama → hash.</div>`;
     $('#llm-form').innerHTML = `<label>llm_provider ${sel('m-llm-provider', PROVIDERS, s.llm_provider)}</label>` +
       `<label>llm_model ${modelSelect('m-llm-model', s.llm_model, '', false)}</label>` +
       `<label>llm_effort ${sel('m-llm-effort', cat.effort, s.llm_effort)} · answer_effort ${sel('m-answer-effort', cat.effort, s.answer_effort)}</label>` +
@@ -54,10 +96,9 @@
       `<label>openai_extra_headers <input id="m-openai-extra" value="${esc(JSON.stringify(s.openai_extra_headers || {}))}" placeholder='{"X-Tenant":"modem"}' style="width:260px"> <small>JSON</small></label>` +
       `<label>openai_embed_base_url <input id="m-openai-embed-url" value="${esc(s.openai_embed_base_url || '')}" placeholder="(비우면 openai_base_url)"> openai_embed_model <input id="m-openai-embed" value="${esc(s.openai_embed_model)}" placeholder="text-embedding-3-small / bge-m3"></label>` +
       `<label>anthropic_base_url <input id="m-anthropic-url" value="${esc(s.anthropic_base_url || '')}" placeholder="(비우면 api.anthropic.com) https://gateway.corp"> <small>키: ANTHROPIC_API_KEY(x-api-key) 또는 ANTHROPIC_AUTH_TOKEN(Bearer PAT)</small></label>` +
-      `<label>llm_timeout <input id="m-llm-timeout" type="number" value="${s.llm_timeout || 600}" style="width:80px"> retries <input id="m-llm-retries" type="number" value="${s.llm_retries}" style="width:60px"> backoff ${sel('m-llm-backoff', ['exponential', 'linear'], s.llm_retry_backoff || 'exponential')} <input id="m-llm-backoff-s" type="number" step="0.5" value="${s.llm_retry_backoff_s}" style="width:60px">초 <small>역할별로 다르게 하려면 오른쪽 표의 '재시도·타임아웃 열 보기'</small></label>` +
+      `<label>llm_timeout <input id="m-llm-timeout" type="number" value="${s.llm_timeout || 600}" style="width:80px"> retries <input id="m-llm-retries" type="number" value="${s.llm_retries}" style="width:60px"> backoff ${sel('m-llm-backoff', ['exponential', 'linear'], s.llm_retry_backoff || 'exponential')} <input id="m-llm-backoff-s" type="number" step="0.5" value="${s.llm_retry_backoff_s}" style="width:60px">초 <small>역할별로 다르게 하려면 왼쪽 표의 '재시도·타임아웃 열 보기'</small></label>` +
       `<label>llm_budget_s <input id="m-llm-budget" type="number" value="${s.llm_budget_s || 0}" style="width:70px" title="한 호출의 재시도 포함 총 시간 예산(0=무제한). 넘으면 대체 경로(추출식 답변)로"> 회로차단 <input id="m-llm-circuit" type="number" value="${s.llm_circuit_failures}" style="width:50px" title="연속 실패 n회 → cooldown 동안 즉시 실패"> / <input id="m-llm-cooldown" type="number" value="${s.llm_circuit_cooldown_s}" style="width:60px">초</label>` +
-      `<label>rerank_url <input id="m-rerank-url" value="${esc(s.rerank_url)}" placeholder="http://host:8000/v1/rerank"> <small>비우면 api 리랭크 비활성</small></label>` +
-      `<label>rerank_api_model <input id="m-rerank-model" value="${esc(s.rerank_api_model || '')}" placeholder="BAAI/bge-reranker-v2-m3"> style ${sel('m-rerank-style', ['cohere', 'voyage'], s.rerank_api_style)} <small>rerank_method(튜닝)=auto 면 URL 있을 때 api 우선</small></label>`;
+      `<div class="muted small">rerank(API) 의 URL·모델·style 은 왼쪽 「모델 · 역할 전체」 표의 <code>rerank(API)</code> 행에 있습니다 (역할 <b>rerank</b> = LLM 리랭크와 다른 경로).</div>`;
     $('#models-note').innerHTML = `Python ${p.python} / SQLite ${p.sqlite}. headless 에이전트: ${Object.keys(p.agents || {}).map(esc).join(', ')} (agents.json).`;
     const showPol = $('#roles-show-policy') && $('#roles-show-policy').checked;
     const polHead = showPol ? POLICY_COLS.map((c) => `<th title="비우면 전역값 상속">${c[1]}</th>`).join('') : '';
@@ -69,9 +110,10 @@
       const circ = (r.circuit || {});
       const circTxt = circ.open_until && circ.open_until * 1000 > Date.now() ? `<br><span class="bad" title="연속 실패로 잠시 건너뜁니다">회로 차단</span>` : '';
       return `<tr data-role="${role}"><td><b>${role}</b></td><td class="muted small">${esc(cat.roles[role] || '')}</td><td><input id="r-${role}-provider" list="dl-providers" value="${esc(cfg.provider || '')}" placeholder="${inh}" title="비우면 전역 llm_provider(${esc(s.llm_provider)})를 상속" style="width:140px"></td><td>${modelSelect('r-' + role + '-model', cfg.model || '', role, true, s.llm_model)}</td><td>${sel('r-' + role + '-effort', cat.effort, cfg.effort || '', true)}</td>${polCells}<td class="small">${esc(r.name)}/${esc(r.model)}<br><span class="muted">effort=${r.configured.effort} · ${(r.policy || {}).timeout_s}s × ${(r.policy || {}).retries + 1}</span></td><td>${r.available ? '<span class="ok">available</span>' : '<span class="bad" title="' + esc(r.reason || '') + '">unavailable</span>'}${r.available ? '' : '<br><span class="reason small">' + esc(r.reason || '') + '</span>'}${circTxt}<br><span class="muted small">calls ${r.stats.calls || 0} · tok ${fmtK((r.stats.input_tokens || 0) + (r.stats.output_tokens || 0))}${r.stats.retries ? ' · 재시도 ' + r.stats.retries : ''}${r.stats.errors ? ' · 실패 ' + r.stats.errors : ''}</span></td><td><button class="mini secondary" data-test="${role}" title="이 행에 입력한(아직 저장 안 한) provider/model 로 연결 테스트">테스트</button></td></tr>`;
-    }).join('') + `</table><datalist id="dl-providers">${PROVIDERS.map((x) => `<option value="${x}">`).join('')}</datalist>` +
-      `<div class="muted small" style="margin-top:6px"><b>상속</b> = 비워 두면 위 "전역 LLM 기본값"(llm_provider / llm_model / llm_effort / llm_timeout …)을 그대로 씀. 역할별 타임아웃·재시도·backoff·총예산·<b>출력토큰(max_tokens)</b>은 '재시도·타임아웃 열 보기' 를 켜면 편집할 수 있고 <code>config.json llm_roles.&lt;role&gt;</code> 에 저장된다. 회색 글씨는 지금 상속 중인 값이다 — 비워 두면 그 값을 쓴다(출력토큰은 단계 기본값: 라우터 200 · 확장/리랭크 400 · 검증 1500 · 요약 800 · 포렌식 1200 · 리뷰/답변 3000 · 추출 4000). <b>auto</b> = ANTHROPIC_API_KEY 가 있으면 anthropic → 없으면 Ollama → 둘 다 없으면 none(추출식 답변). openai / headless 는 provider 에 직접 적는다. "테스트" 는 저장 전 입력값으로도 동작하며, 실제 적용은 "저장 &amp; 프로바이더 재로드". 최종 실패 시에는 추출식 답변·로컬 리랭크 등 대체 경로로 계속 동작합니다.</div>`;
+    }).join('') + embedRerankRows(s, p, showPol) + `</table><datalist id="dl-providers">${PROVIDERS.map((x) => `<option value="${x}">`).join('')}</datalist>` +
+      `<div class="muted small" style="margin-top:6px"><b>상속</b> = 비워 두면 오른쪽 "전역 LLM 기본값"(llm_provider / llm_model / llm_effort / llm_timeout …)을 그대로 씀. 역할별 타임아웃·재시도·backoff·총예산·<b>출력토큰(max_tokens)</b>은 '재시도·타임아웃 열 보기' 를 켜면 편집할 수 있고 <code>config.json llm_roles.&lt;role&gt;</code> 에 저장된다. 회색 글씨는 지금 상속 중인 값이다 — 비워 두면 그 값을 쓴다(출력토큰은 단계 기본값: 라우터 200 · 확장/리랭크 400 · 검증 1500 · 요약 800 · 포렌식 1200 · 리뷰/답변 3000 · 추출 4000). <b>auto</b> = ANTHROPIC_API_KEY 가 있으면 anthropic → 없으면 Ollama → 둘 다 없으면 none(추출식 답변). openai / headless 는 provider 에 직접 적는다. "테스트" 는 저장 전 입력값으로도 동작하며, 실제 적용은 "저장 &amp; 프로바이더 재로드". 최종 실패 시에는 추출식 답변·로컬 리랭크 등 대체 경로로 계속 동작합니다.</div>`;
     wireModelSelects($('#roles-table')); wireModelSelects($('#llm-form'));
+    wireModelSelects($('#embed-form')); wireModelSelects($('#endpoint-form'));
     renderCatalog();
     $$('#roles-table [data-test]').forEach((b) => b.onclick = async () => {
       b.disabled = true;
@@ -81,18 +123,34 @@
       ov[role + '_provider'] = pv; ov[role + '_model'] = m === '__custom__' ? '' : m;
       const r = await api('/api/models/test', { which: [role], overrides: ov }); b.disabled = false; renderTest(r);
     });
-    const dl = $('#dl-llm-models');
-    if (dl) dl.innerHTML = (CATALOG.models || []).filter((m) => m.enabled !== false).map((m) => `<option value="${esc(m.id)}">${esc(m.provider)}</option>`).join('');
+    // embed · rerank(API) 행의 테스트 — 저장하지 않은 입력값으로 확인한다 (역할 행과 같은 방식)
+    $$('#roles-table [data-test-extra]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      const r = await api('/api/models/test', { which: [b.dataset.testExtra], overrides: modelsSettings() });
+      b.disabled = false; renderTest(r);
+    });
+    // (dl-llm-models 채우기는 없앴다 — 사이드바의 프로바이더/모델 오버라이드와 함께 사라진 요소다.
+    //  이 화면의 모델 선택은 modelSelect() 가 만드는 <select> 와 dl-providers 를 쓴다.)
     const ag = await api('/api/agents'); $('#agents-json').value = JSON.stringify(ag.agents, null, 2);
   }
   // ---------------- 모델 카탈로그 (models.json) ----------------
+  function catProviders(kind) {
+    if (kind === 'embed') return CATALOG.embed_providers || ['auto', 'hash', 'voyage', 'openai', 'ollama', 'st'];
+    if (kind === 'rerank') return CATALOG.rerank_providers || ['cohere', 'voyage'];
+    return CATALOG.providers || PROVIDERS;
+  }
+  function fillCatProviders() {
+    const provSel = $('#cat-provider'); if (!provSel) return;
+    const kind = ($('#cat-kind') && $('#cat-kind').value) || 'llm';
+    provSel.innerHTML = catProviders(kind).map((x) => `<option>${esc(x)}</option>`).join('');
+  }
   function renderCatalog() {
-    const provSel = $('#cat-provider');
-    if (provSel && !provSel.children.length) provSel.innerHTML = (CATALOG.providers || PROVIDERS).map((x) => `<option>${esc(x)}</option>`).join('');
+    fillCatProviders();
     const t = $('#cat-table'); if (!t) return;
-    const rows = (CATALOG.models || []).concat((CATALOG.embed || []).map((m) => Object.assign({ kind: 'embed' }, m)));
-    t.innerHTML = '<table><tr><th>id</th><th>provider</th><th>설명</th><th>역할</th><th>사용</th><th></th></tr>' + rows.map((m) => `<tr><td class="mono small">${esc(m.id || '(hash)')}${m.kind === 'embed' ? ' <span class="pill">embed</span>' : ''}</td><td>${esc(m.provider)}</td><td class="small muted">${esc(m.label || '')}${m.notes ? ' — ' + esc(m.notes) : ''}</td><td class="small">${esc((m.roles || []).join(',') || '*')}</td><td>${m.enabled === false ? '✘' : '✔'}</td><td><button class="mini secondary" data-cat-del="${esc(m.id)}" data-cat-prov="${esc(m.provider)}">삭제</button></td></tr>`).join('') + '</table>' +
-      `<div class="muted small">현재 설정이 쓰는 모델: ${Object.keys(CATALOG.in_use || {}).map((r) => esc(r + '=' + CATALOG.in_use[r].model)).join(', ')}${(CATALOG.unknown_in_use || []).length ? ' · <span class="warntxt">카탈로그에 없음: ' + CATALOG.unknown_in_use.map((u) => esc(u.role + '=' + u.model)).join(', ') + '</span>' : ''}<br>파일: <code>${esc(CATALOG.path || '')}</code> · CLI: <code>models list</code> · <code>models catalog add &lt;id&gt; --provider …</code></div>`;
+    const rows = (CATALOG.models || []).concat((CATALOG.embed || []).map((m) => Object.assign({ kind: 'embed' }, m)))
+      .concat((CATALOG.rerank || []).map((m) => Object.assign({ kind: 'rerank' }, m)));
+    t.innerHTML = '<table><tr><th>id</th><th>provider</th><th>설명</th><th>역할</th><th>사용</th><th></th></tr>' + rows.map((m) => `<tr><td class="mono small">${esc(m.id || '(hash)')}${m.kind ? ' <span class="pill">' + esc(m.kind) + '</span>' : ''}</td><td>${esc(m.provider)}</td><td class="small muted">${esc(m.label || '')}${m.notes ? ' — ' + esc(m.notes) : ''}</td><td class="small">${esc((m.roles || []).join(',') || '*')}</td><td>${m.enabled === false ? '✘' : '✔'}</td><td><button class="mini secondary" data-cat-del="${esc(m.id)}" data-cat-prov="${esc(m.provider)}">삭제</button></td></tr>`).join('') + '</table>' +
+      `<div class="muted small">LLM ${(CATALOG.models || []).length}개 · 임베딩 ${(CATALOG.embed || []).length}개 · 리랭크 ${(CATALOG.rerank || []).length}개. 지금 쓰는 값은 위 "지금 쓰는 모델" 표를 보세요.<br>파일: <code>${esc(CATALOG.path || '')}</code> · CLI: <code>models list</code> · <code>models catalog add &lt;id&gt; --provider … [--kind embed|rerank]</code></div>`;
     $$('#cat-table [data-cat-del]').forEach((b) => b.onclick = async () => {
       if (!confirm('카탈로그에서 ' + b.dataset.catDel + ' 을(를) 삭제합니다. (설정에서 이미 쓰고 있어도 동작에는 영향 없음)')) return;
       await api('/api/models/catalog', { action: 'remove', id: b.dataset.catDel, provider: b.dataset.catProv });
@@ -102,7 +160,8 @@
   if ($('#btn-cat-add')) $('#btn-cat-add').onclick = async () => {
     const id = $('#cat-id').value.trim(); if (!id) { toast('모델 id 를 입력하세요'); return; }
     const m = { id: id, provider: $('#cat-provider').value, label: $('#cat-label').value.trim() || id, roles: $('#cat-roles').value.split(',').map((x) => x.trim()).filter(Boolean), enabled: true };
-    if ($('#cat-embed').checked) m.kind = 'embed';
+    const kind = ($('#cat-kind') && $('#cat-kind').value) || 'llm';
+    if (kind !== 'llm') m.kind = kind;
     const j = await api('/api/models/catalog', { action: 'add', model: m });
     if (j && j.ok) { toast('카탈로그에 추가됨'); $('#cat-id').value = ''; $('#cat-label').value = ''; CATALOG = j.catalog || CATALOG; renderCatalog(); loadModels(); }
   };
@@ -125,15 +184,17 @@
   function renderTest(r) {
     $('#models-test').innerHTML = '<table><tr><th>대상</th><th>provider/model</th><th>ok</th><th>ms</th><th>detail</th></tr>' + Object.keys(r).map((k) => { const x = r[k]; return `<tr><td><b>${k}</b></td><td>${esc(x.provider || x.url || '')}/${esc(x.model)}${x.dim ? ' d=' + x.dim : ''}</td><td>${x.ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'}</td><td class="num">${fmt(x.ms, 0)}</td><td class="small">${esc(x.detail || '')}${x.models ? '<br><span class="muted">models: ' + esc(x.models.slice(0, 12).join(', ')) + '</span>' : ''}${'live_ok' in x ? '<br><b>실제 호출:</b> ' + (x.live_ok ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>') + ' ' + fmt(x.live_ms, 0) + 'ms ' + esc(x.live_detail || '') : ''}</td></tr>`; }).join('') + '</table>';
   }
+  // 드롭다운의 '직접 입력…' 을 고르고 취소하면 값이 __custom__ 으로 남는다 — 설정에 그대로 저장되면 안 된다.
+  function mval(id) { const e = $(id); const v = e ? String(e.value || '').trim() : ''; return v === '__custom__' ? '' : v; }
   function modelsSettings() {
-    const st = { embed_provider: $('#m-embed-provider').value, embed_model: $('#m-embed-model').value.trim(), embed_dim: parseInt($('#m-embed-dim').value, 10), embed_store_dtype: $('#m-embed-dtype').value, embed_batch: parseInt($('#m-embed-batch').value, 10), embed_batch_max: parseInt($('#m-embed-batch-max').value, 10),
-      llm_provider: $('#m-llm-provider').value, llm_model: $('#m-llm-model').value.trim(), llm_effort: $('#m-llm-effort').value, answer_effort: $('#m-answer-effort').value,
+    const st = { embed_provider: $('#m-embed-provider').value, embed_model: mval('#m-embed-model'), embed_dim: parseInt($('#m-embed-dim').value, 10), embed_store_dtype: $('#m-embed-dtype').value, embed_batch: parseInt($('#m-embed-batch').value, 10), embed_batch_max: parseInt($('#m-embed-batch-max').value, 10),
+      llm_provider: $('#m-llm-provider').value, llm_model: mval('#m-llm-model'), llm_effort: $('#m-llm-effort').value, answer_effort: $('#m-answer-effort').value,
       ollama_url: $('#m-ollama-url').value.trim(), ollama_model: $('#m-ollama-model').value.trim(), llm_fallbacks: $('#m-fallbacks').checked,
       openai_base_url: $('#m-openai-url').value.trim(), openai_api_key_header: $('#m-openai-key-header').value, openai_embed_base_url: $('#m-openai-embed-url').value.trim(), openai_embed_model: $('#m-openai-embed').value.trim(),
       anthropic_base_url: $('#m-anthropic-url').value.trim(), llm_timeout: parseInt($('#m-llm-timeout').value, 10) || 600,
       llm_retries: parseInt($('#m-llm-retries').value, 10), llm_retry_backoff: $('#m-llm-backoff').value, llm_retry_backoff_s: parseFloat($('#m-llm-backoff-s').value),
       llm_budget_s: parseInt($('#m-llm-budget').value, 10) || 0, llm_circuit_failures: parseInt($('#m-llm-circuit').value, 10), llm_circuit_cooldown_s: parseInt($('#m-llm-cooldown').value, 10),
-      rerank_url: $('#m-rerank-url').value.trim(), rerank_api_model: $('#m-rerank-model').value.trim(), rerank_api_style: $('#m-rerank-style').value, llm_roles: {} };
+      rerank_url: $('#m-rerank-url').value.trim(), rerank_api_model: mval('#m-rerank-model'), rerank_api_style: $('#m-rerank-style').value, llm_roles: {} };
     try { st.openai_extra_headers = JSON.parse($('#m-openai-extra').value.trim() || '{}'); } catch (e) { toast('openai_extra_headers JSON 오류 — 무시'); }
     STATE.roles.forEach((role) => {
       const c = {}; const pv = $('#r-' + role + '-provider').value.trim(), mEl = $('#r-' + role + '-model'), m = mEl ? mEl.value.trim() : '', e = $('#r-' + role + '-effort').value;
@@ -147,10 +208,30 @@
     });
     return st;
   }
-  $('#btn-models-save').onclick = async () => { const j = await api('/api/models/set', { settings: modelsSettings() }); $('#models-msg').textContent = '저장됨 · answer=' + j.providers.roles.answer.name + '/' + j.providers.roles.answer.model + ' · embed=' + j.providers.embedder.name; loadModels(); loadStatus(); };
+  $('#btn-models-save').onclick = async () => {
+    const j = await api('/api/models/set', { settings: modelsSettings() });
+    const msg = '저장됨 · answer=' + j.providers.roles.answer.name + '/' + j.providers.roles.answer.model + ' · embed=' + j.providers.embedder.name;
+    $('#models-msg').textContent = msg;
+    if ($('#roles-msg')) $('#roles-msg').textContent = msg;
+    loadModels(); loadStatus();
+  };
   $('#btn-models-test').onclick = async () => { $('#models-test').textContent = '테스트 중…'; renderTest(await api('/api/models/test', { overrides: modelsSettings() })); };
   if ($('#btn-models-test-live')) $('#btn-models-test-live').onclick = async () => { $('#models-test').textContent = '실제 호출 테스트 중… (역할별 provider/model 당 1회, 수십 초 걸릴 수 있음)'; renderTest(await api('/api/models/test', { overrides: modelsSettings(), live: true })); };
   $('#btn-models-reload').onclick = loadModels;
+  if ($('#cat-kind')) $('#cat-kind').onchange = fillCatProviders;
+  // 파일을 서버 밖에서 고쳤을 때 — 디스크의 config.json 을 서버가 다시 읽는다 (표 위/아래 두 버튼이 같은 동작)
+  async function reloadFromFile(msgSel) {
+    const m = $(msgSel); if (m) m.textContent = 'config.json 을 다시 읽는 중…';
+    const r = await api('/api/config', { action: 'reload' });
+    if (r && r.ok) { if (m) m.textContent = 'config.json 을 다시 읽었습니다 · ' + (r.path || ''); toast('config.json 다시 읽음'); }
+    else if (m) m.textContent = '';
+    await loadModels(); loadStatus();
+  }
+  if ($('#btn-models-reload-file')) $('#btn-models-reload-file').onclick = () => reloadFromFile('#models-msg');
+  // 표 머리글의 같은 조작 (표만 보고 있을 때 위로 올라가지 않아도 되게)
+  if ($('#btn-roles-reload')) $('#btn-roles-reload').onclick = loadModels;
+  if ($('#btn-roles-reload-file')) $('#btn-roles-reload-file').onclick = () => reloadFromFile('#roles-msg');
+  if ($('#btn-roles-save')) $('#btn-roles-save').onclick = () => $('#btn-models-save').click();
   $('#btn-agents-save').onclick = async () => { let a; try { a = JSON.parse($('#agents-json').value); } catch (e) { toast('JSON 오류'); return; } await api('/api/agents', { agents: a }); toast('agents.json 저장됨'); };
   loaders.models = loadModels;
 
@@ -165,13 +246,18 @@
     $('#sec-summary').innerHTML = `<div class="stat"><b>${esc(me.mode)}</b>auth mode</div><div class="stat"><b>${me.local ? 'on' : 'off'}</b>로컬 로그인</div><div class="stat"><b>${me.sso ? esc(me.sso_type) : 'off'}</b>SSO</div><div class="stat"><b>${esc(me.anonymous_role || '로그인 필수')}</b>게스트(익명) 역할</div><div class="stat"><b>${esc(u.name || 'local')}</b>${esc(u.role || 'admin')} (${esc(u.via || 'off')})</div><div class="stat"><b>${esc(me.confirm_phrase)}</b>리빌드/파괴적 작업 확인 문구${me.require_reauth ? ' + 비밀번호' : ''}</div>`;
     const rl = me.role_labels || {};
     $('#sec-roles').innerHTML = '<table><tr><th>역할</th><th>할 수 있는 것 (누적)</th></tr>' + SEC.roles.map((r) => `<tr><td><b>${esc(r)}</b></td><td class="small">${esc(rl[r] || '')}</td></tr>`).join('') + '</table>';
-    if (!admin) { $('#sec-users').innerHTML = '<div class="muted small">사용자 목록·권한 표·API 키는 admin 만 볼 수 있습니다.</div>'; $('#sec-perms').innerHTML = ''; $('#sec-keys').innerHTML = ''; $('#sec-snapshots').innerHTML = ''; $('#sec-audit').innerHTML = ''; return; }
+    // admin 이 아니면 추가 폼도 **감춘다**. 예전에는 폼이 그대로 보여서, 눌러 봐야 401/403 이 나고
+    // "버튼이 죽었다" 처럼 보였다 (id 를 채워 넣어도 서버가 거절한다).
+    if ($('#sec-add-form')) $('#sec-add-form').classList.toggle('hidden', !admin);
+    if (!admin) { $('#sec-users').innerHTML = '<div class="muted small">사용자 목록·권한 표·API 키는 admin 만 볼 수 있습니다. 현재 <b>' + esc(u.role || 'viewer') + '</b> (' + esc(u.via || '') + ') 로 접속 중입니다 — 사용자 추가·API 키 발급은 admin 으로 로그인해야 합니다.</div>'; $('#sec-perms').innerHTML = ''; $('#sec-keys').innerHTML = ''; $('#sec-snapshots').innerHTML = ''; $('#sec-audit').innerHTML = ''; return; }
     const [us, sec, sn, au, ak] = await Promise.all([api('/api/auth/users'), api('/api/security'), api('/api/snapshot'), api('/api/audit?n=60'), api('/api/apikeys')]);
     $('#sec-path').textContent = sec.path || '';
     $('#sec-users').innerHTML = '<table><tr><th>id</th><th>역할</th><th>표시</th><th>비밀번호</th><th></th></tr>' + (us.users || []).map((x) => `<tr><td><b>${esc(x.name)}</b></td><td>${roleSel(x.role, `data-role-of="${esc(x.name)}"`)}</td><td>${esc(x.display || '')}</td><td>${x.has_password ? '있음' : '<span class="muted">없음 (SSO)</span>'}</td><td><button class="mini secondary" data-pw-of="${esc(x.name)}">비밀번호</button> <button class="mini danger" data-del-of="${esc(x.name)}">삭제</button></td></tr>`).join('') + '</table>' + (!(us.users || []).length ? '<div class="muted small">사용자 없음 — 아래에서 admin 을 먼저 추가하세요 (또는 CLI: users add &lt;id&gt; --role admin)</div>' : '');
     $$('#sec-users [data-role-of]').forEach((s) => s.onchange = async () => { const r = await api('/api/auth/users', { action: 'set_role', name: s.dataset.roleOf, role: s.value }); if (r.ok) toast('역할 변경: ' + s.dataset.roleOf + ' → ' + s.value); loadSecurity(); });
     // ---- 권한 표 (등급별 최소 역할 + 개별 작업 오버라이드) ----
     SEC.perms = sec.permissions || { levels: {}, ops: {} };
+    SEC.minpw = Number((((sec.security || {}).local || {}).min_password_len) || 8);   // 짧은 비밀번호는 보내기 전에 걸러 준다
+    if ($('#su-pass')) $('#su-pass').placeholder = '(비우면 SSO 전용 · ' + SEC.minpw + '자 이상)';
     const lvls = sec.levels || Object.keys(SEC.perms.levels), ll = sec.level_labels || {}, dfl = sec.defaults || {};
     const cliCfg = (sec.security || {}).cli || {};
     $('#sec-perms').innerHTML = `<div class="muted small">등급마다 "최소 역할"을 정합니다 (역할은 누적: 높은 역할은 낮은 등급의 작업을 모두 할 수 있음). 개별 작업(op)은 감사 로그의 op 이름으로 예외를 둘 수 있고, <code>*</code> 접미로 접두 일치(예 <code>cli:trial*</code>). CLI: <code>security perms set run=viewer</code></div>` +
@@ -191,7 +277,19 @@
     $('#sec-keys').innerHTML = '<table><tr><th>id</th><th>이름</th><th>역할</th><th>생성</th><th>마지막 사용</th><th></th></tr>' + (ak.keys || []).map((k) => `<tr><td class="mono small">${esc(k.id)}</td><td>${esc(k.name)}</td><td>${esc(k.role)}</td><td class="small muted">${k.created ? LW.dt(k.created) : ''}</td><td class="small muted">${k.last_used ? LW.dt(k.last_used) : '-'}</td><td><button class="mini danger" data-key-del="${esc(k.id)}">삭제</button></td></tr>`).join('') + '</table>' +
       `<div class="row"><input id="ak-name" type="text" placeholder="키 이름 (예 claude-desktop-kim)" style="max-width:220px"> ${roleSel('viewer', 'id="ak-role"')} <button id="btn-ak-add" class="mini">발급</button><span class="muted small">MCP HTTP / curl 에서 <code>Authorization: Bearer &lt;token&gt;</code>. 토큰은 발급 직후 한 번만 표시됩니다.</span></div><pre id="ak-out" class="pre small hidden"></pre>`;
     $$('#sec-keys [data-key-del]').forEach((b) => b.onclick = async () => { if (!confirm('API 키 ' + b.dataset.keyDel + ' 를 삭제할까요? 이 키를 쓰는 클라이언트는 즉시 거부됩니다.')) return; await api('/api/apikeys', { action: 'remove', id: b.dataset.keyDel }); loadSecurity(); });
-    $('#btn-ak-add').onclick = async () => { const r = await api('/api/apikeys', { action: 'add', name: $('#ak-name').value.trim(), role: $('#ak-role').value }); if (r.token) { const o = $('#ak-out'); o.classList.remove('hidden'); o.textContent = 'token (지금만 표시): ' + r.token + '\nMCP 원격 설정 예: {"type":"http","url":"' + location.origin + '/mcp","headers":{"Authorization":"Bearer ' + r.token + '"}}'; toast('API 키 발급'); } };
+    $('#btn-ak-add').onclick = async () => {
+      const nm = $('#ak-name').value.trim();
+      if (!nm) { toast('키 이름을 입력하세요 (예: claude-desktop-kim)'); $('#ak-name').focus(); return; }
+      const r = await api('/api/apikeys', { action: 'add', name: nm, role: $('#ak-role').value });
+      // 발급이 거절되면(권한·검증 실패) 예전에는 **아무 일도 일어나지 않았다** — 조용히 끝나지 않게 한다.
+      if (!r.token) { if (!r.error && !r.cancelled) toast('API 키를 발급하지 못했습니다' + (r.forbidden ? ' (admin 권한 필요)' : '')); return; }
+      const txt = 'token (지금만 표시): ' + r.token + '\nMCP 원격 설정 예: {"type":"http","url":"' + location.origin + '/mcp","headers":{"Authorization":"Bearer ' + r.token + '"}}';
+      toast('API 키 발급: ' + r.name);
+      // 표를 바로 다시 그린다. 그러지 않으면 새로고침 전까지 새 키가 목록에 없어 "발급이 안 됐다" 로 보인다.
+      // (loadSecurity 가 #ak-out 을 새로 만들므로 토큰은 다시 그린 **뒤에** 넣는다.)
+      await loadSecurity();
+      const o = $('#ak-out'); if (o) { o.classList.remove('hidden'); o.textContent = txt; }
+    };
     $$('#sec-users [data-pw-of]').forEach((b) => b.onclick = async () => { const pw = prompt(b.dataset.pwOf + ' 의 새 비밀번호'); if (!pw) return; const r = await api('/api/auth/users', { action: 'set_password', name: b.dataset.pwOf, password: pw }); if (r.ok) toast('비밀번호 변경됨'); });
     $$('#sec-users [data-del-of]').forEach((b) => b.onclick = async () => { if (!confirm(b.dataset.delOf + ' 사용자를 삭제할까요?')) return; const r = await api('/api/auth/users', { action: 'remove', name: b.dataset.delOf }); if (r.ok) toast('삭제됨'); loadSecurity(); });
     $('#sec-snapshots').innerHTML = '<table><tr><th>이름</th><th>tag</th><th>크기</th><th>내용</th><th></th></tr>' + (sn.snapshots || []).map((x) => `<tr><td class="mono small">${esc(x.name)}</td><td>${esc(x.tag || '')}</td><td class="num">${fmt((x.bytes || 0) / 1e6, 1)}MB</td><td class="small muted">${esc(JSON.stringify(x.counts || {}))} ${esc(x.reason || '')}</td><td>${x.has_db ? `<button class="mini danger" data-restore="${esc(x.name)}">복원</button>` : ''}</td></tr>`).join('') + '</table>' + (!(sn.snapshots || []).length ? '<div class="muted small">스냅샷 없음. 전체 초기화 시 자동 생성됩니다.</div>' : '');
@@ -201,8 +299,23 @@
   $('#btn-sec-refresh').onclick = loadSecurity;
   $('#btn-sec-reload').onclick = async () => { const r = await api('/api/security', { action: 'reload' }); if (r.ok) toast('security.json 다시 읽음 (mode ' + r.mode + ')'); loadSecurity(); };
   $('#btn-snap-create').onclick = async () => { const tag = prompt('스냅샷 tag', 'manual'); if (tag === null) return; const r = await api('/api/snapshot', { action: 'create', tag }); if (r.name) toast('스냅샷 ' + r.name); loadSecurity(); };
-  $('#btn-user-add').onclick = async () => { const name = $('#su-name').value.trim(); if (!name) return; const pw = $('#su-pass').value; const r = await api('/api/auth/users', { action: 'add', name, role: $('#su-role').value, password: pw || null }); if (r.ok) { toast('추가됨: ' + name); $('#su-name').value = ''; $('#su-pass').value = ''; } loadSecurity(); };
-  $('#btn-pw-change').onclick = async () => { const r = await api('/api/auth/password', { old: $('#pw-old').value, new: $('#pw-new').value }); if (r.ok) { toast('비밀번호 변경됨'); $('#pw-old').value = ''; $('#pw-new').value = ''; } };
+  $('#btn-user-add').onclick = async () => {
+    const name = $('#su-name').value.trim();
+    // 예전에는 여기서 **말 없이** return 했다 — 눌러도 아무 반응이 없어 버튼이 죽은 것처럼 보였다.
+    if (!name) { toast('사용자 id 를 입력하세요'); $('#su-name').focus(); return; }
+    const pw = $('#su-pass').value;
+    const min = Number(SEC.minpw || 8);
+    if (pw && pw.length < min) { toast('비밀번호는 ' + min + '자 이상이어야 합니다 (비우면 SSO 전용 계정)'); $('#su-pass').focus(); return; }
+    const r = await api('/api/auth/users', { action: 'add', name, role: $('#su-role').value, password: pw || null });
+    if (r.ok) { toast('추가됨: ' + name); $('#su-name').value = ''; $('#su-pass').value = ''; }
+    loadSecurity();
+  };
+  $('#btn-pw-change').onclick = async () => {
+    const o = $('#pw-old').value, n = $('#pw-new').value;
+    if (!o || !n) { toast('현재 비밀번호와 새 비밀번호를 모두 입력하세요'); (!o ? $('#pw-old') : $('#pw-new')).focus(); return; }
+    const r = await api('/api/auth/password', { old: o, new: n });
+    if (r.ok) { toast('비밀번호 변경됨'); $('#pw-old').value = ''; $('#pw-new').value = ''; }
+  };
   loaders.security = loadSecurity;
 
   // ---------------- PRESETS ----------------

@@ -1,0 +1,467 @@
+{
+ "ts": "2026-09-17 05:59:26",
+ "total": 92,
+ "failed": [],
+ "results": [
+  {
+   "check": "initialize 응답",
+   "ok": true,
+   "detail": "{\"name\": \"llmwiki\", \"version\": \"0.5.0\"}"
+  },
+  {
+   "check": "버전 협상 (지원 버전 그대로)",
+   "ok": true,
+   "detail": "2025-06-18"
+  },
+  {
+   "check": "capabilities.tools 선언",
+   "ok": true,
+   "detail": "{'tools': {'listChanged': False}}"
+  },
+  {
+   "check": "instructions 제공",
+   "ok": true,
+   "detail": "사내 LLM Wiki. wiki_query 로 질문(인용 [C#] 포함 답변) → 결과가 부족하면 wiki_"
+  },
+  {
+   "check": "모르는 버전 → 우리 버전으로 응답",
+   "ok": true,
+   "detail": "2025-06-18"
+  },
+  {
+   "check": "구버전 클라이언트 (2024-11-05)",
+   "ok": true,
+   "detail": "2024-11-05"
+  },
+  {
+   "check": "ping (알림 뒤에도 응답)",
+   "ok": true,
+   "detail": "{}"
+  },
+  {
+   "check": "tools/list 12종",
+   "ok": true,
+   "detail": "14개: wiki_query, wiki_search, wiki_related, wiki_doc …"
+  },
+  {
+   "check": "모든 inputSchema 가 object",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "annotations(readOnlyHint 등) 부착",
+   "ok": true,
+   "detail": "14/14"
+  },
+  {
+   "check": "쓰기 도구만 readOnlyHint=false",
+   "ok": true,
+   "detail": "query=True propose=False"
+  },
+  {
+   "check": "이름 중복 없음",
+   "ok": true,
+   "detail": "0"
+  },
+  {
+   "check": "resources/list 빈 목록",
+   "ok": true,
+   "detail": "{'resources': []}"
+  },
+  {
+   "check": "prompts/list 빈 목록",
+   "ok": true,
+   "detail": "{'prompts': []}"
+  },
+  {
+   "check": "없는 메서드 → -32601",
+   "ok": true,
+   "detail": "{'code': -32601, 'message': 'method not found: nonexistent/method'}"
+  },
+  {
+   "check": "Content-Length 프레이밍",
+   "ok": true,
+   "detail": "{}"
+  },
+  {
+   "check": "Content-Length 프레이밍 (한글 본문 = 바이트≠문자)",
+   "ok": true,
+   "detail": "not found: 한글-없는-문서"
+  },
+  {
+   "check": "한글 프레이밍 뒤에도 스트림 정렬 유지",
+   "ok": true,
+   "detail": "{}"
+  },
+  {
+   "check": "배치 요청 (알림 제외 2건 응답)",
+   "ok": true,
+   "detail": "[{'jsonrpc': '2.0', 'id': 901, 'result': {}}, {'jsonrpc': '2.0', 'id': 902, 'result': {}}]"
+  },
+  {
+   "check": "깨진 JSON 뒤에도 살아 있음",
+   "ok": true,
+   "detail": "{}"
+  },
+  {
+   "check": "wiki_status {}",
+   "ok": true,
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16896,   \"embeddings\": 16896,   \"entities\": 617,   \"relatio"
+  },
+  {
+   "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
+   "ok": true,
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C3]  판정: sufficient · groundedness: 1.0 · 모드: llm · fallback"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"fts\", \"query\": \"ISSUE-200",
+   "ok": true,
+   "detail": "[  {   \"chunk_id\": \"corpus/imported/eval/NOTE-questions.md#0\",   \"score\": 10.764,   \"snippet\": \"# \\\""
+  },
+  {
+   "check": "wiki_search {\"channel\": \"vector\", \"query\": \"전력 제어\"",
+   "ok": true,
+   "detail": "[  {   \"chunk_id\": \"corpus/imported/sw_design/SWD-TX-POWER-03.md#1\",   \"score\": 0.562  },  {   \"chun"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"graph\", \"query\": \"ISSUE-2",
+   "ok": true,
+   "detail": "{  \"chunks\": [   [    \"corpus/imported/eval/NOTE-questions.md#1\",    22.02   ],   [    \"corpus/impor"
+  },
+  {
+   "check": "wiki_doc {\"id\": \"ISSUE-2001\"}",
+   "ok": true,
+   "detail": "# corpus/imported/issues/ISSUE-2001.md meta: {\"doc_type\": \"issue\", \"ext_id\": \"ISSUE-2001\", \"date\": \""
+  },
+  {
+   "check": "wiki_entity {\"name\": \"ISSUE-2001\"}",
+   "ok": true,
+   "detail": "ISSUE-2001 (issue) degree=286 docs=21 문서: corpus/imported/issues/ISSUE-2001.md · DMA underrun 발생 후 P"
+  },
+  {
+   "check": "wiki_related {\"text\": \"TX 전력 제어 오동작으로 PA gain 테이블을 ",
+   "ok": true,
+   "detail": "유사 문서 (issue, cl): - corpus/imported/issues/ISSUE-2003.md [issue ISSUE-2003 2026-06-22] TX 전력이 목표 대비"
+  },
+  {
+   "check": "wiki_forensic {\"expected_docs\": [\"ISSUE-2001\"]}",
+   "ok": true,
+   "detail": "forensic expect — request #3437  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
+  },
+  {
+   "check": "wiki_analysis {\"focus\": \"speed\"}",
+   "ok": true,
+   "detail": "# 질의 상세 분석 리포트 — request #3437  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-17 05:59:22 · ru"
+  },
+  {
+   "check": "wiki_sources {}",
+   "ok": true,
+   "detail": "{  \"sources\": [   {    \"name\": \"peer_wiki\",    \"enabled\": false,    \"transport\": \"http\",    \"desc\": "
+  },
+  {
+   "check": "wiki_external_search {\"query\": \"AGC\", \"k\": 2}",
+   "ok": true,
+   "detail": "외부 검색: AGC"
+  },
+  {
+   "check": "wiki_propose {\"kind\": \"synonym\", \"payload\": {\"term\"",
+   "ok": true,
+   "detail": "{\"proposal_id\": 89, \"status\": \"proposed\", \"note\": \"사람 승인 필요: evolve apply 89\"}"
+  },
+  {
+   "check": "wiki_requests {\"limit\": 5}",
+   "ok": true,
+   "detail": "[  {   \"id\": 3438,   \"ts\": 1789592362.1777701,   \"kind\": \"search\",   \"ms\": 11.59,   \"summary\": \"rela"
+  },
+  {
+   "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
+   "ok": true,
+   "detail": "[  {   \"id\": 3437,   \"ts\": 1789592362.1325376,   \"kind\": \"query\",   \"ms\": 515.3,   \"summary\": \"ISSUE"
+  },
+  {
+   "check": "wiki_rerun {}",
+   "ok": true,
+   "detail": "{  \"points\": [   {    \"id\": \"plan\",    \"label\": \"계획부터 (질의 규칙 · 라우터 · 질의 확장)\",    \"note\": \"질의 문자열만 재사"
+  },
+  {
+   "check": "wiki_rerun (답변부터, request_id=3437)",
+   "ok": true,
+   "detail": "{  \"rerun_of\": 3437,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
+  },
+  {
+   "check": "wiki_requests (한 건 상세)",
+   "ok": true,
+   "detail": "{  \"id\": 3437,  \"ts\": 1789592362.1325376,  \"kind\": \"query\",  \"ms\": 515.3,  \"query\": \"ISSUE-2001 의 원인"
+  },
+  {
+   "check": "wiki_feedback (query_id 연계)",
+   "ok": true,
+   "detail": "{\"query_id\": 705, \"feedback\": 1, \"proposals\": [90], \"episode\": 664}"
+  },
+  {
+   "check": "wiki_query {}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_query: 필수 인자 'question' 가 없습니다. inputSchema: {\"type\": \"object\", \"properti"
+  },
+  {
+   "check": "wiki_query {\"question\": \"   \"}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_query: 필수 인자 'question' 가 없습니다. inputSchema: {\"type\": \"object\", \"properti"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"nope\", \"query\": \"x\"}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_search: 인자 'channel' 는 ['fts', 'vector', 'graph'] 중 하나여야 합니다 (받은 값: 'nope"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"fts\", \"query\": \"x\", \"k\": ",
+   "ok": true,
+   "detail": "invalid arguments for wiki_search: 인자 'k' 는 integer 여야 합니다 (받은 값: '많이')"
+  },
+  {
+   "check": "wiki_doc {\"id\": \"존재하지-않는-문서-zzz\"}",
+   "ok": true,
+   "detail": "not found: 존재하지-않는-문서-zzz"
+  },
+  {
+   "check": "wiki_propose {\"kind\": \"정체불명\", \"payload\": {}}",
+   "ok": true,
+   "detail": "unsupported kind 정체불명"
+  },
+  {
+   "check": "nope_tool {}",
+   "ok": true,
+   "detail": "unknown tool nope_tool — 사용 가능: wiki_query, wiki_search, wiki_related, wiki_doc, wiki_entity, wiki_p"
+  },
+  {
+   "check": "익명(anonymous_role) initialize",
+   "ok": true,
+   "detail": "{'name': 'llmwiki', 'version': '0.5.0'}"
+  },
+  {
+   "check": "Mcp-Session-Id 발급",
+   "ok": true,
+   "detail": "9c5c0c3ad6a5508755454e0f"
+  },
+  {
+   "check": "세션 유지 (같은 Mcp-Session-Id)",
+   "ok": true,
+   "detail": "9c5c0c3ad6a5508755454e0f"
+  },
+  {
+   "check": "알림만 보내면 202",
+   "ok": true,
+   "detail": "202 b''"
+  },
+  {
+   "check": "HTTP 배치",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "check": "method 없는 본문 → -32600 (조용히 버리지 않음)",
+   "ok": true,
+   "detail": "200 {'code': -32600, 'message': \"invalid request: 'method' 가 없습니다\"}"
+  },
+  {
+   "check": "GET /mcp → 405 (SSE 미제공)",
+   "ok": true,
+   "detail": "405"
+  },
+  {
+   "check": "잘못된 Bearer 거부",
+   "ok": true,
+   "detail": "HTTP 401 code=- rpc=-32001 API 키가 유효하지 않습니다 (폐기되었거나 잘못된 키)"
+  },
+  {
+   "check": "API 키로 tools/list",
+   "ok": true,
+   "detail": "lwk_debb39…"
+  },
+  {
+   "check": "wiki_status {}",
+   "ok": true,
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16896,   \"embeddings\": 16896,   \"entities\": 617,   \"relatio"
+  },
+  {
+   "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
+   "ok": true,
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C3]  판정: sufficient · groundedness: 1.0 · 모드: llm · fallback"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"fts\", \"query\": \"ISSUE-200",
+   "ok": true,
+   "detail": "[  {   \"chunk_id\": \"corpus/imported/eval/NOTE-questions.md#0\",   \"score\": 10.764,   \"snippet\": \"# \\\""
+  },
+  {
+   "check": "wiki_search {\"channel\": \"vector\", \"query\": \"전력 제어\"",
+   "ok": true,
+   "detail": "[  {   \"chunk_id\": \"corpus/imported/sw_design/SWD-TX-POWER-03.md#1\",   \"score\": 0.562  },  {   \"chun"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"graph\", \"query\": \"ISSUE-2",
+   "ok": true,
+   "detail": "{  \"chunks\": [   [    \"corpus/imported/eval/NOTE-questions.md#1\",    22.02   ],   [    \"corpus/impor"
+  },
+  {
+   "check": "wiki_sources {}",
+   "ok": true,
+   "detail": "{  \"sources\": [   {    \"name\": \"peer_wiki\",    \"enabled\": false,    \"transport\": \"http\",    \"desc\": "
+  },
+  {
+   "check": "wiki_feedback (query_id 연계)",
+   "ok": true,
+   "detail": "{\"query_id\": 707, \"feedback\": 1, \"proposals\": [90], \"episode\": 665}"
+  },
+  {
+   "check": "wiki_query {}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_query: 필수 인자 'question' 가 없습니다. inputSchema: {\"type\": \"object\", \"properti"
+  },
+  {
+   "check": "wiki_query {\"question\": \"   \"}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_query: 필수 인자 'question' 가 없습니다. inputSchema: {\"type\": \"object\", \"properti"
+  },
+  {
+   "check": "wiki_search {\"channel\": \"nope\", \"query\": \"x\"}",
+   "ok": true,
+   "detail": "invalid arguments for wiki_search: 인자 'channel' 는 ['fts', 'vector', 'graph'] 중 하나여야 합니다 (받은 값: 'nope"
+  },
+  {
+   "check": "동시 wiki_query 4건 (제한 안)",
+   "ok": true,
+   "detail": "4/4 성공 · 실패=[]"
+  },
+  {
+   "check": "한 키로 한계 초과 → 429 로만 거부 (5xx·크래시 없음)",
+   "ok": true,
+   "detail": "3/6 성공 · 거부 3건 · 예: HTTP 429 code=per_user_limit rpc=-32002 동시 요청이 너무 많습니다 (user:key:verify-mcp-0: 3개 실행/대기 중)"
+  },
+  {
+   "check": "브리지 initialize",
+   "ok": true,
+   "detail": "{'name': 'llmwiki', 'version': '0.5.0'}"
+  },
+  {
+   "check": "브리지 tools/list",
+   "ok": true,
+   "detail": "14"
+  },
+  {
+   "check": "브리지 tools/call",
+   "ok": true,
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16896,   \"embeddings\": 16896,   \"entiti"
+  },
+  {
+   "check": "브리지: 원격 인증 실패를 JSON-RPC 오류로",
+   "ok": true,
+   "detail": "remote MCP HTTP 401: {\"jsonrpc\": \"2.0\", \"id\": null, \"error\": {\"code\": -32001, \"message\": \""
+  },
+  {
+   "check": "mcp --doctor: 결함 없는 환경은 ok=true",
+   "ok": true,
+   "detail": "오류 0 · 경고 0 · 도구 14"
+  },
+  {
+   "check": "플러그인 도구 등록",
+   "ok": true,
+   "detail": "['wiki_requests', 'wiki_rerun', 'verify_echo', 'mock__search']"
+  },
+  {
+   "check": "플러그인 도구 호출",
+   "ok": true,
+   "detail": "{\n \"echo\": \"안녕\",\n \"docs\": 352\n}"
+  },
+  {
+   "check": "플러그인도 인자 검증",
+   "ok": true,
+   "detail": "invalid arguments for verify_echo: 필수 인자 'msg' 가 없습니다. inputSchema: {\"type\": \"ob"
+  },
+  {
+   "check": "페더레이션 도구 노출 (<source>__<tool>)",
+   "ok": true,
+   "detail": "['mock__search']"
+  },
+  {
+   "check": "페더레이션 도구 호출 중계",
+   "ok": true,
+   "detail": "{  \"items\": [   {    \"id\": \"ISSUE-9002\",    \"title\": \"RX AGC 수렴 지연\",    \"snippet\": \"AGC 수렴"
+  },
+  {
+   "check": "expose 목록에 없는 도구 거부",
+   "ok": true,
+   "detail": "tool 없는도구 is not exposed by source mock"
+  },
+  {
+   "check": "없는 소스 거부",
+   "ok": true,
+   "detail": "unknown federated source 없는소스 (expose/mcp_federation 확인)"
+  },
+  {
+   "check": "wiki_sources: 플러그인 오류 보고",
+   "ok": true,
+   "detail": "[{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)\"}]"
+  },
+  {
+   "check": "wiki_sources: 페더레이션 도구 목록",
+   "ok": true,
+   "detail": "['mock__search']"
+  },
+  {
+   "check": "wiki_sources: 소스 연결 상태",
+   "ok": true,
+   "detail": "[('peer_wiki', None), ('kb_rest', None), ('mango', None), ('mock', True)]"
+  },
+  {
+   "check": "외부 RAG 직접 검색",
+   "ok": true,
+   "detail": "외부 검색: AGC 수렴 - [mock] ISSUE-9002 RX AGC 수렴 지연 (score 1.000, mock://issues/ISSUE-9002)   A"
+  },
+  {
+   "check": "외부 결과가 질의에 융합 (ext 채널)",
+   "ok": true,
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C3]  판정: sufficient · groundedness: 1.0 · 모드: llm "
+  },
+  {
+   "check": "재귀 방지: 하위 프로세스는 페더레이션 안 함",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "재귀 방지: 하위에서 중계 호출 거부",
+   "ok": true,
+   "detail": "federated tool mock__search is not available through a federated call (recursion guard)"
+  },
+  {
+   "check": "mcp --doctor --json (심어 둔 결함만 오류로)",
+   "ok": true,
+   "detail": "ok=False · 오류 ['플러그인'] · 경고 0 · 도구 16"
+  },
+  {
+   "check": "doctor: 플러그인 오류 검출",
+   "ok": true,
+   "detail": "오류: [{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)"
+  },
+  {
+   "check": "doctor: 도구 목록에 확장 포함",
+   "ok": true,
+   "detail": "16"
+  },
+  {
+   "check": "doctor: 페더레이션 도구 보고",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "mcp --doctor (사람이 읽는 출력)",
+   "ok": true,
+   "detail": "['MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)']"
+  },
+  {
+   "check": "mcp --client-config (stdio/http/브리지)",
+   "ok": true,
+   "detail": "['_how', 'stdio_claude_code', 'stdio_json', 'http_claude_code', 'http_json', 'bridge_json']"
+  }
+ ]
+}

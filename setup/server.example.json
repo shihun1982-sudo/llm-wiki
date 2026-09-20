@@ -58,5 +58,19 @@
     "stats_window_min": 15,
     "live_dir": "data/live",
     "live_stale_s": 90
+  },
+  "collab": {
+    "enabled": true,
+    "retain_min": 120,
+    "max_messages": 500,
+    "max_chars": 2000,
+    "board_max": 2000,
+    "board_keep_days": 365,
+    "bubble_font_start_px": 12,
+    "bubble_font_step_px": 1,
+    "bubble_font_step_min": 30,
+    "bubble_font_max_px": 28,
+    "idle_hide_min": 240,
+    "_comment": "Web UI 협업(휘발성 채팅 + /게시 게시판). 부수 기능 — 끄면(enabled=false 또는 config.json 토글 collab) 화면에서 사라지고 질의·빌드·MCP 에는 영향이 없다. 설명: docs/COLLAB.md"
   }
 }

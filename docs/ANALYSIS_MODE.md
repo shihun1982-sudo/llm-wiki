@@ -65,6 +65,7 @@
 1. **재현**: 문제 질의를 `analysis_mode` 로 실행한다. `python -m llmwiki query "…" --analyze` (Web 은 토글). 캐시 히트면 검색 단계가 없으므로 `query_cache`/`precompute` 를 끄고 다시 실행(리포트가 안내).
 2. **읽기**: §0 의 렌즈 상위 소견 → §5~7 의 조절점 → §2/§3 수치로 확인. 사람이 볼 때는 §3.2(융합·리랭크 전후)와 §3.3(최종 근거 표)이 핵심.
 3. **LLM 에게**: `req_<id>.md` 를 첨부하고 §9 지시문을 붙인다(초점을 품질/속도/토큰 중 하나로 좁히려면 `--focus`). MCP 클라이언트라면 `wiki_analysis(request_id, focus)` 한 번으로 같은 문서를 받는다.
+   - 이 리포트는 **"이번 질의에서 무슨 일이 있었나"** 만 담는다. LLM 이 "그래서 어느 손잡이를 어떻게 돌릴까" 까지 답하려면 전체 구조와 설정 스냅샷이 더 필요하다 — `python -m llmwiki optimize <id|last> --focus <렌즈> --out bundle.md` 가 이 리포트에 **A 설정 스냅샷 · D 손잡이 지도([OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)) · C 지시문**을 묶어 한 파일로 만든다. Web 은 Ask › 📊 상세 분석 리포트 › **📦 최적화 자료 묶음 다운로드**, API 는 `GET /api/optimize/bundle?request_id=<id>&focus=<렌즈>`. 절차는 [BRINGUP_GUIDE.md](BRINGUP_GUIDE.md) §7.0.
 4. **적용·검증**: 제안된 값을 `tuning set k=v` / `config set k=v`(Web › Settings) 로 바꾸고 같은 질의를 다시 `--analyze` 로 실행해 §2(ms·토큰)·§3(순위)·§0(판정) 변화를 비교. 회귀는 `trial run --name <이름>` → `trial compare baseline <이름>`.
 5. **정리**: 문제가 "문서가 없다/표기가 다르다"면 설정 대신 문서 추가·`rules add synonym`·`pin` 을 쓴다(§5 품질 렌즈가 코퍼스 갭을 표시).
 

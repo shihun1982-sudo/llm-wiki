@@ -182,6 +182,39 @@ try:
     check("guest GET /api/analysis (unknown) → 404", "GET", "/api/analysis?request_id=999999", 404)
     st, j, _ = check("mcp wiki_analysis", "POST", "/mcp", 200, {"jsonrpc": "2.0", "id": 31, "method": "tools/call", "params": {"name": "wiki_analysis", "arguments": {"request_id": _rid, "focus": "speed"}}})
     rows[-1]["ok"] = rows[-1]["ok"] and not ((j or {}).get("result") or {}).get("isError") and "속도 렌즈" in json.dumps(j, ensure_ascii=False)
+    # ---- 최적화 자료 묶음 (2026-09-16) — Ask 의 📦 버튼 3종이 부르는 경로 ----
+    st, j, _ = check("guest GET /api/optimize/guide", "GET", "/api/optimize/guide", 200, raw=True)
+    _g = (j if isinstance(j, bytes) else b"").decode("utf-8", "replace")
+    rows[-1]["ok"] = rows[-1]["ok"] and "손잡이" in _g and len(_g) > 3000
+    rows[-1]["out"] = "guide %d자" % len(_g)
+    st, j, _ = check("guest GET /api/optimize/bundle (md)", "GET", "/api/optimize/bundle?request_id=%d&focus=quality" % _rid, 200, raw=True)
+    _b = (j if isinstance(j, bytes) else b"").decode("utf-8", "replace")
+    # 묶음은 A 설정 · B 실측 · C 지시문 · D 손잡이 지도를 한 파일로 — 최상위 제목이 하나여야 목차가 충돌하지 않는다.
+    # analysis_mode 질의의 리포트에는 프롬프트 샘플이 코드블록으로 들어 있고 그 안에도 '# ' 줄이 있다 → 펜스 밖만 센다.
+    def _h1_outside_fences(text):
+        """코드펜스 밖의 '# ' 제목 수. 펜스는 **여는 길이 이상**의 같은 문자로만 닫힌다 —
+        프롬프트 샘플처럼 안에 ``` 가 든 블록은 ```` 로 감싸므로 단순 토글로는 어긋난다."""
+        n, open_len, open_ch = 0, 0, ""
+        for ln in text.splitlines():
+            s = ln.strip()
+            m = re.match(r"^(`{3,}|~{3,})", s)
+            if m:
+                ch, ln_len = m.group(1)[0], len(m.group(1))
+                if not open_len:
+                    open_len, open_ch = ln_len, ch
+                    continue
+                if ch == open_ch and ln_len >= open_len:
+                    open_len, open_ch = 0, ""
+                continue
+            if not open_len and ln.startswith("# "):
+                n += 1
+        return n
+    _h1 = _h1_outside_fences(_b)
+    rows[-1]["ok"] = rows[-1]["ok"] and len(_b) > len(_g) and _h1 == 1
+    rows[-1]["out"] = "bundle %d자 · 코드펜스 밖 h1 %d개" % (len(_b), _h1)
+    st, j, _ = check("guest GET /api/optimize/bundle (json)", "GET", "/api/optimize/bundle?request_id=%d&focus=all&format=json" % _rid, 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and bool((j or {}).get("markdown"))
+    check("guest GET /api/optimize/bundle (unknown) → 404", "GET", "/api/optimize/bundle?request_id=999999", 404)
     st, j, _ = check("admin query external_rag override", "POST", "/api/query", 200, {"q": "TX 전력 제어 PA gain 테이블 인덱스 오류", "overrides": {"external_rag": True, "rerank_llm": False}, "log": False}, cookie=adm)
     rows[-1]["ok"] = rows[-1]["ok"] and any(h.get("doc_id", "").startswith("ext:mock:") for h in ((j or {}).get("result") or {}).get("hits", []))
     srcs = json.load(open(os.path.join(tmp, "mcp_sources.json"), encoding="utf-8"))
@@ -302,9 +335,152 @@ try:
     check("점검 모드: admin 은 통과", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False}, cookie=adm)
     check("admin maintenance off", "POST", "/api/admin/server", 200, dict(C, action="maintenance", enabled=False), cookie=adm)
     check("게스트 질의 복구", "POST", "/api/query", 200, {"q": "ISSUE-2001 원인", "log": False})
-    st, j, _ = check("models catalog 조회", "GET", "/api/models/catalog", 200)
-    rows[-1]["ok"] = rows[-1]["ok"] and (j or {}).get("models")
-    rows[-1]["out"] = "models=%d embed=%d" % (len(j.get("models", [])), len(j.get("embed", [])))
+    st, j, _ = check("models catalog 조회 (llm·embed·rerank)", "GET", "/api/models/catalog", 200)
+    # 임베딩·리랭크 모델도 카탈로그에서 고를 수 있어야 한다 (예전에는 화면에 목록이 없었다)
+    rows[-1]["ok"] = rows[-1]["ok"] and (j or {}).get("models") and (j or {}).get("embed") and (j or {}).get("rerank")
+    rows[-1]["out"] = "models=%d embed=%d rerank=%d" % (len(j.get("models", [])), len(j.get("embed", [])), len(j.get("rerank", [])))
+    # "지금 쓰는 모델" 에 역할 LLM 뿐 아니라 임베딩·리랭크(API)도 들어 있어야 한다
+    st, j2, _ = check("models catalog: 지금 쓰는 모델에 embed·rerank 포함", "GET", "/api/models/catalog", 200)
+    _iu = (j2 or {}).get("in_use") or {}
+    rows[-1]["ok"] = rows[-1]["ok"] and "embed" in _iu and "rerank_api" in _iu and any(v.get("kind") == "llm" for v in _iu.values())
+    rows[-1]["out"] = "in_use=%s" % ",".join(sorted(_iu))
+    check("admin catalog add (kind=rerank)", "POST", "/api/models/catalog", 200,
+          dict(C, action="add", model={"id": "web-verify-rerank", "provider": "cohere", "label": "웹검증 리랭크", "kind": "rerank"}), cookie=adm)
+    st, j3, _ = check("catalog add(kind=rerank) 반영", "GET", "/api/models/catalog", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and any(m["id"] == "web-verify-rerank" for m in (j3 or {}).get("rerank", []))
+    check("admin catalog remove (rerank)", "POST", "/api/models/catalog", 200, dict(C, action="remove", id="web-verify-rerank"), cookie=adm)
+    # ---- 요청 이력 (2026-09-16): 내 요청 / 전체 / 보관 파일에서 다시 보기 ----
+    st, jr, _ = check("guest GET /api/requests (내 요청 목록)", "GET", "/api/requests?limit=5", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and isinstance(jr, dict) and "rows" in jr and "live" in jr and "can_all" in jr
+    rows[-1]["out"] = "rows=%d live=%d scope=%s can_all=%s" % (len((jr or {}).get("rows") or []), len((jr or {}).get("live") or []),
+                                                               (jr or {}).get("scope"), (jr or {}).get("can_all"))
+    st, jr2, _ = check("admin GET /api/requests?scope=all", "GET", "/api/requests?scope=all&limit=5", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and (jr2 or {}).get("scope") == "all" and (jr2 or {}).get("can_all") is True
+    st, jr3, _ = check("요청 상세에 보관 파일 경로", "GET", "/api/request?id=%d" % _rid, 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and (jr3 or {}).get("id") == _rid
+    rows[-1]["out"] = "file=%s" % os.path.basename(str((jr3 or {}).get("file") or "(없음)"))
+    check("없는 요청 → 404", "GET", "/api/request?id=99999999", 404)
+    # brief=1: 진행 중 작업 목록의 상세 패널용 — trace 를 빼고 답변 요약만 (느린 질의가 떠 있을 때 먼저 도착해야 한다)
+    _full_raw, _brief_raw = req("GET", "/api/request?id=%d" % _rid, raw=True)[1], req("GET", "/api/request?id=%d&brief=1" % _rid, raw=True)[1]
+    st, jb, _ = check("요청 상세 brief=1 (trace 제외)", "GET", "/api/request?id=%d&brief=1" % _rid, 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and (jb or {}).get("brief") is True and (jb or {}).get("trace") is None
+    rows[-1]["ok"] = rows[-1]["ok"] and (jb or {}).get("id") == _rid and isinstance((jb or {}).get("result"), dict)
+    _fk, _bk = len(_full_raw) / 1024.0, len(_brief_raw) / 1024.0
+    rows[-1]["out"] = "%.0fKB → %.0fKB (%.0f%% 감소)" % (_fk, _bk, 100 * (1 - _bk / max(_fk, 1)))
+    st, jb2, _ = check("brief 에도 화면이 쓰는 항목은 남는다", "GET", "/api/request?id=%d&brief=1" % _rid, 200)
+    _r = (jb2 or {}).get("result") or {}
+    rows[-1]["ok"] = rows[-1]["ok"] and bool(_r.get("answer")) and ("hits" not in _r)
+    rows[-1]["out"] = "answer %d자 · hits_brief %d건 · hits 제외=%s" % (
+        len(_r.get("answer") or ""), len(_r.get("hits_brief") or []), "hits" not in _r)
+    st, jm, _ = check("admin maintenance prune_requests (보관 파일 정리)", "POST", "/api/maintenance", 200, dict(C, action="prune_requests"), cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and "archive" in (jm or {})
+    rows[-1]["out"] = json.dumps((jm or {}).get("archive") or {}, ensure_ascii=False)[:80]
+    # ---- 단계 재실행 (2026-09-17): 저장해 둔 중간 결과로 특정 단계부터 (docs/RERUN.md) ----
+    # 중간 결과는 rerun_keep 개만 남으므로, 앞에서 쓰던 요청은 이미 정리되었을 수 있다 → **바로 앞에서** 한 번 더 질의한다.
+    st, _jq, _ = check("재실행용 질의 (중간 결과 저장)", "POST", "/api/query", 200, {"q": "ISSUE-2001 의 원인과 수정 CL", "log": True})
+    _rrid = ((_jq or {}).get("result") or {}).get("request_id") or _rid
+    rows[-1]["out"] = "request_id=%s rerun=%s" % (_rrid, json.dumps(((_jq or {}).get("result") or {}).get("rerun") or {}, ensure_ascii=False)[:60])
+    st, jrr, _ = check("재실행 정보 (재시작점 표 + 저장 여부)", "GET", "/api/rerun?request_id=%s" % _rrid, 200)
+    _pts = [p["id"] for p in ((jrr or {}).get("points") or [])]
+    rows[-1]["ok"] = rows[-1]["ok"] and "answer_llm" in _pts and "claim_check" in _pts and isinstance((jrr or {}).get("stage_point"), dict)
+    rows[-1]["out"] = "points=%d available=%s compatible=%s capture=%s" % (len(_pts), (jrr or {}).get("available"),
+                                                                          (jrr or {}).get("compatible"), (jrr or {}).get("capture_on"))
+    if (jrr or {}).get("available"):
+        # 답변부터: 검색·컨텍스트는 재생되고 answer_llm 만 다시 계산되어야 한다
+        st, jr4, _ = check("재실행: 답변부터", "POST", "/api/query/rerun", 200, {"request_id": _rrid, "from": "answer_llm"})
+        _tr = (jr4 or {}).get("trace") or {}
+        _rep = []
+        def _walk(n):
+            if n.get("replayed"):
+                _rep.append(n.get("name"))
+            for c in n.get("children") or []:
+                _walk(c)
+        _walk(_tr)
+        rows[-1]["ok"] = rows[-1]["ok"] and "context" in _rep and "answer_llm" not in _rep and bool((jr4 or {}).get("result", {}).get("answer"))
+        rows[-1]["out"] = "재생 %d단계: %s | 단계 %s" % (len(_rep), ",".join(_rep[:6]),
+                                                    ",".join(str(c.get("name")) for c in (_tr.get("children") or [])[:8]))
+        # 설정을 바꿔서 재실행 (이게 이 기능의 목적이다)
+        st, jr5, _ = check("재실행: 설정 바꿔서", "POST", "/api/query/rerun", 200,
+                           {"request_id": _rrid, "from": "claim_check", "overrides": {"claim_check": False}})
+        rows[-1]["ok"] = rows[-1]["ok"] and (jr5 or {}).get("result", {}).get("claims") in (None, {})
+        rows[-1]["out"] = "claims=%s (껐으므로 없어야 함)" % ((jr5 or {}).get("result", {}).get("claims") is not None)
+    check("재실행: 모르는 단계 → 400", "POST", "/api/query/rerun", 400, {"request_id": _rrid, "from": "없는단계"})
+    check("재실행: request_id 없음 → 400", "POST", "/api/query/rerun", 400, {"from": "answer_llm"})
+    check("재실행: 없는 요청 → 400", "POST", "/api/query/rerun", 400, {"request_id": 99999999, "from": "answer_llm"})
+    # ---- 그동안 하네스가 건드리지 않던 기능 3종 (2026-09-17 커버리지 점검에서 발견) ----
+    # 권한 미리보기: admin 이 "viewer 에게는 어떻게 보이나" 를 확인하는 기능. 권한을 **낮추기만** 한다.
+    st, jp, hp = check("권한 미리보기 켜기 (viewer 로)", "POST", "/api/auth/preview", 200, dict(C, role="viewer"), cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and (jp or {}).get("preview") == "viewer"
+    # 미리보기는 **별도 쿠키**로 전달된다. 그 쿠키를 같이 보내지 않으면 검사가 아무것도 확인하지 못한다
+    # (처음 작성했을 때 실제로 그랬고, admin 권한 그대로 200 이 나왔다).
+    _pv = "; ".join(v.split(";")[0] for v in (hp.get_all("Set-Cookie") or [])) if hasattr(hp, "get_all") else ""
+    adm_pv = (adm + "; " + _pv) if _pv else adm
+    rows[-1]["out"] = "preview 쿠키 %s" % ("받음" if _pv else "없음!")
+    st, _jme, _ = check("미리보기 중에는 admin 전용 조회가 막힌다", "GET", "/api/auth/users", (401, 403), cookie=adm_pv)
+    rows[-1]["out"] = "HTTP %s (viewer 로 낮춰 보는 중)" % st
+    st, jq, _ = check("미리보기 중에도 일반 질의는 된다", "POST", "/api/query", 200, {"q": "ISSUE-2001", "log": False}, cookie=adm_pv)
+    rows[-1]["ok"] = rows[-1]["ok"] and bool(((jq or {}).get("result") or {}).get("answer"))
+    st, jp2, hp2 = check("권한 미리보기 끄기", "POST", "/api/auth/preview", 200, dict(C, role=""), cookie=adm_pv)
+    _pv2 = "; ".join(v.split(";")[0] for v in (hp2.get_all("Set-Cookie") or [])) if hasattr(hp2, "get_all") else ""
+    st, jme2, _ = check("끄면 admin 으로 돌아온다", "GET", "/api/auth/users", 200,
+                        cookie=(adm + "; " + _pv2) if _pv2 else adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and isinstance((jme2 or {}).get("users"), list)
+    check("미리보기로 권한을 **올릴 수는 없다**", "POST", "/api/auth/preview", 400, dict(C, role="없는역할"), cookie=adm)
+
+    # 내 화면 설정 저장 (계정별) — 게스트는 서버에 저장하지 않는다
+    st, jpf, _ = check("내 설정 조회 (admin)", "GET", "/api/profile", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and "profile" in (jpf or {})
+    st, jpf2, _ = check("내 설정 저장", "POST", "/api/profile", 200, dict(C, profile={"theme": "dark", "verify": True}), cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and (jpf2 or {}).get("ok") is not False
+    st, jpf3, _ = check("저장한 설정이 다시 읽힌다", "GET", "/api/profile", 200, cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and ((jpf3 or {}).get("profile") or {}).get("theme") == "dark"
+    check("게스트는 서버에 저장하지 않는다 → 403", "POST", "/api/profile", 403, dict(C, profile={"x": 1}))
+    check("내 설정 초기화", "POST", "/api/profile", 200, dict(C, action="reset"), cookie=adm)
+
+    # 분석 렌즈 소견 (Ask 패널의 🧠) — 질의 하나에 대해 LLM 소견을 만든다
+    # mock LLM 은 소견 JSON 을 만들지 못하므로 `parsed:false` 가 정상이다. 여기서 보는 것은
+    # "엔드포인트가 살아 있고, LLM 실패를 500 이 아니라 **구조화된 결과**로 돌려주는가" 다.
+    st, jai, _ = check("분석 LLM 소견 (mock 은 parsed:false 가 정상)", "POST", "/api/analysis/insight", 200, {"request_id": _rrid})
+    rows[-1]["ok"] = st == 200 and isinstance(jai, dict) and "available" in jai
+    rows[-1]["out"] = "available=%s parsed=%s" % ((jai or {}).get("available"), (jai or {}).get("parsed"))
+    check("분석 소견: 없는 요청 → 404", "POST", "/api/analysis/insight", 404, {"request_id": 99999999})
+
+    # ---- 협업: 휘발성 채팅 + 게시판 (2026-09-16). 부수 기능이라 토글로 끄면 404 여야 한다 ----
+    st, jc, _ = check("collab 상태 조회", "GET", "/api/collab", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and isinstance(jc, dict) and "messages" in jc and "people" in jc and "config" in jc
+    st, jc2, _ = check("collab 채팅 (휘발성)", "POST", "/api/collab", 200, {"action": "say", "text": "검증용 메시지"})
+    rows[-1]["ok"] = rows[-1]["ok"] and (jc2 or {}).get("ok") and (jc2 or {}).get("command") is None
+    st, jc3, _ = check("collab /게시 는 명령으로 인식", "POST", "/api/collab", 200, {"action": "say", "text": "/게시 검증 제목"})
+    rows[-1]["ok"] = rows[-1]["ok"] and ((jc3 or {}).get("command") or {}).get("name") == "post"
+    rows[-1]["out"] = json.dumps((jc3 or {}).get("command") or {}, ensure_ascii=False)
+    st, jc4, _ = check("collab 게시 (요청 연결)", "POST", "/api/collab", 200,
+                       {"action": "post", "title": "검증 글", "body": "내용", "request_id": _rid, "kind": "feedback"})
+    _pid = ((jc4 or {}).get("post") or {}).get("id")
+    rows[-1]["ok"] = rows[-1]["ok"] and bool(_pid) and ((jc4 or {}).get("post") or {}).get("request_id") == _rid
+    st, jc5, _ = check("collab 게시판 조회", "GET", "/api/collab/board?limit=10", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and any(x.get("id") == _pid for x in (jc5 or {}).get("posts") or [])
+    check("collab 댓글", "POST", "/api/collab", 200, {"action": "reply", "id": _pid, "text": "댓글입니다"})
+    check("collab 해결 표시", "POST", "/api/collab", 200, {"action": "resolve", "id": _pid, "value": True})
+    st, jc6, _ = check("collab 캐릭터 위치 저장 · 아이콘은 IP 로 (고를 수 없음)", "POST", "/api/collab", 200,
+                       {"action": "touch", "x": 0.2, "y": 0.6, "emoji": "🐨"})
+    rows[-1]["ok"] = (rows[-1]["ok"] and abs(float((jc6 or {}).get("x") or 0) - 0.2) < 1e-6
+                      and (jc6 or {}).get("emoji") and (jc6 or {}).get("emoji") != "🐨")
+    rows[-1]["out"] = "emoji=%s (보낸 값 무시)" % (jc6 or {}).get("emoji")
+    check("guest 는 채팅 비우기 불가 → 401 (admin 등급)", "POST", "/api/collab", 401, {"action": "clear"})
+    # 남의 글(=admin 이 쓴 글)을 게스트가 remove_mine 으로 지우려 하면 거절되어야 한다
+    st, jca, _ = check("admin 이 글 작성", "POST", "/api/collab", 200, {"action": "post", "title": "admin 글", "body": "x"}, cookie=adm)
+    _apid = ((jca or {}).get("post") or {}).get("id")
+    check("남의 글은 remove_mine 으로 못 지움 → 403", "POST", "/api/collab", 403, {"action": "remove_mine", "id": _apid})
+    check("내 글은 remove_mine 으로 지워진다", "POST", "/api/collab", 200, {"action": "remove_mine", "id": _pid})
+    check("admin 글 삭제 (확인 필요 → 428)", "POST", "/api/collab", 428, {"action": "remove", "id": _apid}, cookie=adm)
+    check("admin 글 삭제 (확인 후)", "POST", "/api/collab", 200, dict(C, action="remove", id=_apid), cookie=adm)
+    st, jc7, _ = check("collab 말풍선 글자 크기 설정이 내려옴", "GET", "/api/collab", 200)
+    rows[-1]["ok"] = rows[-1]["ok"] and "bubble_font_step_min" in ((jc7 or {}).get("config") or {})
+    rows[-1]["out"] = json.dumps((jc7 or {}).get("config") or {}, ensure_ascii=False)[:90]
+    check("guest config reload → 401", "POST", "/api/config", 401, {"action": "reload"})
+    st, j4, _ = check("admin config reload (파일 다시 읽기)", "POST", "/api/config", 200, dict(C, action="reload"), cookie=adm)
+    rows[-1]["ok"] = rows[-1]["ok"] and (j4 or {}).get("reloaded") is True and (j4 or {}).get("settings")
+    rows[-1]["out"] = "path=%s" % os.path.basename(str((j4 or {}).get("path") or ""))
     check("guest catalog 수정 → 401", "POST", "/api/models/catalog", 401, {"action": "add", "model": {"id": "x", "provider": "ollama"}})
     check("admin catalog add", "POST", "/api/models/catalog", 200, dict(C, action="add", model={"id": "web-verify-model", "provider": "ollama", "label": "웹검증", "roles": ["answer"]}), cookie=adm)
     st, j, _ = check("catalog add 반영", "GET", "/api/models/catalog?role=answer", 200)

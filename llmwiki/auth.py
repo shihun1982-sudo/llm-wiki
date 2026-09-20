@@ -330,7 +330,8 @@ def classify_cli(argv: List[str]) -> Tuple[str, str]:
     return "edit", "cli:%s" % cmd
 
 
-_READ_POST = ("/api/query", "/api/search", "/api/feedback", "/api/evolve/propose", "/api/auth/login", "/api/auth/logout", "/api/auth/password",
+_READ_POST = ("/api/query", "/api/query/rerun",   # 재실행은 질의와 같은 등급 — 색인을 바꾸지 않고 읽기만 한다
+              "/api/search", "/api/feedback", "/api/evolve/propose", "/api/auth/login", "/api/auth/logout", "/api/auth/password",
               "/api/forensic/expect", "/api/forensic/llm", "/api/analysis/insight", "/api/time", "/mcp",
               "/api/auth/preview",   # 자기 권한을 낮춰 보는 것뿐 (올릴 수 없다)
               "/api/profile")   # 자기 화면 설정만 저장 (서버 설정을 바꾸지 않음 — llmwiki/profiles.py)
@@ -386,6 +387,16 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
         return ("admin", "watch %s (save)" % act) if body.get("save") else ("index", "watch " + act)
     if path == "/api/precompute":
         return "index", "precompute " + (act or "run")
+    if path == "/api/collab":
+        # 채팅·게시는 로그인한 사람이면 누구나(read). 남의 글 삭제·채팅 비우기만 admin.
+        # 내 글 삭제는 action=remove_mine (서버가 작성자를 확인한다).
+        if act in ("remove", "clear"):
+            return "admin", "collab admin"
+        return "read", "collab " + (act or "say")
+    if path == "/api/config" and act == "reload":
+        # 파일을 쓰지 않고 디스크의 config.json 을 다시 읽기만 한다 — 그래도 서버 전체 동작이 바뀌므로
+        # 저장(admin)과 같은 등급에 두되 op 를 따로 둬서 조직이 permissions.ops 로 낮출 수 있게 한다.
+        return "admin", "config reload"
     if path in _ADMIN_POST:
         return "admin", path + (" " + act if act else "")
     if path == "/api/mcp_sources":
