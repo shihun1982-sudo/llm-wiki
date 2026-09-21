@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """CLI. Web UI 의 콘솔 탭은 이 argparse 를 그대로 in-process 로 실행하므로 CLI = Web 기능 집합.
 
   python -m llmwiki build [--full [--no-reset]] [--purge-logs] [--no-embed] [--llm-graph] ...   (--full 은 기본으로 DB 삭제 후 완전 초기화)
@@ -28,7 +28,7 @@ import json
 import os
 import sys
 from contextlib import redirect_stdout
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import time
 
@@ -57,6 +57,8 @@ def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="llmwiki", description="LLM Wiki: FTS + Vector + GraphRAG (self-evolving)")
+    from . import __version__ as _ver
+    ap.add_argument("--version", action="version", version="llmwiki %s" % _ver, help="버전 (docs/RELEASE_NOTES.md 의 최신 절과 같다)")
     ap.add_argument("--user", dest="cli_user", default=None, help="CLI 실행자 로컬 계정 (security.json users). 비밀번호는 --password / LLMWIKI_PASSWORD / 프롬프트. 기본 역할은 security.json cli.default_role")
     ap.add_argument("--password", dest="cli_password", default=None, help="--user 의 비밀번호 (스크립트용; 가능하면 LLMWIKI_PASSWORD 환경변수 사용)")
     ap.add_argument("--log-level", dest="log_level", default=None, help="이번 실행의 logs/ 파일 로그 레벨 (DEBUG|INFO|WARNING|ERROR; = LLMWIKI_LOG_LEVEL)")
@@ -85,10 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("security", help="로그인/역할/권한/파괴적 작업 정책 (security.json): show | init | audit | perms [show|set <level|op>=<role> …|reset]")
-    p.add_argument("action", choices=["show", "init", "audit", "perms"], nargs="?", default="show")
-    p.add_argument("args", nargs="*", help="perms set read=viewer run=viewer '/api/eval=class2' 'cli:trial run=class2' | perms reset")
+    p = sub.add_parser("security", help="로그인/역할/권한/파괴적 작업 정책 (security.json): show | init | audit | perms [show|set <level|op>=<role> …|reset] | docacl [show|check|init]")
+    p.add_argument("action", choices=["show", "init", "audit", "perms", "docacl"], nargs="?", default="show")
+    p.add_argument("args", nargs="*", help="perms set read=viewer run=viewer '/api/eval=class2' 'cli:trial run=class2' | perms reset | docacl show | docacl check | docacl init")
     p.add_argument("--n", type=int, default=50, help="audit: 최근 N 건")
+    p.add_argument("--role", default="viewer", help="docacl check: 이 역할로 봤을 때 몇 건이 가려지는지 (기본 viewer)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("apikey", help="API 키 (MCP HTTP / 스크립트용 Bearer 토큰, 역할 부여): add <name> --role viewer | list | remove <id|name>")
@@ -117,8 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save", action="store_true", help="apply 결과를 config.json / tuning.json 에 저장")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("logs", help="logs/ 조회: tail | grep --request <id> | --run <run_id> | --text | files")
-    p.add_argument("action", choices=["tail", "grep", "files", "dir"], nargs="?", default="tail")
+    p = sub.add_parser("logs", help="logs/ 조회: tail | grep --request <id> | --run <run_id> | --text | files | status(총량 제한 상태)")
+    p.add_argument("action", choices=["tail", "grep", "files", "dir", "status"], nargs="?", default="tail")
     p.add_argument("-n", type=int, default=50)
     p.add_argument("--file", default="llmwiki", help="llmwiki | error | build | query")
     p.add_argument("--request", type=int, default=None, help="requests id → run_id 로 연결된 로그")
@@ -153,11 +156,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("rules", help="규칙 기반 질의 확장 사전(query_rules.json): show | add <type> <term> <values…> | remove <type> <term> [value] | test \"질의\" | lint(중복·순환·사슬 점검) | merge <파일> [--graph] [--replace]")
-    p.add_argument("action", choices=["show", "add", "remove", "test", "stats", "path", "lint", "merge"], nargs="?", default="show")
+    p = sub.add_parser("rules", help="규칙 기반 질의 확장 사전(query_rules.json): types(유형 표) | show | add <type> <term> <values…> | remove <type> <term> [value] | test \"질의\" | explain <용어>(어느 유형·방향으로 무엇을 끌어오나) | lint(중복·순환·사슬 점검) | merge <파일> [--graph] [--replace]")
+    p.add_argument("action", choices=["show", "add", "remove", "test", "explain", "stats", "path", "lint", "merge", "effect", "types"], nargs="?", default="show")
     p.add_argument("args", nargs="*")
+    p.add_argument("--order", default="fired", choices=["fired", "helped", "rate", "useless"],
+                   help="effect: 정렬 — fired(많이 걸린 순) | helped(기여 많은 순) | rate(기여율) | useless(걸리기만 하고 기여 0)")
+    p.add_argument("--reset", action="store_true", help="effect: 누적치를 지운다 (args 에 용어를 주면 그 규칙만)")
     p.add_argument("--graph", action="store_true", help="merge: query_rules.json 이 아니라 그래프 규칙(data/rules.json) 에 합친다")
     p.add_argument("--replace", action="store_true", help="merge: 같은 용어의 값을 합치지 않고 통째로 바꾼다")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("reset", help="관리자 초기화: data(색인·빌드 산출물) | settings(설정 파일) | logs(로그·이력). "
+                                     "기본은 **미리보기**이며, 실제로 지우려면 --apply 를 준다. 다른 환경으로 옮길 때 쓴다")
+    p.add_argument("scope", choices=["data", "settings", "logs"], nargs="?", default=None)
+    p.add_argument("--apply", action="store_true", help="실제로 지운다 (없으면 미리보기만)")
+    p.add_argument("--yes", action="store_true", help="확인 문구 생략 (스크립트용)")
+    p.add_argument("--no-snapshot", dest="no_snapshot", action="store_true", help="data: 지우기 전 자동 스냅샷을 만들지 않는다")
+    p.add_argument("--purge-wiki-notes", dest="purge_wiki_notes", action="store_true", help="data: 사람이 쓴 위키 편집 노트까지 지운다")
+    p.add_argument("--clear-embed-cache", dest="clear_embed_cache", action="store_true",
+                   help="data: 임베딩 캐시까지 지운다 (임베더를 바꿀 때. 다음 빌드에서 전부 다시 임베딩한다)")
+    p.add_argument("--include-security", dest="include_security", action="store_true",
+                   help="settings: security.json·docacl.json 도 초기화 (계정·권한이 사라진다)")
+    p.add_argument("--include-env", dest="include_env", action="store_true",
+                   help="settings: .env 도 삭제 (API 키·PAT 가 사라진다 — 복구 불가)")
+    p.add_argument("--include-proposals", dest="include_proposals", action="store_true",
+                   help="logs: 자가진화 제안도 지운다")
+    p.add_argument("--include-sessions", dest="include_sessions", action="store_true",
+                   help="logs: 로그인 세션도 초기화 (모두 다시 로그인)")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("graph-rules", help="그래프 빌드 규칙(data/rules.json): show | types(엔티티 type·값 종류·관계 어휘) | lint(빌드 전 정적 점검) | test \"<문장>\"(무엇이 잡히나) | add-entity <이름> <type> [별칭…] | add-alias <엔티티> <별칭…> | fill-defaults | path")
+    p.add_argument("action", choices=["show", "types", "lint", "test", "add-entity", "add-alias", "fill-defaults", "path"],
+                   nargs="?", default="show")
+    p.add_argument("args", nargs="*")
+    p.add_argument("--doc-type", dest="doc_type", default="", help="test: 문서 유형 (link_rules 가 걸리는지 보려면 — 예 cl)")
+    p.add_argument("--ext-id", dest="ext_id", default="", help="test: 문서 ID (예 CL-55302)")
+    p.add_argument("--dry-run", action="store_true", help="fill-defaults: 쓰지 않고 무엇이 채워질지만")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("pin", help="고정 근거(pins.json): list | add --doc <id부분> | --chunk <chunk_id> [--query \"…\" | --keywords a,b | --always | --doc-types issue,cl] | remove <pin_id>")
@@ -189,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--chunk", dest="chunks", action="append", default=[], help="expect: 기대 청크 id (doc_id#n). 여러 번")
     p.add_argument("--note", default="", help="expect: 자유 메모 (에피소드 피드백에 저장)")
     p.add_argument("--propose", action="store_true", help="expect: 수정안(pin/규칙)을 자가진화 제안 큐에 등록")
+    p.add_argument("--only", default="problems",
+                   help="list: 무엇을 보나 — problems(기본: insufficient·weak·expectation·error) | all | "
+                        "판정 이름(sufficient·weak·insufficient·expectation, 콤마로 여러 개). "
+                        "기록의 대부분은 정상 건이라 기본을 문제 건으로 좁혀 둔다")
+    p.add_argument("--q", default="", help="list: 질의문에 이 말이 들어간 것만")
     p.add_argument("--limit", type=int, default=30)
     p.add_argument("--json", action="store_true")
 
@@ -199,24 +238,43 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--questions", default=None)
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("memory", help="자가진화 메모리: status | decay | consolidate | episodes")
-    p.add_argument("action", choices=["status", "decay", "consolidate", "episodes"], nargs="?", default="status")
+    p = sub.add_parser("memory", help="자가진화 메모리(시스템이 스스로 배운 것): status | episodes [--only feedback|negative|positive] [--q 검색] | "
+                                      "boosts(지금 검색이 받는 피드백 부스트) | decaying(사라지기 직전 제안) | decay | consolidate")
+    p.add_argument("action", choices=["status", "decay", "consolidate", "episodes", "boosts", "decaying"], nargs="?", default="status")
     p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--only", choices=["feedback", "negative", "positive"], default=None, help="episodes: 피드백이 있는 것만 / 👎 만 / 👍 만")
+    p.add_argument("--q", default=None, help="episodes: 질문 본문에서 찾기")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("time", help="한국어 시간 표현 파싱 테스트: time \"지난주 리뷰한 CL\"")
     p.add_argument("text", nargs="+")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("trial", help="회귀 trial: run --name A [--preset q] [--set k=v …] | list | compare A B [C D] | report A | show A")
-    p.add_argument("action", choices=["run", "list", "compare", "report", "show"], nargs="?", default="list")
+    p = sub.add_parser("trial", help="회귀 trial: run --name A [--preset q] [--set k=v …] | candidates(비교에 쓸 과거 질의 고르기) | list | compare A B [C D] | report A | show A")
+    p.add_argument("action", choices=["run", "candidates", "list", "compare", "report", "show"], nargs="?", default="list")
     p.add_argument("refs", nargs="*", help="trial id 또는 이름")
     p.add_argument("--name", default=None)
     p.add_argument("--set", dest="sets", action="append", default=[], help="k=v (settings/toggles/tuning), 여러 번")
     p.add_argument("--k", type=int, default=5)
     p.add_argument("--questions", default=None)
+    p.add_argument("--source", default="queries", choices=["evalset", "queries"],
+                   help="run: 문항을 어디서 — **queries(기본, 실제 질의 이력)** | evalset(eval/questions.json). "
+                        "기본이 실제 이력인 이유: 대개 알고 싶은 것은 '진짜로 물어본 질문에서 좋아졌나' 이고, "
+                        "이 저장소에서는 평가셋 자체가 코퍼스에 색인돼 hit@k 가 오염돼 있다(`eval --check`). "
+                        "queries 는 정답이 없어 hit@k·mrr·term_recall 을 계산하지 않고 지연·토큰·근거 부족률·단계별 비용을 본다. "
+                        "쓸 만한 이력이 없으면 **평가셋으로 물러나며 그 사실을 알린다**. 정답 대비 검색 품질을 재려면 `--source evalset`")
+    p.add_argument("--days", type=float, default=7.0, help="run --source queries: 최근 며칠 (기본 7)")
+    p.add_argument("--limit", type=int, default=30, help="run --source queries: 문항 수 상한 (기본 30)")
+    p.add_argument("--only", default="", choices=["", "negative", "feedback", "weak", "insufficient"],
+                   help="run --source queries · candidates: negative(👎 만) | feedback(평가가 달린 것만) | "
+                        "weak(근거가 약하거나 못 찾은 것) | insufficient(근거를 못 찾은 것만). "
+                        "거르기를 걸면 더 넓게 훑는다 — 문제 질의는 드물어 최근 몇백 건 안에 없을 수 있다")
+    p.add_argument("--pick", default="",
+                   help="run: **직접 고른** 질의 이력으로 (query_log id 를 콤마로 — `trial candidates` 가 번호를 보여 준다). "
+                        "기간·건수로 뭉뚱그리는 --source queries 와 달리 '이 질문들' 을 그대로 쓴다. Web Quality › Trial 비교의 '질의 고르기' 와 같다")
     p.add_argument("--note", default="")
     p.add_argument("--md", action="store_true", help="compare 결과를 markdown 으로")
+    p.add_argument("--stages", action="store_true", help="compare: 단계별 표를 텍스트 출력에도 (기본은 달라진 단계 요약만)")
     _add_toggle_flags(p)
 
     p = sub.add_parser("query", help="질의")
@@ -226,6 +284,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--analyze", action="store_true", help="상세 분석 모드로 실행(=--analysis-mode) 하고 리포트 경로·상위 소견을 출력. --print-analysis 로 리포트 전문 출력")
     p.add_argument("--print-analysis", action="store_true", help="--analyze 와 함께: 마크다운 리포트 전문을 stdout 에")
     p.add_argument("--focus", choices=["quality", "speed", "tokens", "all"], default="all", help="--analyze: 렌즈 초점")
+    p.add_argument("--output", dest="output_mode", choices=["answer", "fused", "reranked", "context"], default=None,
+                   help="출력 모드 (config.json output_mode): answer=끝까지(기본) · fused=융합·부스트 뒤 후보(리랭크 전) · reranked=리랭크 뒤 후보 · context=컨텍스트까지(답변 LLM 생략). --json 이면 candidates/lists/stages 또는 context/refs 포함")
+    p.add_argument("--tuning", dest="tuning_kv", default=None,
+                   help="이번 실행에만 적용할 튜닝 값 'fts_topk_n=5,fts_topk_w=1.5' (tuning.json 은 바꾸지 않는다; 키는 `tuning show`)")
+    # Web 의 overrides · MCP 의 overrides 와 **같은 길**. 예전에는 CLI 에만 이 손잡이가 없어서
+    # "timeout 을 7초로 두고 한 번만 돌려 보기" 를 CLI 에서는 config 를 고쳐야 했다 (다른 사용자에게도 영향).
+    p.add_argument("--set", dest="set_kv", default=None, action="append",
+                   help="이번 실행에만 적용할 설정 'llm_timeout=7,llm_retries=1' (config.json 은 바꾸지 않는다). "
+                        "역할 단축키도 된다: 'answer_timeout_s=30,rerank_model=llama3.1'. 여러 번 줄 수 있다. "
+                        "허용 키는 역할에 따라 다르다 (URL·경로·서버 운영 키는 admin) — Web/MCP 의 overrides 와 같은 화이트리스트")
+    p.add_argument("--answer-mode", dest="answer_mode", choices=["grounded", "best_effort"], default=None,
+                   help="답변 모드 (config.json answer_mode 의 요청 단위 오버라이드): grounded=근거만 · best_effort=근거 부족해도 LLM([C#]/[BK] 표시)")
     _add_toggle_flags(p)
 
     p = sub.add_parser("rerun", help="단계 재실행: 저장해 둔 중간 결과로 <request_id> 를 특정 단계부터 다시 (docs/RERUN.md)")
@@ -237,6 +307,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-log", action="store_true")
     _add_toggle_flags(p)
 
+    p = sub.add_parser("sweep", help="파라미터 스윕: run <request_id|last> --key K (--range a:b:s | --values v1,v2) [--repeats N] [--from POINT] [--query \"…\"] | list | show <id> | compare <id> | keys (docs/SWEEP.md)")
+    p.add_argument("action", choices=["run", "list", "show", "compare", "keys"], nargs="?", default="list")
+    p.add_argument("target", nargs="?", help="run: 기준 request_id 또는 last (--query 가 있으면 생략 가능) · show/compare: 스윕 id")
+    p.add_argument("--key", default=None, help="바꿀 키: 튜닝 키(rrf_k) · 토글(rerank, toggles.claim_check) · config 키(top_k_final) · 역할 키(answer_model). 목록: sweep keys")
+    p.add_argument("--range", dest="range_", default=None, help="start:stop:step (예 10:100:10, 0.1:0.9:0.2)")
+    p.add_argument("--values", default=None, help="쉼표 목록 (예 rrf, zscore 또는 false,true). 토글은 생략하면 false,true")
+    p.add_argument("--repeats", type=int, default=1, help="값마다 반복 횟수 (LLM 흔들림을 보려면 2~3)")
+    p.add_argument("--from", dest="from_point", default=None, help="재시작점 강제 (기본: 키가 속한 단계에서 자동). 목록: rerun --points")
+    p.add_argument("--query", default=None, help="기준 요청이 없을 때 이 질의를 한 번 실행해 기준을 만든다")
+    p.add_argument("--log", action="store_true", help="각 재실행을 query_log/자가진화 캡처에도 남긴다 (기본: 요청 기록만)")
+    p.add_argument("--n", type=int, default=30, help="list 개수")
+    _add_toggle_flags(p)
+
     p = sub.add_parser("analyze", help="상세 분석 리포트: <request_id>|last [--focus quality|speed|tokens] [--print] [--out 파일] — logs/analysis/req_<id>.md (docs/ANALYSIS_MODE.md)")
     p.add_argument("target", nargs="?", default="last", help="request_id 또는 last")
     p.add_argument("--focus", choices=["quality", "speed", "tokens", "all"], default="all")
@@ -244,13 +327,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None, help="마크다운을 이 파일에도 저장")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("eval", help="회귀 평가 (eval/questions.json)")
+    p = sub.add_parser("eval", help="회귀 평가 (eval/questions.json). --check 로 '이 숫자를 믿어도 되나' 를 먼저 보고, "
+                                    "--retrieval-only 로 LLM 없이 빠르게(토큰 0), --forensic 으로 놓친 문항의 원인까지")
     p.add_argument("--k", type=int, default=5)
     p.add_argument("--matrix", action="store_true", help="fts/vector/graph 조합별 비교")
     p.add_argument("--questions", default=None, help="질문셋 JSON 경로 (기본 eval/questions.json)")
+    p.add_argument("--check", action="store_true",
+                   help="점수를 내기 전에 **평가셋 신뢰도**만 점검한다: 평가셋이 코퍼스에 색인됐는지(오염) · 기대 문서가 색인에 있는지 · 문항 수가 충분한지")
+    p.add_argument("--retrieval-only", dest="retrieval_only", action="store_true",
+                   help="LLM 을 쓰는 단계를 전부 끄고 **검색 지표만**(hit@k·MRR·term_recall). 빠르고 토큰 0 — 검색을 튜닝할 때 이걸 쓴다")
+    p.add_argument("--forensic", action="store_true",
+                   help="놓친 문항마다 기대 문서/용어로 **원인 분석**까지 (어느 단계에서 탈락했나 + 수정안). 평가셋의 expect_docs/expect_terms 를 그대로 쓴다")
+    p.add_argument("--forensic-max", type=int, default=5, help="--forensic: 분석할 실패 문항 수 상한")
     _add_toggle_flags(p)
 
-    p = sub.add_parser("graph", help="그래프 요약/내보내기")
+    p = sub.add_parser("graph", help="그래프 요약/내보내기 | profile [--eval] [--compare] [--out FILE] (그래프 진단: 규모·연결성·커버리지·규칙 기여·제안 — docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.5)")
+    p.add_argument("action", nargs="?", choices=["export", "profile"], default="export", help="export(기본) | profile(진단 프로파일)")
+    p.add_argument("--eval", action="store_true", help="profile: 그래프 채널만 켠 평가(hit@k/MRR)를 함께 (eval --matrix 의 graph 조합)")
+    p.add_argument("--compare", action="store_true", help="profile: 직전 저장 프로파일(data/graph_profiles)과 핵심 지표 비교")
+    p.add_argument("--out", default=None, help="profile: 마크다운 리포트를 이 파일에 저장")
     p.add_argument("--limit", type=int, default=40)
     p.add_argument("--community", type=int, default=None)
     p.add_argument("--provenance", default=None, help="관계 출처 필터: explicit,rule,human,llm,cooccur")
@@ -261,15 +356,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("name", nargs="+")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("search", help="단일 검색 채널 디버그 (fts|vector|graph)")
-    p.add_argument("channel", choices=["fts", "vector", "graph"])
+    p = sub.add_parser("inspect", help="질의 해부 (LLM 없이): 토큰화 · 규칙 확장 · 시간 표현 · 채널 라우팅 · 고정 근거")
     p.add_argument("question", nargs="+")
-    p.add_argument("--k", type=int, default=8)
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("evolve", help="자가진화 제안 관리")
-    p.add_argument("action", choices=["status", "apply", "reject", "review", "feedback", "list"])
+    p = sub.add_parser("search", help="채널 검색 디버그 — 한 채널 또는 여러 채널 조합 (fts,vector,graph · all)")
+    p.add_argument("channel", help="fts | vector | graph | 콤마로 여러 개(fts,vector) | all")
+    p.add_argument("question", nargs="+")
+    p.add_argument("--k", type=int, default=8)
+    p.add_argument("--mode", choices=["or", "and", "rrf"], default="or",
+                   help="여러 채널일 때 조합 방식: or(합집합·커버리지) | and(교집합·채널 합의) | rrf(질의 경로와 같은 가중 융합)")
+    p.add_argument("--require", default=None, help="이 채널들은 **반드시** 찾아야 한다 (AND). 예: --require graph")
+    p.add_argument("--exclude", default=None, help="이 채널들이 찾은 것은 결과에서 **뺀다** (NOT). 예: --exclude vector")
+    p.add_argument("--doc-types", dest="doc_types", default=None,
+                   help="이 문서 유형만 본다 (콤마. 예: --doc-types issue,cl). 유형 목록은 `corpus types`. "
+                        "질의의 doc_types 가 *가중치* 인 것과 달리 여기서는 **거르는** 조건이다")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("evolve", help="자가진화 제안 관리: status | show <id> | list [상태] | propose <kind> <payload JSON> | apply <id> | reject <id> [사유] | review | feedback <qid> ±1 [메모] | auto-apply")
+    p.add_argument("action", choices=["status", "show", "apply", "reject", "review", "feedback", "list", "propose", "auto-apply", "kinds"])
     p.add_argument("args", nargs="*")
+    p.add_argument("--reason", default="manual", help="propose: 제안 이유")
+    p.add_argument("--confidence", type=float, default=0.9, help="propose: 신뢰도 (0~1)")
+    p.add_argument("--min-confidence", dest="min_conf", type=float, default=None, help="auto-apply: 이 값 이상만 (기본 evolve_min_confidence)")
+    p.add_argument("--kinds", default=None, help="auto-apply: 허용할 종류 (콤마. 기본 config evolve_auto_apply_kinds)")
+    p.add_argument("--max-apply", dest="max_apply", type=int, default=5, help="auto-apply: 한 번에 적용할 최대 건수")
+    p.add_argument("--dry-run", action="store_true", help="auto-apply: 적용하지 않고 대상만 보여 준다")
     p.add_argument("--no-eval", action="store_true", help="apply 시 회귀평가 생략")
     p.add_argument("--json", action="store_true")
 
@@ -280,21 +392,54 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("docs", help="색인된 문서 목록")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("stats", help="인덱스 통계/프로바이더 상태")
+    p = sub.add_parser("stats", help="인덱스 통계/프로바이더 상태 · **`--full` 로 운영 통계**(빌드·질의·지연·토큰·품질·사용자·디스크·임베딩)")
+    p.add_argument("--full", action="store_true",
+                   help="운영 통계 — 빌드가 어느 단계에서 느린가 · 질의가 얼마나·언제 몰리나 · p50/p95 지연과 느린 질의 · "
+                        "토큰을 어디에 쓰나 · 근거 부족·피드백 · 사용자별 · 디스크가 어디서 커지나 · 임베딩 캐시 적중")
+    p.add_argument("--days", type=float, default=7.0, help="--full: 집계 기간 (기본 7일)")
+    p.add_argument("--section", dest="sections", action="append", default=[],
+                   help="--full: 이 섹션만 (여러 번). index|build|queries|latency|tokens|quality|users|storage|embed|trend")
+    p.add_argument("--top", type=int, default=8, help="--full: 목록에 보여 줄 개수")
+    p.add_argument("--bucket", choices=["day", "week", "month"], default="day",
+                   help="--full --section trend: 추세를 일/주/월 중 무엇으로 묶을지 (기본 day). "
+                        "기간은 묶음에 맞춰 자동으로 늘어난다 — 주간 12주 · 월간 1년 (--trend-days 로 덮어쓴다)")
+    p.add_argument("--trend-days", dest="trend_days", type=float, default=None,
+                   help="--full --section trend: 추세 기간을 직접 지정 (기본은 --bucket 에 맞춘 값)")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("config", help="설정 보기/변경")
-    p.add_argument("action", choices=["show", "set", "reset", "paths"])
+    p = sub.add_parser("config", help="설정 보기/변경: show | set | reset | paths | fill-defaults (기본값을 파일에 명시) | reload [--env] | env (.env 가시성) | doc (docs/CONFIG_REFERENCE.md 생성)")
+    p.add_argument("action", choices=["show", "set", "reset", "paths", "fill-defaults", "reload", "env", "doc", "bundle"])
     p.add_argument("kv", nargs="*", help="key=value")
     p.add_argument("--effective", action="store_true", help="show: 키별 현재값·기본값·출처(default/file/env)·env 이름")
     p.add_argument("--yes", action="store_true", help="reset: 확인 문구 생략")
+    # fill-defaults: config.json(항상) + --tuning(tuning.json 모든 키) + --rules(query_rules.json 모든 type 절 · data/rules.json 모든 절) · --all = 둘 다
+    p.add_argument("--tuning", action="store_true", help="fill-defaults: tuning.json 의 모든 튜닝 키를 기본값으로 채움 (_explicit_defaults 표식)")
+    p.add_argument("--rules", action="store_true", help="fill-defaults: query_rules.json 의 모든 type 절 + data/rules.json 의 모든 절")
+    p.add_argument("--all", action="store_true", help="fill-defaults: --tuning --rules")
+    p.add_argument("--examples", action="store_true", help="fill-defaults: setup/*.example.* 파일에도 실행 (저장소 정비용)")
+    p.add_argument("--dry-run", action="store_true", help="fill-defaults: 무엇이 추가될지만 보여 주고 쓰지 않음")
+    p.add_argument("--env", action="store_true", help="reload: .env 도 다시 읽어 os.environ 을 파일 값으로 덮어씀 (config reload --env)")
+    p.add_argument("--out", default=None, help="bundle: 설정을 모아 둘 폴더 (그 폴더를 LLMWIKI_CONF_DIR 로 쓰면 된다)")
+    p.add_argument("--from", dest="from_dir", default=None, help="bundle: 이 폴더의 설정을 원래 자리로 되돌린다")
+    p.add_argument("--include-secrets", dest="include_secrets", action="store_true",
+                   help="bundle: .env 를 값째 복사 (기본은 키 이름만 — 자격증명이 딸려 나가지 않게)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("models", help="역할별 LLM/임베딩 모델 설정 보기·테스트·변경 · 카탈로그(models.json): list | catalog add|remove | discover")
-    p.add_argument("action", choices=["show", "test", "set", "list", "catalog", "discover", "policy"], nargs="?", default="show",
-                   help="show(역할별 설정+정책) | test [--live] | set k=v | list [--role r] [--provider p] (카탈로그) | catalog add <id> --provider … | catalog remove <id> | discover (서버가 제공하는 모델 조회) | policy (역할별 timeout/retry 표)")
-    p.add_argument("kv", nargs="*", help="set: answer_model=claude-opus-5 rerank_provider=ollama answer_timeout_s=120 answer_retries=2 embed_provider=hash ... | catalog add <id> | catalog remove <id>")
+    p.add_argument("action", choices=["show", "test", "set", "list", "catalog", "discover", "policy", "ensemble", "automap"], nargs="?", default="show",
+                   help="show(역할별 설정+정책) | test [--live] [--catalog] | **automap [--live] [--apply]**(연결되는 모델만 골라 역할에 자동 배정) | set k=v | list [--role r] [--provider p] (카탈로그) | catalog add <id> --provider … | catalog remove <id> | discover (서버가 제공하는 모델 조회) | policy (역할별 timeout/retry 표) | ensemble show [role] | ensemble set <role> …")
+    p.add_argument("kv", nargs="*", help="set: answer_model=claude-opus-5 rerank_provider=ollama answer_timeout_s=120 answer_retries=2 embed_provider=hash ... | catalog add <id> | catalog remove <id> | ensemble show [role] | ensemble set <role>")
     p.add_argument("--live", action="store_true", help="test: ping 외에 실제 완성 호출 1회 (PAT 권한·헤더·모델명·headless 실행 확인, 토큰 소량 소비)")
+    p.add_argument("--catalog", action="store_true", help="test: 역할이 아니라 models.json 카탈로그의 enabled 모델 전부를 (provider, model) 로 ping (+--live 면 완성 1회)")
+    p.add_argument("--apply", action="store_true", help="automap: 제안을 config.json 의 llm_roles(+임베딩·리랭크)에 실제로 저장한다 (기본은 제안만 출력)")
+    # ensemble set <role> 의 플래그 (dest 는 토글 이름과 겹치지 않게 ens_ 접두)
+    p.add_argument("--enabled", dest="ens_enabled", default=None, help="ensemble set: true|false")
+    p.add_argument("--member", dest="ens_member", nargs="+", action="append", default=None, metavar="N k=v",
+                   help="ensemble set: --member 1 provider=anthropic model=claude-sonnet-5 weight=1.5 enabled=true (N = 1..3, 여러 번 가능)")
+    p.add_argument("--aggregator", dest="ens_aggregator", nargs="+", default=None, metavar="k=v", help="ensemble set: --aggregator provider=… model=… [effort=…]")
+    p.add_argument("--wait", dest="ens_wait", choices=["all", "timeout", ""], default=None, help="ensemble set: all | timeout ('' = llm_ensemble_defaults 상속)")
+    p.add_argument("--timeout", dest="ens_timeout", default=None, help="ensemble set: timeout_s (초, '' = 상속)")
+    p.add_argument("--min", dest="ens_min", default=None, help="ensemble set: min_results ('' = 상속)")
     p.add_argument("--role", default=None, help="list: 역할 필터")
     p.add_argument("--provider", default=None, help="list/catalog add: provider")
     p.add_argument("--label", default=None, help="catalog add: 표시 이름")
@@ -321,11 +466,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", default=None, help="trigger: admin API 키")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("requests", help="요청별 프로파일/디버그 trace 조회")
-    p.add_argument("action", choices=["list", "show", "last"], nargs="?", default="list")
+    p = sub.add_parser("requests", help="요청별 프로파일/디버그 trace 조회 · `queries`/`users` 로 질의 로그(누가 무엇을 물었나)")
+    p.add_argument("action", choices=["list", "show", "last", "queries", "users"], nargs="?", default="list",
+                   help="list|show|last(요청 기록) · queries(질의 로그 — 사용자·창구 포함) · users(사용자별 질의 집계)")
     p.add_argument("id", nargs="?", type=int)
     p.add_argument("--kind", default=None, help="query|build|eval|search")
     p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--user", default=None, help="queries/users: 이 사용자가 낸 질의만")
+    p.add_argument("--origin", default=None, help="queries: 창구로 거르기 (web|api|cli|mcp|schedule)")
+    p.add_argument("--q", default=None, help="queries: 질문에 이 말이 들어간 것만")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("system", help="확장성/캐시/워처/최근 빌드·질의 지연 통계")
@@ -352,8 +501,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("arch", help="구조/흐름과 토글·CLI·튜닝 영향 (Web Architecture 탭과 동일 정의). `arch doc` = 최적화 가이드 문서 생성")
-    p.add_argument("action", nargs="?", choices=["show", "doc"], default="show",
-                   help="show(기본) | doc(docs/OPTIMIZATION_GUIDE.md 생성)")
+    p.add_argument("action", nargs="?", choices=["show", "doc", "limits"], default="show",
+                   help="show(기본) | doc(docs/OPTIMIZATION_GUIDE.md 생성) | limits(단계별 시간 제한 — Web trace 의 '실측 (제한)' 과 같은 값)")
     p.add_argument("--flow", default=None, help="query|build|evolve|watch")
     p.add_argument("--out", default=None, help="doc 의 출력 파일 (기본 docs/OPTIMIZATION_GUIDE.md)")
     p.add_argument("--json", action="store_true")
@@ -401,6 +550,49 @@ def _strip_global(argv: List[str]) -> List[str]:
     return out
 
 
+def _cli_client(ns: argparse.Namespace) -> Dict[str, str]:
+    """CLI 실행자를 Web/MCP 와 **같은 모양**의 client dict 로. 질의 로그·활동 목록의 '사용자' 칸이 된다.
+
+    `_cli_gate` 가 넣어 둔 `ns._actor`(이름·역할·로그인 방법)를 쓴다. 게이트를 지나지 않은 경로면 빈 값이다.
+    """
+    name, role, via = getattr(ns, "_actor", ("", "", "")) or ("", "", "")
+    return {"user": str(name or ""), "role": str(role or ""), "via": str(via or ""),
+            "origin": "cli", "ip": "", "agent": "cli"}
+
+
+def _request_overrides(ns: argparse.Namespace) -> Dict[str, Any]:
+    """`--set k=v,k=v` → 요청 단위 overrides. Web/MCP 와 **같은 화이트리스트**를 지난다.
+
+    값은 문자열로 두어도 된다 — `apply_overrides` 가 필드 타입에 맞춰 변환한다(int/float/bool/list/dict).
+    역할 단축키(`answer_timeout_s`, `rerank_model`)도 그대로 쓴다(`config.split_role_key`).
+    권한은 CLI 게이트가 정한 실행자 역할을 따른다 — CLI 기본 역할이 admin 이면 예전처럼 전부 쓸 수 있고,
+    공용 서버에서 `cli.default_role` 을 낮춰 두었다면 Web/MCP 와 똑같이 걸린다.
+    """
+    raw = getattr(ns, "set_kv", None)
+    if not raw:
+        return {}
+    items = raw if isinstance(raw, list) else [raw]
+    ov: Dict[str, Any] = {}
+    for chunk in items:
+        for part in str(chunk).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" not in part:
+                raise ValueError("'key=value' 형태여야 합니다: %r" % part)
+            k, _, v = part.partition("=")
+            ov[k.strip()] = v.strip()
+    if not ov:
+        return {}
+    from .auth import filter_overrides, load_security
+    role = (getattr(ns, "_actor", ("", "", "")) or ("", "", ""))[1] or "admin"
+    try:
+        cfg = load_security() or {}
+    except Exception:
+        cfg = {}
+    return filter_overrides(ov, role, cfg)
+
+
 def _cli_gate(argv: List[str], ns: argparse.Namespace) -> Optional[int]:
     """CLI 권한 게이트: security.json 의 등급표/permissions 로 실행자 역할을 검사한다. 통과하면 None, 거부면 종료 코드.
     실행자 역할: --user/LLMWIKI_USER(로컬 계정) > LLMWIKI_API_KEY > cli.default_role(기본 admin). 거부는 감사 로그에 남는다."""
@@ -434,6 +626,18 @@ def _overrides_from_ns(ns: argparse.Namespace) -> Dict[str, Any]:
             ov[name] = v
     if getattr(ns, "k", None) and getattr(ns, "cmd", "") == "query":   # eval/trial 의 --k 는 평가 k
         ov["top_k_final"] = ns.k
+    if getattr(ns, "output_mode", None):           # query --output fused|reranked|context (config.json output_mode 의 요청 단위 오버라이드)
+        ov["output_mode"] = ns.output_mode
+    if getattr(ns, "answer_mode", None):           # query --answer-mode grounded|best_effort (Web 사이드바 #ov-answer-mode 와 같은 길)
+        ov["answer_mode"] = ns.answer_mode
+    if getattr(ns, "tuning_kv", None):             # query --tuning k=v,k=v → overrides["tuning"] (request_scope 가 오버레이에 적용)
+        tv: Dict[str, Any] = {}
+        for part in str(ns.tuning_kv).split(","):
+            if "=" in part:
+                k_, _, v_ = part.partition("=")
+                tv[k_.strip()] = v_.strip()
+        if tv:
+            ov["tuning"] = tv
     return ov
 
 
@@ -465,6 +669,188 @@ def _out(obj: Any, as_json: bool, text: Optional[str] = None) -> None:
         print(json.dumps(jsonable(obj), ensure_ascii=False, indent=2))
     else:
         print(text)
+
+
+def _cmd_config_fill_defaults(ns: argparse.Namespace, as_json: bool) -> int:
+    """config fill-defaults [--tuning] [--rules] [--all] [--examples] [--dry-run]:
+    config.json 의 모든 Settings 키·toggles·llm_roles 뼈대, tuning.json 의 모든 튜닝 키, query_rules.json 의 모든 type 절,
+    data/rules.json 의 모든 절을 **기본값으로 채워 쓴다** (있는 값은 유지). --examples 는 setup/*.example.* 에도."""
+    import os as _os
+    from .config import fill_defaults as _fill_cfg, ROOT as _ROOT, path_for as _pf
+    from . import tuning as _tn, query_rules as _qr, graph_rules as _gr
+    do_t = bool(ns.tuning or getattr(ns, "all", False))
+    do_r = bool(ns.rules or getattr(ns, "all", False))
+    dry = bool(getattr(ns, "dry_run", False))
+    jobs: List[Tuple[str, str, Any]] = [("config", _pf("config"), _fill_cfg)]
+    if do_t:
+        jobs.append(("tuning", _pf("tuning"), _tn.fill_defaults))
+    if do_r:
+        jobs.append(("query_rules", _pf("query_rules"), _qr.fill_defaults))
+        jobs.append(("rules", _pf("rules"), _gr.fill_defaults))
+    if getattr(ns, "examples", False):
+        setup = _os.path.join(_ROOT, "setup")
+        for f in ("config.example.json", "config.example.headless.json", "config.example.pat-gateway.json"):
+            if _os.path.exists(_os.path.join(setup, f)):
+                jobs.append(("config(example)", _os.path.join(setup, f), _fill_cfg))
+        if do_t:
+            jobs.append(("tuning(example)", _os.path.join(setup, "tuning.example.json"), _tn.fill_defaults))   # 없으면 만든다
+        if do_r:
+            for f in sorted(_os.listdir(setup)):
+                if f.startswith("query_rules.example") and f.endswith(".json"):
+                    jobs.append(("query_rules(example)", _os.path.join(setup, f), _qr.fill_defaults))
+                if f.startswith("rules.example") and f.endswith(".json"):
+                    jobs.append(("rules(example)", _os.path.join(setup, f), _gr.fill_defaults))
+    reports = []
+    for kind, path, fn in jobs:
+        try:
+            rep = fn(path, dry_run=dry)
+        except Exception as e:
+            rep = {"path": path, "error": str(e)}
+        reports.append(dict(rep, kind=kind))
+    if as_json:
+        _out(reports, True)
+    else:
+        for r in reports:
+            if r.get("error"):
+                print("[ERR ] %-22s %s — %s" % (r["kind"], r["path"], r["error"]))
+                continue
+            n_added = len(r.get("added") or []) + len(r.get("added_toggles") or []) + sum(len(v) for v in (r.get("added_roles") or {}).values())
+            mark = "dry " if dry else ("write" if r.get("written") else "same ")
+            print("[%s] %-22s %s — 추가 %d개%s" % (mark, r["kind"], r["path"], n_added, "  (변경 없음)" if not r.get("changed") else ""))
+            if r.get("added"):
+                print("        키: %s" % ", ".join(r["added"][:40]) + (" …" if len(r["added"]) > 40 else ""))
+            if r.get("added_toggles"):
+                print("        toggles: %s" % ", ".join(r["added_toggles"][:40]) + (" …" if len(r["added_toggles"]) > 40 else ""))
+            if r.get("added_roles"):
+                print("        llm_roles: " + " · ".join("%s(%s)" % (k, ",".join(v)[:60]) for k, v in r["added_roles"].items()))
+            if r.get("unknown"):
+                print("        모르는 키(유지): %s" % ", ".join(r["unknown"]))
+        print("\n%s%s" % ("(dry-run: 쓰지 않았습니다) " if dry else "", "확인: config show --effective · tuning show · 되돌리기: 필요 없는 줄은 지우면 기본값"))
+    return 1 if any(r.get("error") for r in reports) else 0
+
+
+def _cmd_models_ensemble(ns: argparse.Namespace, p, as_json: bool) -> int:
+    """models ensemble show [role] | set <role> [--enabled true|false] [--member N k=v …] [--aggregator k=v …] [--wait all|timeout] [--timeout N] [--min N]
+    config.json llm_roles.<role>.ensemble 을 읽고 쓴다 (모양은 Settings.effective_ensemble / config._norm_ensemble_raw 와 같다)."""
+    from .config import _norm_ensemble_raw, ensemble_template, save_settings as _save
+    sub = ns.kv[0] if ns.kv else "show"
+    roles = [ns.kv[1]] if len(ns.kv) > 1 else list(Settings.LLM_ROLES)
+    for r in roles:
+        if r not in Settings.LLM_ROLES:
+            print("ERROR: 알 수 없는 역할 %s (%s)" % (r, ", ".join(Settings.LLM_ROLES)))
+            return 1
+    if sub == "show":
+        out = {}
+        for role in roles:
+            raw = (p.s.llm_roles.get(role) or {}).get("ensemble")
+            _rl = p.s.role_llm(role)
+            out[role] = {"raw": raw, "effective": p.s.effective_ensemble(role),
+                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")}}
+        if as_json:
+            _out(out, True)
+            return 0
+        for role, d in out.items():
+            e = d["effective"]
+            print("%-9s ensemble=%s wait=%s timeout_s=%s min_results=%s prompt=%s%s" % (
+                role, "ON " if e["enabled"] else "off", e["wait"], e["timeout_s"], e["min_results"], e["prompt"],
+                "" if d["raw"] else "  (설정 없음 — llm_ensemble_defaults 상속)"))
+            print("    역할 모델: %s/%s  (멤버가 provider/model 을 비우면 이 값을 상속)" % (d["role"]["provider"] or "-", d["role"]["model"] or "-"))
+            for i, m in enumerate(e["members"], 1):
+                print("    member %d: %s/%s weight=%s effort=%s (provider: %s)" % (i, m["provider"], m["model"], m["weight"], m["effort"] or "-", m["provider_source"]))
+            # 켜 놓았는데 쓸 멤버가 없는 상태 — 조용히 단일 LLM 으로 돌기 때문에 반드시 말해 준다.
+            if str((raw or {}).get("enabled", "")).strip().lower() in ("1", "true", "yes", "on") and not e["members"]:
+                n_raw = len([m for m in ((raw or {}).get("members") or []) if isinstance(m, dict)])
+                print("    ! enabled=true 이지만 쓸 멤버가 0개입니다 — 앙상블이 돌지 않고 역할 모델 1회로 동작합니다.")
+                print("      멤버는 model 이 비어 있으면 enabled 와 무관하게 빠집니다(멤버 칸 %d개 중 0개 유효)." % n_raw)
+                print("      해결: models ensemble set %s --member 1 model=<모델> --member 2 model=<모델>" % role)
+            if e["aggregator"].get("model"):
+                print("    aggregator: %s/%s" % (e["aggregator"]["provider"], e["aggregator"]["model"]))
+            elif e["enabled"]:
+                print("    aggregator: (첫 멤버가 취합)")
+        print("변경: models ensemble set <role> --enabled true --member 1 provider=anthropic model=claude-sonnet-5 weight=1.5 --member 2 … --aggregator model=… --wait all|timeout --timeout 120 --min 1")
+        return 0
+    if sub != "set" or len(ns.kv) < 2:
+        print("usage: models ensemble show [role] | models ensemble set <role> [--enabled true|false] [--member N k=v …] [--aggregator k=v …] [--wait all|timeout] [--timeout N] [--min N]")
+        return 1
+    role = ns.kv[1]
+    cur = (p.s.llm_roles.get(role) or {}).get("ensemble")
+    ens = _norm_ensemble_raw(cur if isinstance(cur, dict) else {})
+    tpl = ensemble_template()
+    while len(ens["members"]) < Settings.ENSEMBLE_MAX_MEMBERS:
+        ens["members"].append(dict(tpl["members"][0]))
+
+    def kvs(items: List[str]) -> Dict[str, str]:
+        d: Dict[str, str] = {}
+        for it in items:
+            k, eq, v = it.partition("=")
+            if not eq:
+                raise ValueError("k=v 형식이어야 합니다: %s" % it)
+            d[k.strip()] = v.strip()
+        return d
+    try:
+        if ns.ens_enabled is not None:
+            ens["enabled"] = str(ns.ens_enabled).strip().lower() in ("1", "true", "yes", "on")
+        for spec in (ns.ens_member or []):
+            n = int(spec[0])
+            if not 1 <= n <= Settings.ENSEMBLE_MAX_MEMBERS:
+                raise ValueError("member N 은 1..%d" % Settings.ENSEMBLE_MAX_MEMBERS)
+            m = ens["members"][n - 1]
+            for k, v in kvs(spec[1:]).items():
+                if k == "weight":
+                    m["weight"] = float(v)
+                elif k == "enabled":
+                    m["enabled"] = v.lower() in ("1", "true", "yes", "on")
+                elif k in ("provider", "model", "effort"):
+                    m[k] = v
+                else:
+                    raise ValueError("member 키는 provider|model|weight|effort|enabled: %s" % k)
+        if ns.ens_aggregator:
+            for k, v in kvs(ns.ens_aggregator).items():
+                if k not in ("provider", "model", "effort"):
+                    raise ValueError("aggregator 키는 provider|model|effort: %s" % k)
+                ens["aggregator"][k] = v
+        if ns.ens_wait is not None:
+            if ns.ens_wait:
+                ens["wait"] = ns.ens_wait
+            else:
+                ens.pop("wait", None)
+        for attr, val in (("timeout_s", ns.ens_timeout), ("min_results", ns.ens_min)):
+            if val is None:
+                continue
+            if str(val).strip() == "":
+                ens.pop(attr, None)
+            else:
+                ens[attr] = int(float(val))
+    except ValueError as e:
+        print("ERROR:", e)
+        return 1
+    p.s.llm_roles.setdefault(role, {})["ensemble"] = ens
+    _save(p.s)
+    p.reload()
+    eff = p.s.effective_ensemble(role)
+    _out({"role": role, "raw": ens, "effective": eff}, as_json,
+         "saved llm_roles.%s.ensemble: enabled=%s members=%s aggregator=%s wait=%s timeout_s=%s min_results=%s" % (
+             role, eff["enabled"], ["%s/%s×%s" % (m["provider"], m["model"], m["weight"]) for m in eff["members"]],
+             (eff["aggregator"].get("model") or "(첫 멤버)"), eff["wait"], eff["timeout_s"], eff["min_results"]))
+    return 0
+
+
+def _rules_explain_text(r: Dict[str, Any]) -> str:
+    """rules explain 을 사람이 읽는 표로 (유형 · 방향 · 대표어 · 값 · 적용 방식)."""
+    lines = ["'%s' 은(는) 어떻게 퍼지나 — %s  (related_symmetric=%s)" % (r["term"], r["path"], "true" if r["related_symmetric"] else "false"), ""]
+    if not r["entries"]:
+        lines.append("  이 말로 발화하는 규칙 없음 (사전에 키/양방향 값으로 없다)")
+    else:
+        lines.append("  %-9s %-22s %-24s %-40s %s" % ("유형", "방향", "대표어", "값", "적용 방식"))
+        for e in r["entries"]:
+            lines.append("  %-9s %-22s %-24s %-40s %s" % (e["type"], e["direction"] + (" ←값" if e.get("reverse") else ""), str(e["canonical"])[:24],
+                                                          ", ".join(e["values"])[:40], e["how"]))
+    if r["expanded_from"]:
+        lines += ["", "  이 말을 끌어오는 규칙 (값으로 적힌 곳):"]
+        for x in r["expanded_from"]:
+            lines.append("  %-9s %-22s %-24s %s" % (x["type"], x["direction"], str(x["key"])[:24], x["note"]))
+    lines += ["", "  " + r["note"]]
+    return "\n".join(lines)
 
 
 def _mcp_doctor_text(rep: Dict[str, Any]) -> str:
@@ -512,6 +898,25 @@ def _print_trace(trace: Dict[str, Any], depth: int = 0, total: Optional[float] =
     pct = " %4.0f%%" % (100.0 * trace["ms"] / total) if depth == 1 and trace.get("enabled", True) else "      "
     print("%s%-22s %8.1f ms%s %s%s%s" % ("  " * depth, trace["name"], trace["ms"], pct, " ".join(extra), flag, err))
     meta = {k: v for k, v in (trace.get("meta") or {}).items() if k != "reason"}
+    # **앙상블은 JSON 한 줄에 묻히면 안 된다** — 화면과 같은 내용을 멤버별 줄로 편다 (2026-09-20).
+    ens = meta.pop("ensemble", None)
+    if ens and isinstance(ens, dict) and ens.get("members"):
+        pad = "  " * depth
+        print("%s  ⑂ 앙상블 — 멤버 %d/%d 성공%s%s"
+              % (pad, ens.get("n_ok", 0), ens.get("n_members", 0),
+                 " · 취합 1회" if ens.get("aggregated") else " · 취합 없음(성공 1개)",
+                 (" · 대기 %s" % (ens.get("policy") or {}).get("wait")) if (ens.get("policy") or {}).get("wait") else ""))
+        for i, m in enumerate(ens["members"], 1):
+            print("%s     멤버%d %-22s %8.0f ms  tok %d/%d%s"
+                  % (pad, i, "%s%s" % (m.get("model") or "-", ("/" + m["provider"]) if m.get("provider") else ""),
+                     m.get("ms") or 0, m.get("input_tokens") or 0, m.get("output_tokens") or 0,
+                     ("  !! " + str(m.get("error"))[:80]) if not m.get("ok") else ""))
+        ag = ens.get("aggregator")
+        if ag:
+            print("%s     취합  %-22s %8.0f ms  tok %d/%d"
+                  % (pad, "%s%s" % (ag.get("model") or "-", ("/" + ag["provider"]) if ag.get("provider") else ""),
+                     ag.get("ms") or 0, ag.get("input_tokens") or 0, ag.get("output_tokens") or 0))
+        print("%s     (멤버는 동시에 실행 — 단계 시간 ≈ 가장 느린 멤버 + 취합)" % pad)
     lim = 2000 if verbose else 220
     if meta and depth > 0:
         s = json.dumps(meta, ensure_ascii=False)
@@ -557,8 +962,17 @@ def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, p
         with pipe.request_scope(overrides=ov or None, presets=names):
             return _run_cmd(ns, pipe.s, pipe, as_json)
     s = settings or load_settings()
-    s = apply_overrides(s.copy() if settings else s, ov)
+    s = apply_overrides(s.copy() if settings else s, {k: v for k, v in ov.items() if k != "tuning"})
     p = Pipeline(s)
+    if ov.get("tuning"):
+        # --tuning k=v: 단일 실행이므로 전역 T 에 바로 얹는다 (파일에는 저장하지 않는다). 모르는 키·범위 밖 값은 여기서 바로 알린다.
+        from . import tuning as _tn
+        try:
+            for k_, v_ in ov["tuning"].items():
+                _tn.T.set(k_, v_)
+        except (KeyError, ValueError) as e:
+            print("!! --tuning: %s" % e)
+            return 2
     if ns.cmd in ("query", "build", "eval", "trial", "precompute", "forensic", "schedule", "fusion"):
         try:
             from . import reqmgr as _rq
@@ -740,6 +1154,10 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         if ns.action == "dir":
             print(d)
             return 0
+        if ns.action == "status":   # 총량 제한: 지금 다시 재고(action 도 적용) 상태를 보여준다
+            q = _ls.check_quota(force=True, dir_hint=d)
+            _out(q, as_json, _ls.format_quota(q))
+            return 0
         if ns.action == "files":
             _out(_ls.files(d), as_json, "\n".join("%-14s %10d B  %s" % (f["file"], f["bytes"], __import__("time").strftime("%m-%d %H:%M:%S", __import__("time").localtime(f["mtime"]))) for f in _ls.files(d)))
             return 0
@@ -901,13 +1319,189 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 _out(c.call_tool(ns.args[1], args), True)
             return 0
 
+    if ns.cmd == "reset":
+        # 관리자 초기화 — 다른 환경으로 옮길 때 앞 환경의 흔적을 지운다.
+        # 기본은 **미리보기**다. 지우는 명령이 기본으로 지워 버리면 안 되기 때문이다 (--apply 가 있어야 실행).
+        from . import reset as _rs
+        if not ns.scope:
+            _out({"scopes": _rs.SCOPES}, as_json,
+                 "초기화 범위 3가지 — `reset <범위>` 로 미리보기, `--apply` 로 실행\n\n"
+                 + "\n".join("  %-9s %s" % (k, v) for k, v in _rs.SCOPES.items())
+                 + "\n\n자세히: docs/BRINGUP_GUIDE.md · Web 설정 › 관리 › 초기화 · 되돌리기는 `snapshot list|restore`")
+            return 0
+        opts = {"snapshot": not ns.no_snapshot, "keep_wiki_notes": not ns.purge_wiki_notes,
+                "clear_embed_cache": bool(ns.clear_embed_cache),
+                "include_security": bool(ns.include_security), "include_env": bool(ns.include_env),
+                "include_proposals": bool(ns.include_proposals), "include_sessions": bool(ns.include_sessions)}
+        plan = _rs.preview(p, ns.scope, **opts)
+        if plan.get("error"):
+            print("ERROR: " + plan["error"])
+            return 1
+        if not ns.apply:
+            _out(plan, as_json, _rs.format_preview(plan)
+                 + "\n\n(미리보기만 했습니다 — 실제로 지우려면 --apply 를 붙이세요)")
+            return 0
+        print(_rs.format_preview(plan))
+        print()
+        warn = [i["detail"] for i in plan["items"] if i["level"] == "warn"]
+        if not _confirm_destructive(ns, "초기화 '%s' — %d행 · 파일 %d개" % (ns.scope, plan["total_rows"], plan["total_files"]),
+                                    " / ".join(warn)[:200] or plan["description"][:200]):
+            print("cancelled")
+            return 4
+        r = _rs.run(p, ns.scope, actor="cli", **opts)
+        _out(r, as_json, "초기화 완료 (%s · %.0fms)\n\n다음에 할 일\n%s"
+             % (ns.scope, r["ms"], "\n".join("  %d. %s" % (i + 1, x) for i, x in enumerate(r["next"]))))
+        return 0
+
+    if ns.cmd == "graph-rules":
+        # 그래프 빌드 규칙 (data/rules.json). 질의 확장 규칙(query_rules.json)의 `rules` 와 짝이다 —
+        # 예전에는 이쪽에 `rules merge --graph` 밖에 없어서, 보기·점검·시험을 Web 원문 textarea 로만 할 수 있었다.
+        from . import graph_rules as _gr
+        a = ns.action
+        if a == "path":
+            print(_gr.rules_path())
+            return 0
+        if a == "show":
+            _out(_gr.load_rules(), True)
+            return 0
+        if a == "types":
+            r = _gr.load_rules()
+            types, vts = _gr.known_types(r), _gr.describe_value_types()
+            schema = _gr.Schema(r.get("schema"), types)
+            out = {"entity_types": types, "value_types": vts,
+                   "relations": {k: v for k, v in schema.relations.items()}, "on_unknown": schema.on_unknown}
+            _out(out, as_json,
+                 "엔티티 type %d종 (types_for_cooccur · id_patterns · schema.entity_types 의 합집합)\n  %s\n\n"
+                 "값 종류 %d개 — relation_patterns[*].value · chunk_values[*].value 에 쓴다\n%s\n\n"
+                 "관계 어휘 %d개 (schema.relations · 모르는 관계 정책 on_unknown=%s)\n%s" % (
+                     len(types), ", ".join(types), len(vts),
+                     "\n".join("  %-9s %-10s %s" % (v["name"], v["label"], v["desc"][:74]) for v in vts),
+                     len(schema.relations), schema.on_unknown,
+                     "\n".join("  %-16s %s%s" % (
+                         k, (v.get("desc") or "")[:56],
+                         ("  ↔ %s" % v["inverse"]) if v.get("inverse") else ("  (대칭)" if v.get("symmetric") else ""))
+                         for k, v in list(schema.relations.items())[:40]) or "  (스키마 절이 없습니다 — `graph-rules fill-defaults` 로 기본 어휘를 채우세요)"))
+            return 0
+        if a == "lint":
+            r = _gr.lint()
+            if as_json:
+                _out(r, True)
+                return 0
+            c = r["counts"]
+            print("그래프 규칙 점검 — 엔티티 %d · 별칭 %d · type %d · 관계패턴 %d · chunk_values %d · id패턴 %d · link규칙 %d · 관계어휘 %d"
+                  % (c["entities"], c["aliases"], c["types"], c["relation_patterns"], c["chunk_values"],
+                     c["id_patterns"], c["link_rules"], c["schema_relations"]))
+            for i in r["issues"]:
+                print("  [%s] %-28s %s" % ({"error": "X", "warn": "!", "info": "i"}.get(i["level"], "?"), i["where"], i["detail"]))
+                if i["fix"]:
+                    print("        → %s" % i["fix"])
+            print("  오류 %d · 경고 %d%s" % (c["errors"], c["warns"], "  (모든 점검 통과)" if not r["issues"] else ""))
+            print("  ※ 이것은 **파일만** 보는 정적 점검입니다. 빌드된 그래프의 진단은 `graph-prof` 입니다.")
+            return 0 if c["errors"] == 0 else 1
+        if a == "test":
+            if not ns.args:
+                print('사용법: graph-rules test "<문장>" [--doc-type cl] [--ext-id CL-55302]')
+                return 1
+            text = " ".join(ns.args)
+            ex = _gr.RuleExtractor(_gr.load_rules())
+            dm = {"doc_type": ns.doc_type, "ext_id": ns.ext_id} if (ns.doc_type or ns.ext_id) else None
+            ents, counts, rels = ex.extract_chunk(text, "", "test", "테스트 문서", dm)
+            out = {"entities": [{"name": e.name, "type": e.type, "mentions": counts.get(k, 0)} for k, e in ents.items()],
+                   "relations": [{"src": ents[r.src].name if r.src in ents else r.src,
+                                  "rel": r.rel, "dst": ents[r.dst].name if r.dst in ents else r.dst,
+                                  "provenance": r.provenance, "weight": r.weight} for r in rels],
+                   "unknown_rels": ex.schema.unknown_rels, "unknown_types": ex.schema.unknown_types}
+            _out(out, as_json,
+                 "엔티티 %d개\n%s\n\n관계 %d개\n%s%s" % (
+                     len(out["entities"]),
+                     "\n".join("  %-14s %-12s 멘션 %d" % (e["name"][:14], e["type"], e["mentions"]) for e in out["entities"]) or "  (없음)",
+                     len(out["relations"]),
+                     "\n".join("  %-14s -[%s]-> %-14s (%s w=%.2f)" % (x["src"][:14], x["rel"], x["dst"][:14], x["provenance"], x["weight"])
+                               for x in out["relations"]) or "  (없음)",
+                     ("\n\n어휘 밖: 관계 %s · 타입 %s" % (out["unknown_rels"], out["unknown_types"]))
+                     if (out["unknown_rels"] or out["unknown_types"]) else ""))
+            return 0
+        if a == "add-entity":
+            if len(ns.args) < 2:
+                print("사용법: graph-rules add-entity <이름> <type> [별칭…]   (type 목록은 `graph-rules types`)")
+                return 1
+            name, etype, aliases = ns.args[0].strip(), ns.args[1].strip(), [x.strip() for x in ns.args[2:] if x.strip()]
+            r = _gr.load_rules()
+            types = _gr.known_types(r)
+            if types and etype not in types:
+                print("ERROR: 없는 type '%s' — 쓸 수 있는 값: %s" % (etype, ", ".join(types)))
+                return 1
+            ents = r.setdefault("entities", {})
+            if name in ents:                                  # type: ignore
+                print("이미 있습니다: %s — 별칭만 더하려면 `graph-rules add-alias %s <별칭…>`" % (name, name))
+                return 1
+            ents[name] = {"type": etype, "aliases": aliases}   # type: ignore
+            _gr.save_rules(r)
+            _out({"name": name, "type": etype, "aliases": aliases}, as_json,
+                 "엔티티 추가: %s (%s)%s — 반영하려면 `build graph`" % (name, etype, (" 별칭 %d개" % len(aliases)) if aliases else ""))
+            return 0
+        if a == "add-alias":
+            if len(ns.args) < 2:
+                print("사용법: graph-rules add-alias <엔티티 이름> <별칭…>")
+                return 1
+            name, aliases = ns.args[0].strip(), [x.strip() for x in ns.args[1:] if x.strip()]
+            r = _gr.load_rules()
+            ents = r.get("entities") or {}                     # type: ignore
+            key = next((k for k in ents if k.strip().lower() == name.lower()), None)
+            if key is None:
+                print("ERROR: 규칙 사전에 '%s' 가 없습니다 — `graph-rules add-entity %s <type>` 로 먼저 만드세요" % (name, name))
+                return 1
+            cur = list(ents[key].get("aliases") or [])
+            added = [a2 for a2 in aliases if a2 not in cur and a2.lower() != key.lower()]
+            ents[key]["aliases"] = cur + added
+            _gr.save_rules(r)
+            _out({"entity": key, "added": added, "aliases": ents[key]["aliases"]}, as_json,
+                 "별칭 %d개 추가: %s → %s — 반영하려면 `build graph`" % (len(added), key, ", ".join(added) or "(없음 — 이미 있었습니다)"))
+            return 0
+        if a == "fill-defaults":
+            r = _gr.fill_defaults(dry_run=ns.dry_run)
+            _out(r, as_json, "%s: 채운 절 %s" % (r.get("path"), ", ".join(r.get("added") or []) or "(없음 — 이미 모두 있습니다)"))
+            return 0
+        return 1
+
     if ns.cmd == "rules":
         from . import query_rules as _qr
         if ns.action == "show":
             _out(_qr.load_rules(), True)
             return 0
+        if ns.action == "types":
+            # 규칙 유형 표 — 무엇을 어느 유형에 넣어야 하는지가 이 화면 하나로 정해진다.
+            rows = _qr.describe_types()
+            _out(rows, as_json, "규칙 유형 %d개 (query_rules.json 의 절 이름)\n\n%s\n\n%s" % (
+                len(rows),
+                "\n".join("  %-9s %-16s %-6s 항목 %-4d %s%s" % (
+                    r["name"], r["label"], r["direction"], r["count"],
+                    r["how"][:72], ("  [신규 %s]" % r["since"]) if r["since"] else "") for r in rows),
+                "값 모양: list=문자열 목록 · str=문자열 하나 · cond=[{when,then}] 조건 목록 · map=객체\n"
+                "추가: rules add <type> <term> <값…>   설명: rules explain <용어>   점검: rules lint"))
+            return 0
         if ns.action == "stats":
             _out(_qr.stats(), True)
+            return 0
+        if ns.action == "effect":
+            # 규칙별 누적 효과: 걸린 횟수 · 후보를 가져온 횟수 · 최종 컨텍스트에 기여한 횟수 · 인용된 횟수
+            from . import ruleeffect as _re
+            if getattr(ns, "reset", False):
+                _out(_re.reset(p.store, ns.args[0] if ns.args else None), True)
+                return 0
+            r = _re.stats(p.store, 200, getattr(ns, "order", "fired"))
+            if as_json:
+                _out(r, True)
+                return 0
+            print("규칙 효과 — 규칙 %d개 기록 · 총 발화 %d회 · 정렬 %s" % (r["n"], r["total_fired"], r["order"]))
+            print("  %s" % r["note"])
+            if r["never_helped"]:
+                print("  ⚠ 3회 이상 걸렸는데 한 번도 기여하지 못한 규칙 %d개 — `rules effect --order useless` 로 확인" % r["never_helped"])
+            print("  %-26s %-9s %6s %6s %6s %6s %7s" % ("규칙", "유형", "발화", "후보", "기여", "인용", "기여율"))
+            for x in r["rows"]:
+                print("  %-26s %-9s %6d %6d %6d %6d %6.0f%%" % (x["term"][:26], x["type"] or "-", x["fired"], x["cand"], x["helped"], x["cited"], 100 * x["help_rate"]))
+            if not r["rows"]:
+                print("  (아직 기록이 없습니다 — 질의를 몇 번 돌리면 쌓입니다)")
             return 0
         if ns.action == "path":
             print(_qr.rules_path())
@@ -927,6 +1521,16 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             from . import tuning as _tn
             r = _qr.expand(" ".join(ns.args), _tn.T.get("syn_w"), _tn.T.get("related_w"), _tn.T.get("acronym_phrase"))
             _out(r, as_json, json.dumps(r, ensure_ascii=False, indent=1))
+            return 0
+        if ns.action == "explain":
+            # 빈 문자열을 **준** 경우(`rules explain ""`)도 용어가 없는 것이다. 예전에는 `ns.args` 가
+            # `[""]` 라 목록이 비어 있지 않다는 이유로 통과해 종료코드 0 과 "없는 용어" 결과를 냈다 —
+            # Web 은 400, MCP 는 오류를 내므로 같은 입력에 창구마다 다르게 굴었다 (2026-09-20 정렬 감사).
+            if not " ".join(ns.args or []).strip():
+                print("usage: rules explain <용어>   (예: rules explain AGC)")
+                return 1
+            r = _qr.explain(" ".join(ns.args))
+            _out(r, as_json, _rules_explain_text(r))
             return 0
         if ns.action == "merge":
             if not ns.args:
@@ -1051,8 +1655,20 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             _out(_fx.summary(p.store), True)
             return 0
         if tgt == "list":
-            rows = _fx.list_forensics(p.store, ns.limit)
-            _out(rows, as_json, "\n".join("#%-4s req=%-5s %-12s g=%-5s %s" % (r["id"], r["request_id"], r["verdict"], r["groundedness"], r["query"][:60]) for r in rows) or "(none)")
+            # 기본은 **문제 건만** — Web 포렌식 화면과 같은 기준(`only=problems`).
+            # 이 저장소 실측으로 기록의 90%가 정상이라, 전부 보여 주면 볼 이유가 있는 줄이 묻힌다.
+            only = (getattr(ns, "only", "") or "problems")
+            rows = _fx.list_forensics(p.store, ns.limit,
+                                      verdict=(None if only in ("problems", "all", "") else only),
+                                      q=(getattr(ns, "q", "") or ""),
+                                      only_problems=(only == "problems"))
+            cnt = _fx.verdict_counts(p.store)
+            head = ("판정별 전체: %s   (지금 보기: %s)"
+                    % (" · ".join("%s %d" % (k, v) for k, v in sorted(cnt.items(), key=lambda kv: -kv[1])),
+                       "문제 건만" if only == "problems" else ("전부" if only == "all" else only)))
+            body = "\n".join("#%-4s req=%-5s %-12s g=%-5s %s" % (r["id"], r["request_id"], r["verdict"], r["groundedness"], r["query"][:60]) for r in rows)
+            _out({"rows": rows, "counts": cnt, "only": only}, as_json,
+                 head + "\n" + (body or "(해당 없음 — `--only all` 로 전부 보거나 `--only sufficient` 로 정상 건을 봅니다)"))
             return 0
         if tgt == "last":
             rows = _fx.list_forensics(p.store, 1)
@@ -1114,29 +1730,118 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             _out(_mem.consolidate(p.store, p.tuning.get("forensic_min_events")), True)
             return 0
         if ns.action == "episodes":
-            _out(_mem.episodes(p.store, ns.limit), True)
+            rows = _mem.episodes(p.store, ns.limit, ns.only or "", ns.q or "")
+            _out(rows, as_json, "\n".join(
+                "#%-5s %s  %-9s %-10s %s  str=%.2f  %s" % (
+                    e["id"], time.strftime("%m-%d %H:%M", time.localtime(e.get("ts") or 0)),
+                    (e.get("kind") or "")[:9], (e.get("outcome") or "")[:10],
+                    "👍" if (e.get("feedback") or 0) > 0 else ("👎" if (e.get("feedback") or 0) < 0 else "  "),
+                    float(e.get("strength") or 0), (e.get("query") or "")[:60]) for e in rows)
+                or "(에피소드 없음 — 질의에 👍/👎 를 누르거나 토글 evolve_capture 를 켜면 쌓입니다)")
+            return 0
+        if ns.action == "boosts":
+            # 지금 검색이 실제로 받고 있는 피드백 부스트 (Web 메모리 화면의 같은 표)
+            rows = _mem.boost_table(p.store, hl, top=ns.limit)
+            _out(rows, as_json, "피드백 부스트 %d건 (반감기 %s일 · fusion 의 post-boost 로 들어갑니다)\n%s" % (
+                len(rows), hl,
+                "\n".join("  %+.3f  %-46s %s%s" % (
+                    e["weight"], e["chunk_id"][:46], (e.get("heading") or "")[:34],
+                    "" if e.get("exists") else "  [색인에 없음 — 재빌드로 사라진 청크]") for e in rows)
+                or "  (없음 — 아직 👍/👎 가 없습니다)"))
+            return 0
+        if ns.action == "decaying":
+            rows = _mem.decaying_proposals(p.store, hl, p.tuning.get("memory_archive_strength"), ns.limit)
+            _out(rows, as_json, "감쇠 중인 미승인 제안 %d건 (임계 %s 아래로 내려가면 archived)\n%s" % (
+                len(rows), p.tuning.get("memory_archive_strength"),
+                "\n".join("  #%-5s %-12s str=%.3f  %s  %s" % (
+                    e["id"], (e.get("kind") or "")[:12], e["strength_now"],
+                    ("남은 %s일" % e["days_left"]) if e.get("days_left") is not None else "감쇠 없음",
+                    "⚠ 곧 사라짐" if e.get("at_risk") else "") for e in rows)
+                or "  (없음)"))
             return 0
         _out(_mem.status(p.store, hl), True)
         return 0
 
     if ns.cmd == "trial":
         from . import trials as _tr
+        if ns.action == "candidates":
+            # **비교에 쓸 과거 질의 고르기** — 번호를 보고 `trial run --pick 12,18,25` 로 넘긴다.
+            # Web Quality › Trial 비교의 '질의 고르기' 목록과 같은 함수(GET /api/eval/candidates).
+            from .evalset import from_query_log
+            got = from_query_log(p.store, days=ns.days, limit=ns.limit, only=ns.only)
+            rows = got["questions"]
+            txt = "\n".join(
+                "#%-5s %-16s %-4s %-5s %s" % (
+                    c.get("from_query_id"),
+                    __import__("time").strftime("%m-%d %H:%M", __import__("time").localtime(c.get("ts") or 0)),
+                    ("👎" if (c.get("feedback") or 0) < 0 else ("👍" if (c.get("feedback") or 0) > 0 else "")),
+                    ("근거X" if c.get("insufficient") else ""),
+                    (c.get("q") or "")[:60]) for c in rows)
+            _out({"candidates": rows, "source": got["source"]}, as_json,
+                 (txt + "\n\n고른 번호로 돌리기:  trial run --pick %s --name 내비교"
+                  % ",".join(str(c.get("from_query_id")) for c in rows[:3]))
+                 if rows else "최근 %g일 안에 질의 이력이 없습니다 (only=%s)" % (ns.days, ns.only or "all"))
+            return 0
         if ns.action == "run":
-            from .evalset import load_questions
-            qs = load_questions(ns.questions) if ns.questions else None
+            from .evalset import load_questions, from_query_log, pick_questions
+            src = None
+            picked = [x.strip() for x in str(getattr(ns, "pick", "") or "").split(",") if x.strip()]
+            if picked:
+                # 사람이 고른 질의만 — 기간·건수로 뭉뚱그리는 것과 달리 "이 질문들" 을 그대로 쓴다
+                got = pick_questions(p.store, picked)
+                qs, src = got["questions"], got["source"]
+                if not qs:
+                    print("ERROR: 고른 번호에 해당하는 질의가 없습니다 — `trial candidates` 로 번호를 확인하세요")
+                    return 1
+                if src.get("missing"):
+                    print("주의: 찾지 못한 번호 %s" % src["missing"], file=sys.stderr if as_json else sys.stdout)
+                print("고른 질의 %d문항으로 돌립니다 — 정답이 없어 hit@k·mrr·term_recall 은 계산하지 않습니다" % len(qs),
+                      file=sys.stderr if as_json else sys.stdout)
+            elif getattr(ns, "source", "queries") == "queries" and not ns.questions:
+                # 실제 질의 이력으로 (기본) — 평가셋이 실제 사용과 다르고, 이 저장소에서는 평가셋이 코퍼스에
+                # 색인돼 hit@k 가 오염돼 있다(`eval --check`). 대신 정답이 없어 일부 지표는 계산되지 않는다.
+                got = from_query_log(p.store, days=ns.days, limit=ns.limit, only=ns.only)
+                qs, src = got["questions"], got["source"]
+                # --json 일 때 이 안내가 stdout 에 섞이면 JSON 파싱이 깨진다 → stderr 로 (사람은 그대로 본다)
+                note_to = sys.stderr if as_json else sys.stdout
+                if not qs:
+                    # **막지 않고 평가셋으로 물러난다** — 기본값이 실행을 실패시키면 안 된다.
+                    # 다만 어느 원천으로 돌았는지는 반드시 알린다 (조용히 바뀌면 숫자를 잘못 읽는다).
+                    print("쓸 만한 질의 이력이 없어(최근 %g일%s) **평가셋으로** 돌립니다 — "
+                          "이력으로 돌리려면 질의를 먼저 쌓거나 --days 를 늘리세요"
+                          % (ns.days, (" · %s" % ns.only) if ns.only else ""), file=note_to)
+                    qs, src = (load_questions(ns.questions) if ns.questions else None), None
+                else:
+                    print("문항 %d개를 실제 질의 이력에서 가져왔습니다 (최근 %g일%s) — "
+                          "정답이 없어 hit@k·mrr·term_recall 은 계산하지 않습니다"
+                          % (len(qs), ns.days, (" · %s" % ns.only) if ns.only else ""), file=note_to)
+            else:
+                qs = load_questions(ns.questions) if ns.questions else None
             ov: Dict[str, Any] = {}
             for kv in ns.sets:
                 k_, _, v_ = kv.partition("=")
                 ov[k_.strip()] = v_.strip()
             name = ns.name or ("trial-%s" % __import__("time").strftime("%m%d-%H%M%S"))
-            r = _tr.run_trial(p, name, qs, k=ns.k, preset=ns.preset, overrides=ov or None, note=ns.note)
-            _out(r, as_json, "trial #%s %s: %s" % (r["trial_id"], r["name"], json.dumps(r["summary"], ensure_ascii=False)))
+            r = _tr.run_trial(p, name, qs, k=ns.k, preset=ns.preset, overrides=ov or None, note=ns.note, source=src)
+            _out(r, as_json, "trial #%s %s (%s, 문항 %d): %s"
+                 % (r["trial_id"], r["name"], (r.get("source") or {}).get("kind", "evalset"), r["n"],
+                    json.dumps({k: v for k, v in r["summary"].items() if not k.startswith("_")}, ensure_ascii=False)))
             return 0
         if ns.action == "list":
             rows = _tr.list_trials(p.store, 50)
-            _out(rows, as_json, "\n".join("#%-4s %-24s v%-3s n=%-3s hit=%-5s mrr=%-5s g=%-5s insuf=%-5s ms=%-7s %s" % (
-                r["trial_id"], r["name"][:24], r["build_version"], r["summary"].get("n"), r["summary"].get("hit@k"), r["summary"].get("mrr"), r["summary"].get("groundedness"),
-                r["summary"].get("insufficient_rate"), r["summary"].get("avg_ms"), __import__("time").strftime("%m-%d %H:%M", __import__("time").localtime(r["ts"]))) for r in rows) or "(no trials)")
+            # 정답이 없어 **계산하지 않은** 지표는 `—` 로 찍는다. 0 으로 보이면 "완전 실패" 로 읽힌다.
+            def _v(x):
+                return "—" if x is None else str(x)
+            SRCL = {"evalset": "평가셋", "queries": "질의이력", "list": "직접"}
+            txt = "\n".join("#%-4s %-22s %-6s v%-3s n=%-3s hit=%-5s mrr=%-5s g=%-5s insuf=%-5s ms=%-7s %s" % (
+                r["trial_id"], r["name"][:22], SRCL.get((r.get("source") or {}).get("kind"), "?"),
+                r["build_version"], r["summary"].get("n"), _v(r["summary"].get("hit@k")), _v(r["summary"].get("mrr")),
+                _v(r["summary"].get("groundedness")), _v(r["summary"].get("insufficient_rate")), _v(r["summary"].get("avg_ms")),
+                __import__("time").strftime("%m-%d %H:%M", __import__("time").localtime(r["ts"]))) for r in rows)
+            if any(not r.get("graded") for r in rows):
+                txt += "\n\n— 표시는 **계산하지 않은 것**입니다(0점이 아닙니다). 질의 이력에는 채점할 정답이 없어\n" \
+                       "   hit@k·mrr·term_recall 을 낼 수 없습니다 — groundedness·insufficient·ms·토큰으로 비교하세요."
+            _out(rows, as_json, txt or "(no trials)")
             return 0
         if ns.action in ("show", "report"):
             tr_ = _tr.get_trial(p.store, ns.refs[0] if ns.refs else "")
@@ -1217,8 +1922,17 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         q = " ".join(ns.question)
         if getattr(ns, "analyze", False):
             p.s.toggles.analysis_mode = True
-        with _pg.cli_monitor("cli-query-%d" % int(time.time()), "query", q[:80], enabled=not as_json and not _CAPTURED):
-            res, tr = p.query(q, log=not ns.no_log)
+        try:
+            ov = _request_overrides(ns)
+        except (ValueError, KeyError) as e:
+            print("!! --set: %s" % e)
+            return 2
+        except Exception as e:          # AuthError — 모르는 키(400) 또는 역할이 못 쓰는 키(403)
+            print("!! --set: %s" % getattr(e, "error", e))
+            return 2 if getattr(e, "status", 0) == 400 else 5
+        with _pg.cli_monitor("cli-query-%d" % int(time.time()), "query", q[:80], enabled=not as_json and not _CAPTURED,
+                             client=_cli_client(ns)):
+            res, tr = p.query(q, log=not ns.no_log, overrides=ov or None)
         if getattr(ns, "analyze", False) and res.get("analysis") and ns.focus != "all" and res["analysis"].get("md"):
             from . import analysis as _an
             r2 = _an.analyze(p, res.get("request_id"), focus=ns.focus)
@@ -1229,9 +1943,15 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             return 0
         print("Q:", q)
         print("route:", json.dumps(res.get("route", {}).get("kind")), "weights:", res["config"]["weights"])
+        if res.get("output_mode") and res["output_mode"] != "answer":
+            print("output_mode:", res["output_mode"], "result_type:", res.get("result_type"))
         print("-" * 70)
-        print(res["answer"])
+        print(res["answer"])       # output_mode=fused|reranked 면 후보 표(마크다운), context 면 컨텍스트 본문이 들어 있다
         print("-" * 70)
+        if res.get("output_mode") == "context" and res.get("refs"):
+            for x in res["refs"]:
+                print("[C%s] %s | %s | %s chars" % (x.get("n"), x.get("chunk_id"), (x.get("heading") or "")[:50], x.get("chars")))
+            print("-" * 70)
         for h in res["hits"]:
             tag = ("[C%d]" % h["n"]) if h.get("n") is not None else "[--]"   # n=None: 컨텍스트에 미포함(dedupe/trim)
             print("%s %s | %s | fused=%.4f rerank=%s via %s" % (tag, h["chunk_id"], (h.get("heading") or "")[:50], h.get("fused") or 0.0, h.get("rerank"), ",".join(h.get("why") or [])))
@@ -1262,6 +1982,60 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                     with open(an["md"], "r", encoding="utf-8") as f:
                         print(f.read())
         return 0
+
+    if ns.cmd == "sweep":
+        from . import sweep as _sw
+        if ns.action == "keys":
+            rows = _sw.sweepable_keys(p.s)
+            _out({"keys": rows, "points": __import__("llmwiki.rerun", fromlist=["POINTS"]).POINTS}, as_json,
+                 "\n".join("%-26s %-7s %-7s %-11s %s" % (r["key"], r["kind"], r["type"], r["point"],
+                                                          ("choices=%s" % r["choices"]) if r.get("choices") else ("%s..%s" % (r.get("min"), r.get("max")) if r.get("min") is not None else ""))
+                           for r in rows))
+            return 0
+        if ns.action == "list":
+            rows = _sw.list_sweeps(p.s, ns.n)
+            _out({"sweeps": rows}, as_json,
+                 "\n".join("sw_%-22s %-22s %-11s #%-6s %2d값 %s%s" % (r["id"], str(r.get("key"))[:22], str(r.get("point")), r.get("request_id"),
+                                                                     len(r.get("values") or []), time.strftime("%m-%d %H:%M", time.localtime(r["mtime"])),
+                                                                     (" 오류 %d" % r["n_errors"]) if r.get("n_errors") else "")
+                           for r in rows) or "저장된 스윕이 없습니다 (sweep run 으로 만든다)")
+            return 0
+        if ns.action in ("show", "compare"):
+            rec = _sw.load(p.s, ns.target or "")
+            if not rec:
+                print("스윕을 찾을 수 없습니다: %s (sweep list 로 확인)" % ns.target)
+                return 1
+            cmp_ = _sw.compare(rec)
+            if as_json:
+                _out({"record": rec, "compare": cmp_} if ns.action == "show" else cmp_, True)
+                return 0
+            print(_sw.render_text(rec, cmp_))
+            if ns.action == "compare":
+                for row in cmp_.get("runs") or []:
+                    if row.get("is_base") or row.get("error") or (row.get("answer") or {}).get("same"):
+                        continue
+                    print("\n=== %s=%s 답변 diff (유사도 %.2f) ===" % (rec["key"], row["value"], row["answer"]["ratio"]))
+                    print("\n".join(row["answer"]["diff"]))
+            return 0
+        # run
+        if not ns.key:
+            print("사용법: sweep run <request_id|last> --key K (--range a:b:s | --values v1,v2,…) [--repeats N] [--from POINT] [--query \"…\"]")
+            return 2
+        try:
+            spec = {"range": ns.range_} if ns.range_ else ({"values": ns.values} if ns.values else None)
+            vals = _sw.resolve_values(ns.key, spec, int(getattr(p.s, "sweep_max_values", 20) or 20))
+            rec = _sw.run(p, ns.target if ns.target else None, ns.key, vals, repeats=ns.repeats, from_point=ns.from_point, query=ns.query,
+                          progress=(None if as_json else (lambda m: print("  " + m))), log=bool(ns.log))
+        except ValueError as e:
+            print("스윕할 수 없습니다: %s" % e)
+            return 2
+        cmp_ = _sw.compare(rec)
+        if as_json:
+            _out({"record": rec, "compare": cmp_}, True)
+            return 0
+        print()
+        print(_sw.render_text(rec, cmp_))
+        return 0 if rec.get("n_ok") else 1
 
     if ns.cmd == "rerun":
         from . import rerun as _rr
@@ -1300,6 +2074,18 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
     if ns.cmd == "eval":
         from .evalset import load_questions
         qset = load_questions(ns.questions) if ns.questions else None
+        if getattr(ns, "check", False):
+            # 점수를 내기 전에 "이 숫자를 믿어도 되나" 부터. 오염된 색인에서 튜닝을 시작하면 며칠을 버린다.
+            from .evalset import health as _health
+            h = _health(p, qset)
+            mark = {"ok": "✔", "warn": "△", "bad": "✘"}[h["level"]]
+            _out(h, as_json, "%s 평가셋 신뢰도: %s (문항 %d · 색인 문서 %d)\n%s" % (
+                mark, {"ok": "문제 없음", "warn": "주의", "bad": "이 상태의 점수는 믿을 수 없습니다"}[h["level"]],
+                h["n"], h["checked"]["docs_indexed"],
+                "\n".join("  [%s] %s\n%s" % (i["level"], i["detail"],
+                                             "\n".join("       · " + x for x in i["questions"][:6]))
+                          for i in h["issues"]) or "  (모든 점검 통과)"))
+            return 0 if h["level"] != "bad" else 1
         if ns.matrix:
             combos = [("fts", True, False, False), ("vector", False, True, False), ("graph", False, False, True),
                       ("fts+vector", True, True, False), ("fts+graph", True, False, True), ("all", True, True, True)]
@@ -1310,13 +2096,63 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 rows.append(dict(r["summary"], combo=name))
             _out(rows, as_json, "\n".join("%-12s hit@%d=%.3f mrr=%.3f term_recall=%.3f" % (r["combo"], ns.k, r["hit@k"], r["mrr"], r["term_recall"]) for r in rows))
             return 0
-        r, tr = p.evaluate(k=ns.k, questions=qset, log=False)
+        ro = bool(getattr(ns, "retrieval_only", False))
+        r, tr = p.evaluate(k=ns.k, questions=qset, log=not ro, retrieval_only=ro)
+        # 놓친 문항의 원인까지 — 기대값은 평가셋에 이미 있으므로 공짜다 (예전에는 손으로 다시 적어야 했다)
+        if getattr(ns, "forensic", False):
+            from . import forensic as _fx
+            miss = [x for x in r["rows"] if not x.get("hit") and x.get("request_id")][: max(1, ns.forensic_max)]
+            r["forensics"] = []
+            for x in miss:
+                try:
+                    rep = _fx.trace_expectation(p, int(x["request_id"]), list(x.get("expect_docs") or []),
+                                                list(x.get("expect_terms") or []), note="eval --forensic")
+                    r["forensics"].append({"q": x["q"], "request_id": x["request_id"],
+                                           "summary": rep.get("summary"), "suggestions": rep.get("suggestions"),
+                                           "lost_counts": rep.get("lost_counts"), "forensic_id": rep.get("forensic_id")})
+                except Exception as e:
+                    r["forensics"].append({"q": x["q"], "error": str(e)[:160]})
         if as_json:
             _out({"result": r, "trace": tr}, True)
             return 0
         for row in r["rows"]:
-            print("%s rank=%s term=%.2f  %s" % ("✔" if row["hit"] else "✘", row["rank"], row["term_recall"], row["q"]))
-        print("summary:", json.dumps(r["summary"], ensure_ascii=False))
+            tr_ = row.get("term_recall")
+            print("%s rank=%-4s term=%s  %s" % ("✔" if row["hit"] else "✘", row["rank"],
+                                                ("%.2f" % tr_) if tr_ is not None else "  - ", row["q"]))
+        s = r["summary"]
+        print("summary:", json.dumps(s, ensure_ascii=False))
+        # 변별력이 없는 지표를 말해 준다 — 만점이라고 좋은 게 아니라 '안 움직이는 눈금' 일 수 있다
+        dull = [m for m, d in (r.get("discriminating") or {}).items() if not d.get("useful")]
+        if dull:
+            print("△ 변별력 없음: %s — 모든 문항이 같은 값이라 이 지표로는 튜닝 효과를 볼 수 없습니다" % ", ".join(dull))
+        if ro:
+            print("(검색 전용: LLM 단계를 껐습니다 — 토큰 %s · 답변 지표는 계산하지 않음)" % s.get("total_tokens"))
+        for f in (r.get("forensics") or []):
+            print("\n✘ %s" % f["q"])
+            if f.get("error"):
+                print("   분석 실패: %s" % f["error"])
+                continue
+            for line in (f.get("summary") or [])[:3]:
+                print("   %s" % line)
+            for sg in (f.get("suggestions") or [])[:3]:
+                print("   → (%s %.2f) %s" % (sg.get("kind"), sg.get("confidence") or 0, sg.get("detail", "")[:110]))
+        return 0
+
+    if ns.cmd == "graph" and ns.action == "profile":
+        from . import graph_profile as _gp
+        prof = _gp.profile(p, include_eval=ns.eval)
+        prof["saved"] = _gp.save(prof)
+        if ns.compare:
+            hist = _gp.history(p.s)
+            prev = _gp.load(hist[1]["path"]) if len(hist) > 1 else None
+            prof["compare"] = _gp.compare(prev, prof) if prev else None
+            if not prev:
+                print("(비교할 이전 프로파일이 없습니다 — 이번 실행이 첫 기록입니다: %s)" % prof["saved"])
+        if ns.out:
+            with open(ns.out, "w", encoding="utf-8") as f:
+                f.write(_gp.render_markdown(prof))
+            print("마크다운 저장: %s" % ns.out)
+        _out(prof, as_json, _gp.render_text(prof))
         return 0
 
     if ns.cmd == "graph":
@@ -1355,20 +2191,48 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             print("  · %s: %s" % (m["chunk_id"], m["text"][:100].replace("\n", " ")))
         return 0
 
+    if ns.cmd == "inspect":
+        from . import querydebug as _qd
+        d = _qd.inspect_query(p, " ".join(ns.question))
+        _out(d, as_json, _qd.render_text(d))
+        return 0
+
     if ns.cmd == "search":
         from .profiler import Profiler
-        from .retrieval import fts_search, vector_search, graph_search
+        from .retrieval import channel_search, parse_channels
         q = " ".join(ns.question)
         prof = Profiler("search")
-        if ns.channel == "fts":
-            rows = fts_search(p.store, q, ns.k, p.store.synonyms(), prof)
-            out = [{"chunk_id": c, "score": s_, "snippet": sn} for c, s_, sn in rows]
-        elif ns.channel == "vector":
-            out = [{"chunk_id": c, "score": s_} for c, s_ in vector_search(p.store, p.embedder, q, ns.k, prof)]
-        else:
-            g = graph_search(p.store, q, ns.k, p.s.graph_hops, prof)
-            out = {"chunks": g["chunks"], "seeds": g.get("seeds"), "entities": g["entities"][:10], "relations": g["relations"][:10]}
-        _out({"result": out, "trace": prof.finish()}, as_json, json.dumps(jsonable(out), ensure_ascii=False, indent=1))
+        r = channel_search(p.store, p.embedder, p.s, q, ns.channel, mode=ns.mode, k=ns.k, prof=prof,
+                           require=getattr(ns, "require", None), exclude=getattr(ns, "exclude", None),
+                           doc_types=getattr(ns, "doc_types", None), acl=p.acl_filter())
+        r["trace"] = prof.finish()
+        if as_json:
+            _out(r, True)
+            return 0
+        chans = r["channels"]
+        head = "채널 %s · 조건 %s · k=%d — 합집합 %d · 교집합 %d · 표시 %d" % (
+            "+".join(chans), r.get("expr") or r["mode"], r["k"],
+            r["counts"]["union"], r["counts"]["intersection"], r["counts"]["returned"])
+        lines = [head, "  " + " · ".join("%s %d건 %.0fms" % (c, v["n"], v["ms"]) for c, v in r["per_channel"].items())]
+        if r.get("weights"):
+            lines.append("  RRF 가중치: " + ", ".join("%s=%.2f" % (c, w) for c, w in r["weights"].items()))
+        lines.append("")
+        lines.append("  %-4s %-34s %-22s %-7s %s" % ("#", "chunk_id", "채널(순위)", "점수", "문서 · 헤딩"))
+        for i, x in enumerate(r["rows"]):
+            chs = ",".join("%s#%d" % (c, v["rank"]) for c, v in sorted(x["channels"].items()))
+            lines.append("  %-4d %-34s %-22s %-7.4f %s" % (i + 1, x["chunk_id"][:34], chs[:22], x["score"],
+                                                           ("%s > %s" % (x.get("doc_id") or "", x.get("heading") or ""))[:60]))
+        if not r["rows"]:
+            lines.append("  (결과 없음)")
+        if r.get("graph"):
+            g = r["graph"]
+            lines.append("")
+            lines.append("  그래프 시드: %s" % json.dumps(g.get("seeds"), ensure_ascii=False)[:160])
+            lines.append("  엔티티 %d · 관계 %d" % (len(g.get("entities") or []), len(g.get("relations") or [])))
+        if len(chans) == 1:
+            lines.append("")
+            lines.append("  (여러 채널을 한 번에 보려면: search fts,vector,graph \"질의\" --mode and)")
+        _out(r, as_json, "\n".join(lines))
         return 0
 
     if ns.cmd == "evolve":
@@ -1380,11 +2244,89 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 _out(st, True)
                 return 0
             print("auto_apply=%s min_conf=%.2f pending=%d applied=%d synonyms=%d" % (st["auto_apply"], st["min_confidence"], len(st["pending"]), len(st["applied"]), len(st["synonyms"])))
+            # payload JSON 원문 대신 한 줄 설명 + 점검 표시 (자세히는 `evolve show <id>`) — 2026-09-19
             for pr in st["pending"]:
-                print("  #%d %-10s conf=%.2f %s  <- %s" % (pr["id"], pr["kind"], pr["confidence"] or 0, json.dumps(pr["payload"], ensure_ascii=False)[:80], (pr["reason"] or "")[:60]))
+                ex = pr.get("explain") or {}
+                mark = "[X]" if [c for c in (ex.get("checks") or []) if c["level"] == "error"] else \
+                       ("[!]" if [c for c in (ex.get("checks") or []) if c["level"] == "warn"] else "   ")
+                print("  %s #%-4d %-11s conf=%.2f  %s" % (mark, pr["id"], pr["kind"], pr["confidence"] or 0,
+                                                          ex.get("title") or json.dumps(pr["payload"], ensure_ascii=False)[:80]))
+            if st["pending"]:
+                print("  ([X] 이대로는 적용 실패/무효 · [!] 확인 필요 — 자세히: `evolve show <번호>`)")
+            return 0
+        if a == "show":
+            # 제안 하나를 사람 말로 풀어 준다 — 무엇이 · 어느 파일에서 · 어떻게 바뀌고 · 무슨 영향이 있는지
+            if not ns.args:
+                print("사용법: evolve show <제안번호>  (번호는 `evolve status` 에서)")
+                return 1
+            try:
+                pid = int(ns.args[0])
+            except ValueError:
+                print("ERROR: 제안 번호가 정수가 아닙니다 (받은 값: %r)" % ns.args[0])
+                return 1
+            d = ev.describe_proposal(p, pid)
+            if d.get("error"):
+                print("ERROR: %s (#%s)" % (d["error"], pid))
+                return 1
+            from . import proposal_explain as _pe
+            _out(d, as_json, _pe.format_description(d))
             return 0
         if a == "list":
             _out(p.store.proposals(ns.args[0] if ns.args else None), True)
+            return 0
+        if a == "kinds":
+            # 적용할 수 있는 제안 종류와 설명 (Web 드롭다운·MCP wiki_propose 와 같은 목록)
+            allow = ev.auto_apply_kinds(p.s)
+            _out({"kinds": ev.KINDS, "auto_apply_kinds": allow}, as_json,
+                 "제안 종류 %d개 (자동 적용 허용: %s)\n" % (len(ev.KINDS), ", ".join(allow)) +
+                 "\n".join("  %-14s %s%s" % (k, v, "   [자동 적용 가능]" if k in allow else "") for k, v in ev.KINDS.items()))
+            return 0
+        if a == "propose":
+            # 수동 제안 등록 — 예전에는 Web/MCP 만 되고 CLI 에는 없었다 (세 창구 정렬)
+            if len(ns.args) < 2:
+                print("사용법: evolve propose <kind> '<payload JSON>' [--reason 이유] [--confidence 0.9]")
+                print("  가능한 kind: %s  (설명은 `evolve kinds`)" % ", ".join(sorted(ev.KINDS)))
+                return 1
+            kind = ns.args[0]
+            if kind not in ev.KINDS:
+                print("ERROR: 알 수 없는 kind %r — 가능: %s" % (kind, ", ".join(sorted(ev.KINDS))))
+                return 1
+            try:
+                payload = json.loads(" ".join(ns.args[1:]))
+            except ValueError as e:
+                print("ERROR: payload 가 JSON 이 아닙니다: %s" % e)
+                return 1
+            pid = p.store.add_proposal(kind, payload, ns.reason, float(ns.confidence), "manual")
+            _out({"id": pid, "kind": kind, "status": "proposed"}, as_json,
+                 "제안 #%d 등록 (%s) — 승인하려면 `evolve apply %d`" % (pid, kind, pid))
+            return 0
+        if a == "auto-apply":
+            # 스케줄러의 auto_apply 와 같은 규칙을 손으로 한 번 돌린다 (신뢰도 하한 · 종류 제한 · 건수 상한)
+            allow = [x.strip() for x in ns.kinds.split(",")] if ns.kinds else ev.auto_apply_kinds(p.s)
+            min_conf = ns.min_conf if ns.min_conf is not None else float(p.s.evolve_min_confidence or 0.9)
+            picked, applied, errors = [], [], []
+            for pr in p.store.proposals("proposed"):
+                if len(picked) >= ns.max_apply:
+                    break
+                if float(pr.get("confidence") or 0) < min_conf or pr.get("kind") not in allow:
+                    continue
+                picked.append({"id": pr["id"], "kind": pr["kind"], "confidence": pr["confidence"]})
+            if not ns.dry_run:
+                for pr in picked:
+                    try:
+                        r = ev.apply_proposal(p, int(pr["id"]), evaluate=not ns.no_eval)
+                        applied.append({"id": pr["id"], "kind": pr["kind"], "status": r.get("status")})
+                    except Exception as e:
+                        errors.append({"id": pr["id"], "error": str(e)[:200]})
+            out = {"picked": picked, "applied": applied, "errors": errors, "min_confidence": min_conf,
+                   "kinds": allow, "dry_run": bool(ns.dry_run), "evaluate": not ns.no_eval}
+            _out(out, as_json,
+                 "대상 %d건 (신뢰도 ≥ %.2f · 종류 %s · 회귀평가 %s)\n" % (len(picked), min_conf, ",".join(allow), "포함" if not ns.no_eval else "생략") +
+                 "\n".join("  #%s %-12s conf=%.2f%s" % (x["id"], x["kind"], x["confidence"] or 0,
+                                                         "" if ns.dry_run else " → " + str(next((a2["status"] for a2 in applied if a2["id"] == x["id"]), "실패")))
+                           for x in picked) +
+                 ("\n(미리보기만 했습니다 — 실제로 적용하려면 --dry-run 을 빼세요)" if ns.dry_run else "") +
+                 ("\n오류 %d건: %s" % (len(errors), json.dumps(errors, ensure_ascii=False)[:200]) if errors else ""))
             return 0
         _bad = []
 
@@ -1435,14 +2377,47 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         return 0
 
     if ns.cmd == "stats":
+        if getattr(ns, "full", False):
+            # 운영 통계 — Web 옵저빌리티 › 시스템 · MCP wiki_status(full=true) 와 같은 함수 (llmwiki/opstats.py)
+            from . import opstats as _ops
+            d = _ops.collect(p, days=ns.days, sections=ns.sections or None, top=ns.top,
+                             bucket=ns.bucket, trend_days=ns.trend_days)
+            _out(d, as_json, _ops.format_text(d))
+            return 0
         st = {"stats": p.store.stats(), "providers": p.provider_status(), "toggles": p.s.toggles.__dict__}
         _out(st, as_json, json.dumps(jsonable(st), ensure_ascii=False, indent=2))
         return 0
 
     if ns.cmd == "config":
         if ns.action == "paths":
-            from .config import all_paths
-            _out(all_paths(), as_json, "\n".join("%-14s %s" % (k, v) for k, v in all_paths().items()))
+            from .config import all_paths, conf_dir, CONF_DIR_FILES
+            d = conf_dir()
+            _out({"paths": all_paths(), "conf_dir": d, "conf_dir_files": list(CONF_DIR_FILES)}, as_json,
+                 "\n".join("%-14s %s" % (k, v) for k, v in all_paths().items())
+                 + ("\n\nLLMWIKI_CONF_DIR = %s  (이 폴더에 있는 설정이 먼저 쓰입니다)" % d if d else
+                    "\n\n설정을 한 폴더에 모으려면: `config bundle --out conf` → 환경변수 LLMWIKI_CONF_DIR=conf (docs/PORTING.md)"))
+            return 0
+        if ns.action == "bundle":
+            # 설정을 한 폴더로 모으거나(--out) 그 폴더에서 되돌린다(--from). 포팅용 — docs/PORTING.md §4
+            from .config import bundle as _bundle
+            if not ns.out and not ns.from_dir:
+                print("사용법: config bundle --out <폴더>   (모으기)")
+                print("        config bundle --from <폴더>  (되돌리기)")
+                print("        --include-secrets 를 주면 .env 를 값째 복사합니다 (기본은 키 이름만)")
+                return 1
+            r = _bundle(out_dir=ns.out or "", restore_from=ns.from_dir or "",
+                        include_secrets=bool(ns.include_secrets), dry_run=bool(ns.dry_run))
+            if r.get("error"):
+                print("ERROR: " + r["error"])
+                return 1
+            _out(r, as_json,
+                 "%s %s (%d개%s)\n%s\n%s" % (
+                     "모음" if r["action"] == "bundle" else "되돌림", r["dir"], len(r["copied"]),
+                     " · 미리보기" if r.get("dry_run") else "",
+                     "\n".join("  %-12s → %s%s" % (c["name"], c["to"], "  (%s)" % c["note"] if c.get("note") else "")
+                               for c in r["copied"]),
+                     ("\n건너뜀: " + ", ".join("%s(%s)" % (s["name"], s["why"]) for s in r["skipped"]) if r["skipped"] else "")
+                     + "\n" + str(r.get("use") or r.get("note") or "")))
             return 0
         if ns.action == "show":
             if ns.effective:
@@ -1452,6 +2427,41 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                                                                          "" if r["value"] == r["default"] else " (기본 %s)" % json.dumps(r["default"], ensure_ascii=False)[:20], r["env"]) for r in rows))
                 return 0
             _out(p.s.to_dict(), True)
+            return 0
+        if ns.action == "doc":
+            # 설정·토글·튜닝 레지스트리에서 docs/CONFIG_REFERENCE.md 를 생성한다 (tuning doc · arch doc 과 같은 방식).
+            from . import configdoc as _cd
+            path = _cd.write_doc()
+            print("written: %s" % path)
+            return 0
+        if ns.action == "fill-defaults":
+            return _cmd_config_fill_defaults(ns, as_json)
+        if ns.action == "reload":
+            # 파일을 쓰지 않고 디스크의 config.json(+ --env 면 .env) 을 다시 읽어 이 프로세스(Web 콘솔이면 서버)에 반영한다
+            from .config import load_settings as _load_settings, reload_env as _reload_env, path_for as _pf
+            envrep = _reload_env() if ns.env else None
+            p.s = _load_settings()
+            p.reload()
+            out = {"ok": True, "config": _pf("config"), "env": (envrep or {}).get("path") if ns.env else None,
+                   "env_reloaded": (envrep or {}).get("reloaded") if ns.env else None,
+                   "answer": p.s.role_llm("answer")["provider"] + "/" + str(p.s.role_llm("answer")["model"])}
+            _out(out, as_json, "config reloaded: %s%s\n  answer=%s" % (out["config"], ("  .env=%s (%d keys)" % (out["env"], len(out["env_reloaded"] or []))) if ns.env else "", out["answer"]))
+            return 0
+        if ns.action == "env":
+            from .config import env_report as _env_report
+            rep = _env_report()
+            if as_json:
+                _out(rep, True)
+                return 0
+            print(".env: %s%s" % (rep["path"], "" if rep["exists"] else "  (파일 없음)"))
+            print("  %-28s %-6s %-14s %s" % ("key", "set", "source", "value(masked)"))
+            for k in rep["keys"]:
+                print("  %-28s %-6s %-14s %s" % (k["name"], "yes" if k["set"] else "-", k["source"] or ("file(빈값)" if k.get("file_empty") else "-"), k["masked"]))
+            if rep["overrides"]:
+                print("활성 LLMWIKI_* 오버라이드 (config.json 보다 우선):")
+                for o in rep["overrides"]:
+                    print("  %-34s → %-28s %s" % (o["env"], o["key"], o["masked"]))
+            print("다시 읽기: config reload --env · Web: Settings › config.json › .env")
             return 0
         if ns.action == "reset":
             if not _confirm_destructive(ns, "config.json 을 기본값으로 덮어쓰기", "코퍼스 경로·프로바이더·토글 설정이 모두 초기화됩니다 (색인 DB 는 유지)"):
@@ -1556,6 +2566,44 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             apply_overrides(p.s, ov)
             save_settings(p.s)
             p.reload()
+        if ns.action == "ensemble":
+            return _cmd_models_ensemble(ns, p, as_json)
+        if ns.action == "automap":
+            # 카탈로그 전체 연결 테스트 → 연결되는 모델만 골라 역할에 배정 (제안, --apply 면 저장)
+            r = p.automap_models(live=bool(ns.live), apply=bool(getattr(ns, "apply", False)))
+            if as_json:
+                _out(r, True)
+                return 0
+            print("자동 매핑 (%s) — 카탈로그 %s개 중 연결 OK: LLM %d · 임베딩 %d · 리랭크 %d  [%s]" % (
+                r["path"], r.get("tested"), r["candidates"]["llm"], r["candidates"]["embed"], r["candidates"]["rerank"], r["note"]))
+            print("  %-10s %-34s %-34s %s" % ("역할", "지금", "제안", "이유"))
+            for role, x in r["proposal"].items():
+                new = ("%s/%s" % (x.get("provider"), x.get("model"))) if x.get("ok") else "(없음)"
+                mark = "→" if x.get("changed") else "="
+                print("  %-10s %-34s %s %-32s %s" % (role, (x.get("current") or "")[:34], mark, new[:32], x.get("why", "")))
+                if x.get("warn"):
+                    print("             ⚠ %s" % x["warn"])
+            if r["applied"]:
+                print("\nconfig.json 에 저장했습니다: %s" % ", ".join(r["applied"]))
+            elif getattr(ns, "apply", False):
+                print("\n바꿀 것이 없습니다 (이미 같은 모델).")
+            else:
+                print("\n(제안만 출력했습니다. 실제로 꽂으려면 `models automap --apply`, 실제 호출까지 확인하려면 --live 를 같이)")
+            return 0
+        if ns.action == "test" and getattr(ns, "catalog", False):
+            # 카탈로그(models.json) 전체: enabled 항목마다 (provider, model) ping (+--live 완성 1회)
+            r = p.test_catalog(live=bool(ns.live))
+            if as_json:
+                _out(r, True)
+            else:
+                print("카탈로그 연결 테스트 (%s) — %d 항목 중 %d OK%s" % (r["path"], r["n"], r["ok_n"], "  [live]" if r["live"] else ""))
+                for x in r["rows"]:
+                    extra = ("  live: %s %.0fms %s" % ("OK" if x.get("live_ok") else "FAIL", x.get("live_ms", 0), x.get("live_detail", ""))) if "live_ok" in x else ""
+                    print("[%s] %-6s %-20s %-34s %6.0fms  %s%s" % ("OK " if x.get("ok") else "FAIL", x.get("kind"), (x.get("provider") or "")[:20], (x.get("id") or "")[:34],
+                                                                x.get("ms") or 0, (x.get("detail") or "")[:100], extra))
+                if not ns.live:
+                    print("(ping 만 확인. 실제 완성 호출까지 확인하려면 models test --catalog --live · 역할별 확인은 models test)")
+            return 0 if r["ok_n"] == r["n"] else 1
         if ns.action == "test":
             r = p.test_providers(live=bool(ns.live))
             if as_json:
@@ -1565,8 +2613,10 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                     mark = "OK " if x.get("ok") else "FAIL"
                     extra = ("  live: %s %.0fms %s" % ("OK" if x.get("live_ok") else "FAIL", x.get("live_ms", 0), x.get("live_detail", ""))) if "live_ok" in x else ""
                     print("[%s] %-10s %s/%s  %.0fms  %s%s" % (mark, k, x.get("provider") or x.get("url") or "", x.get("model"), x.get("ms") or 0, x.get("detail", ""), extra))
+                    if x.get("hint"):
+                        print("       ↳ %s" % x["hint"])     # 계획 §0.1-c: provider/model 짝이 카탈로그와 다르면 한 줄
                 if not ns.live:
-                    print("(ping 만 확인. PAT 권한·헤더·모델명·headless 실행까지 확인하려면 models test --live)")
+                    print("(ping 만 확인. PAT 권한·헤더·모델명·headless 실행까지 확인하려면 models test --live · 카탈로그 전체는 models test --catalog)")
             return 0 if all(x.get("ok") for x in r.values()) else 1
         st = p.provider_status()
         if as_json:
@@ -1591,6 +2641,34 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
 
     if ns.cmd == "requests":
         from .profiler import flatten_trace
+        if ns.action == "queries":
+            # 질의 로그 = '누가 무엇을 물었나'. Web Observability › 질의·로그 와 같은 데이터.
+            rows = p.store.queries(ns.limit, user=ns.user, q=ns.q, origin=ns.origin)
+            if as_json:
+                _out(rows, True)
+                return 0
+            import time as _t
+            for r in rows:
+                who = r.get("user") or "-"
+                extra = "/".join(x for x in (r.get("role"), r.get("origin"), r.get("via")) if x)
+                fb = "" if r.get("feedback") is None else (" +1" if r["feedback"] > 0 else " -1")
+                print("#%-5d %s %-14s %-20s %s%s" % (
+                    r["id"], _t.strftime("%m-%d %H:%M:%S", _t.localtime(r["ts"])), who[:14],
+                    ("(" + extra + ")")[:20], (r.get("query") or "")[:60], fb))
+            if not rows:
+                print("질의 로그가 비어 있습니다 (토글 evolve_capture 가 꺼져 있으면 기록하지 않습니다)")
+            return 0
+        if ns.action == "users":
+            rows = p.store.query_users(ns.limit)
+            if as_json:
+                _out(rows, True)
+                return 0
+            import time as _t
+            print("%-24s %6s %5s %5s  %s" % ("사용자", "질의", "+1", "-1", "마지막"))
+            for r in rows:
+                print("%-24s %6d %5d %5d  %s" % (r["user"][:24], r["n"], r["up"] or 0, r["down"] or 0,
+                                                 _t.strftime("%m-%d %H:%M:%S", _t.localtime(r["last_ts"] or 0))))
+            return 0
         if ns.action == "list":
             rows = p.store.requests(ns.kind, ns.limit)
             if as_json:
@@ -1740,6 +2818,35 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             rows = Auth.audit_tail(ns.n)
             _out(rows, as_json, "\n".join("%s %-12s %-9s %-5s %-12s %s%s" % (r.get("time"), r.get("user"), r.get("role"), "ok" if r.get("ok") else "DENY",
                                                                             r.get("level"), r.get("op"), (" · " + r["error"]) if r.get("error") else "") for r in rows) or "(no audit rows)")
+            return 0
+        if ns.action == "docacl":
+            # 문서 단위 접근 제어 (docacl.json) — 규칙을 넣기 전에 "누가 무엇을 못 보게 되는가" 를 먼저 본다.
+            from . import docacl as _dacl
+            sub = ns.args[0] if ns.args else "show"
+            if sub == "init":
+                if os.path.exists(_dacl.acl_path()):
+                    print("already exists: %s" % _dacl.acl_path())
+                    return 1
+                _dacl.save(dict(_dacl.DEFAULTS))
+                print("created %s — setup/docacl.example.json 의 rules 를 참고해 경로 규칙을 넣으세요 (docs/SECURITY.md)" % _dacl.acl_path())
+                return 0
+            if sub == "check":
+                r = _dacl.check(p.store, ns.role)
+                _out(r, as_json, "역할 %s: 문서 %d건 중 %d건 가려짐 (보임 %d) · 규칙 적용 %s\n%s" % (
+                    r["role"], r["docs"], r["blocked"], r["visible"], "on" if r["enabled"] else "off (규칙 없음/토글 꺼짐)",
+                    "\n".join("  %-50s 필요 %-8s (%s)" % (x["doc_id"][:50], x["min_role"], x["why"]) for x in r["examples"][:30])
+                    or "  (가려지는 문서 없음)"))
+                return 0
+            if sub != "show":
+                print("usage: security docacl [show | check --role <역할> | init]")
+                return 1
+            d = _dacl.describe()
+            _out(d, as_json, "file: %s%s\nenabled: %s · default_min_role: %s · 토글 doc_acl: %s\n역할 (낮→높): %s\n규칙 %d개:\n%s\n%s" % (
+                d["path"], "" if d["exists"] else "  (파일 없음 — 아무도 막지 않음. 'security docacl init')",
+                d["enabled"], d["default_min_role"], "on" if getattr(p.s.toggles, "doc_acl", True) else "off",
+                " < ".join(d["roles"]), len(d["rules"]),
+                "\n".join("  %-40s → %-8s %s" % (r.get("prefix"), r.get("min_role"), r.get("note") or "") for r in d["rules"]) or "  (없음)",
+                d["note"]))
             return 0
         if ns.action == "perms":
             a = Auth(p.s)
@@ -1903,6 +3010,17 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             out = ns.out or os.path.join(_R, "docs", "OPTIMIZATION_GUIDE.md")
             _aio.write_text(out, _opt.guide_markdown(p.s))
             _out({"written": out}, as_json, "written: %s" % out)
+            return 0
+        if getattr(ns, "action", "show") == "limits":
+            from .architecture import stage_limits, render_limits
+            from . import reqmgr as _rqm
+            from .architecture import FLOWS as _FLOWS
+            lim = stage_limits(p.s, _rqm.load_config())
+            if ns.flow:
+                keep = {st["key"] for st in (_FLOWS.get(ns.flow) or {"stages": []})["stages"]}
+                lim["flows"] = {k: v for k, v in lim["flows"].items() if k == ns.flow}
+                lim["stages"] = {k: v for k, v in lim["stages"].items() if k in keep}
+            _out(lim, as_json, render_limits(lim))
             return 0
         reg = registry()
         if ns.flow:

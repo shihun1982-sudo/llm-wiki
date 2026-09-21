@@ -39,9 +39,13 @@ class WebApiTest(unittest.TestCase):
         _gen_corpus(cls.corpus)
         for k in ("LOGS_DIR", "SCHEMAS_DIR", "QUERY_RULES", "MCP_SOURCES", "PROMPTS_DIR", "PINS", "PRESETS", "AGENTS", "RULES"):
             os.environ["LLMWIKI_%s_PATH" % k] = os.path.join(cls.tmp, k.lower() + (".json" if k == "RULES" else ""))
-        # 설정 저장 API 가 프로젝트의 config.json / tuning.json 을 건드리지 않도록 격리
+        # 설정 저장 API 가 프로젝트의 config.json / tuning.json 을 건드리지 않도록 격리.
+        # **환경변수로** 한다 — 모듈 상수(`config.CONFIG_PATH`)를 바꾸는 것은 지원되는 격리 수단이 아니라서,
+        # save/load 가 `path_for("config")` 를 쓰도록 바뀐 2026-09-19 에 격리가 조용히 풀렸다.
         from llmwiki import config as _cfg
         cls._cfg_path, cls._tun_path = _cfg.CONFIG_PATH, tn.TUNING_PATH
+        os.environ["LLMWIKI_CONFIG_PATH"] = os.path.join(cls.tmp, "config.json")
+        os.environ["LLMWIKI_TUNING_PATH"] = os.path.join(cls.tmp, "tuning.json")
         _cfg.CONFIG_PATH = os.path.join(cls.tmp, "config.json")
         tn.TUNING_PATH = os.path.join(cls.tmp, "tuning.json")
         sc._CACHE["mtime"] = None
@@ -62,7 +66,8 @@ class WebApiTest(unittest.TestCase):
         cls.p.store.close()
         from llmwiki import config as _cfg
         _cfg.CONFIG_PATH, tn.TUNING_PATH = cls._cfg_path, cls._tun_path
-        for k in ("LOGS_DIR", "SCHEMAS_DIR", "QUERY_RULES", "MCP_SOURCES", "PROMPTS_DIR", "PINS", "PRESETS", "AGENTS", "RULES"):
+        for k in ("LOGS_DIR", "SCHEMAS_DIR", "QUERY_RULES", "MCP_SOURCES", "PROMPTS_DIR", "PINS", "PRESETS", "AGENTS",
+                  "RULES", "CONFIG", "TUNING"):
             os.environ.pop("LLMWIKI_%s_PATH" % k, None)
         sc._CACHE["mtime"] = None
         qr._CACHE["mtime"] = None
@@ -120,12 +125,35 @@ class WebApiTest(unittest.TestCase):
         rid = r["request_id"]
         f = self._get("/api/forensic?request_id=%d&rerun=1" % rid)
         self.assertIn("findings", f)
-        self.assertTrue(self._get("/api/forensics")[0]["request_id"] == rid or True)
+        # 포렌식 목록: **기본은 문제 건만** (2026-09-20). 방금 질의는 근거가 충분했으므로 기본 보기에는
+        # 나오지 않고 `only=all` 에서만 보인다. 예전 줄은 `… or True` 라 사실상 아무것도 검사하지 않았다.
+        all_fx = self._get("/api/forensics?only=all&limit=50")
+        self.assertTrue([x for x in all_fx if x["request_id"] == rid], "방금 진단한 기록이 목록에 없다")
+        self.assertFalse([x for x in self._get("/api/forensics") if x.get("verdict") == "sufficient"],
+                         "기본 보기(문제 건만)에 정상 건이 섞였다 — 화면이 정상 건으로 덮인다")
         logs = self._get("/api/logs?request=%d" % rid)
         self.assertTrue(any((x.get("data") or {}).get("stage") == "fts_search" for x in logs["rows"]))
         self.assertIn("files", self._get("/api/logs/files"))
+        # 채널 검색 (2026-09-19): 여러 채널을 조합할 수 있게 되면서 응답이
+        # {channels, mode, per_channel, rows[…채널별 순위…], graph?, counts} 로 바뀌었다.
+        # 그래프 채널만의 정보(시드·엔티티·관계·provenance)는 result.graph 아래에 있다.
         s2 = self._post("/api/search", {"q": "AGC 수렴", "channel": "graph", "k": 5, "overrides": {}})
-        self.assertIn("provenance", s2["result"])
+        self.assertEqual(s2["result"]["channels"], ["graph"])
+        self.assertIn("provenance", s2["result"]["graph"])
+        self.assertTrue(s2["result"]["rows"], "그래프 채널 결과가 비어 있다")
+        self.assertIn("graph", s2["result"]["rows"][0]["channels"], "행에 어느 채널이 찾았는지가 없다")
+        # 조합: 두 채널을 AND 로 — 교집합만 나와야 한다
+        s3 = self._post("/api/search", {"q": "AGC 수렴", "channels": ["fts", "graph"], "mode": "and", "k": 5, "overrides": {}})
+        self.assertEqual(s3["result"]["mode"], "and")
+        self.assertTrue(all(r["n_channels"] == 2 for r in s3["result"]["rows"]), s3["result"]["rows"])
+        # 복합 조건: (fts) 그리고 (graph 필수)
+        s4 = self._post("/api/search", {"q": "AGC 수렴", "channels": ["fts"], "require": ["graph"], "k": 5, "overrides": {}})
+        self.assertEqual(s4["result"]["mode"], "composite")
+        self.assertTrue(all("graph" in r["channels"] for r in s4["result"]["rows"]), s4["result"]["rows"])
+        # 질의 해부 (LLM 없음)
+        d = self._post("/api/debug/query", {"q": "지난주 AGC 수렴", "overrides": {}})
+        self.assertIn("tokens", d)
+        self.assertIn("weights", d["router"])
         t = self._get("/api/time?q=" + urllib.request.quote("지난주 CL"))
         self.assertEqual(t["expr"], "지난주")
 

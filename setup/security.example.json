@@ -72,5 +72,10 @@
   },
   "warn": {
     "confirm": true
+  },
+  "overrides": {
+    "_comment": "요청 단위 overrides(질의·평가·빌드 본문의 overrides) 허용 조정. 기본 허용 = 토글 전부 + top_k·컨텍스트·모델/effort·역할 정책·answer_mode. URL·헤더·경로·서버 운영 키는 admin 만. allow_extra = 누구나 쓰게 추가할 키, deny = admin 도 금지할 키",
+    "allow_extra": [],
+    "deny": []
   }
 }

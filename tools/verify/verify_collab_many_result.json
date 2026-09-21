@@ -1,15 +1,15 @@
 {
- "ts": "2026-09-17 05:42:36",
- "people": 30,
+ "ts": "2026-09-20 12:05:48",
+ "people": 10,
  "seconds": 12.0,
- "screenshot": "C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_30.png",
+ "screenshot": "C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_10.png",
  "total": 20,
  "failed": [],
  "results": [
   {
-   "check": "30명이 모두 접속자 목록에 보인다",
+   "check": "10명이 모두 접속자 목록에 보인다",
    "ok": true,
-   "detail": "people=30 (key:dev01, key:dev02, key:dev03, key:dev04…)"
+   "detail": "people=10 (key:dev01, key:dev02, key:dev03, key:dev04…)"
   },
   {
    "check": "아이콘이 정해져 있다 (접속 IP 의 SHA-1 — 랜덤 아님)",
@@ -37,19 +37,19 @@
    "detail": ""
   },
   {
-   "check": "내 화면에 30명 + 나 = 31개 아이콘이 보인다",
+   "check": "내 화면에 10명 + 나 = 11개 아이콘이 보인다",
    "ok": true,
-   "detail": "보이는 아이콘 31개 (guest, key:dev01, key:dev02)"
+   "detail": "보이는 아이콘 11개 (guest, key:dev01, key:dev02)"
   },
   {
    "check": "남이 움직이면 내 화면의 아이콘도 따라 움직인다",
    "ok": true,
-   "detail": "30/31 명이 이동한 것으로 보임 (1초 폴링)"
+   "detail": "10/11 명이 이동한 것으로 보임 (1초 폴링)"
   },
   {
    "check": "말풍선이 아이콘 위에 뜬다",
    "ok": true,
-   "detail": "28명에게 말풍선"
+   "detail": "9명에게 말풍선"
   },
   {
    "check": "'챗' 을 끄면 아이콘과 입력칸이 함께 사라진다",
@@ -59,27 +59,27 @@
   {
    "check": "다시 보이기",
    "ok": true,
-   "detail": "다시 보이는 아이콘 31개"
+   "detail": "다시 보이는 아이콘 11개"
   },
   {
-   "check": "30명이 동시에 움직이는 동안 오류 없음",
+   "check": "10명이 동시에 움직이는 동안 오류 없음",
    "ok": true,
    "detail": "[]"
   },
   {
-   "check": "서버가 30명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)",
+   "check": "서버가 10명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)",
    "ok": true,
-   "detail": "people=31 · 경과 13.3s"
+   "detail": "people=11 · 경과 13.3s"
   },
   {
    "check": "협업 부하 중에도 RAG 질의가 정상",
    "ok": true,
-   "detail": "0.50s"
+   "detail": "0.10s"
   },
   {
    "check": "협업 부하 중에도 MCP tools/list 정상",
    "ok": true,
-   "detail": "도구 14개 · 0.52s"
+   "detail": "도구 20개 · 0.02s"
   },
   {
    "check": "협업 부하 중에도 MCP wiki_query 정상",
@@ -99,12 +99,12 @@
   {
    "check": "변화가 없으면 접속자 목록을 생략한다 (폴링 대역 절감)",
    "ok": true,
-   "detail": "24.7KB → 0.2KB (99% 절감)"
+   "detail": "8.6KB → 0.2KB (97% 절감)"
   },
   {
    "check": "누가 움직이면 목록을 다시 보낸다",
    "ok": true,
-   "detail": "people=31 rev 1927→1929"
+   "detail": "people=11 rev 660→662"
   }
  ]
 }

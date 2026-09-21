@@ -47,14 +47,19 @@ DEFAULTS: Dict[str, Any] = {
         "queue_max": 64,                  # 슬롯을 기다리는 요청 상한 (초과 → 503 busy)
         "queue_timeout_s": 120,           # 슬롯을 기다리는 최대 시간 (초과 → 503)
         "reads_during_build": "incremental",   # never | incremental | always — 빌드 중 질의 허용 범위 (incremental: 증분 빌드 동안만)
-        "write_wait_timeout_s": 600,      # 쓰기 작업이 진행 중인 읽기가 끝나길 기다리는 최대 시간
-        "read_wait_timeout_s": 900,       # 읽기가 배타 작업(전체 빌드 등)이 끝나길 기다리는 최대 시간
+        # 빌드(쓰기)가 진행 중인 읽기가 끝나길 기다리는 최대 시간. 빌드를 취소시키는 값이므로 48시간으로 둔다.
+        "write_wait_timeout_s": 172800,
+        # 읽기가 배타 작업(전체 빌드 등)이 끝나길 기다리는 최대 시간. 이 값은 **빌드가 아니라 질의**의 수명이다.
+        # 크게 잡으면 전체 재빌드 동안 질의 스레드가 계속 쌓여 서버가 마비되므로 짧게 유지하고(초과 → 503 재시도 안내),
+        # 빌드 중에도 질의를 받으려면 reads_during_build 로 조절한다.
+        "read_wait_timeout_s": 900,
     },
     "timeouts": {                          # 협조적 시간 제한: 넘으면 취소 요청 (다음 단계·배치·LLM 호출 전에 멈춤). 0 = 없음
         # cli_s: Web 콘솔이 부르는 CLI 는 읽기 슬롯을 잡은 채 실행된다. 0(무제한)이면 느린 한 명령이
         # 슬롯을 계속 차지해 다른 사용자가 전부 대기열에 쌓인다(2026-09-15 멍키 테스트로 확인).
         # 빌드처럼 오래 걸리는 CLI 는 weight 가 soft/exclusive 이므로 job_s 를 따른다.
-        "query_s": 900, "search_s": 120, "job_s": 0, "mcp_s": 900, "cli_s": 600,
+        # job_s: 빌드·평가·스냅샷 같은 배치 작업의 상한. 48시간(172800). 0 으로 두면 제한이 없다.
+        "query_s": 900, "search_s": 120, "job_s": 172800, "mcp_s": 900, "cli_s": 600,
     },
     "rate_limit": {
         "enabled": True,
@@ -85,6 +90,11 @@ DEFAULTS: Dict[str, Any] = {
         "live_dir": "data/live",          # 다른 프로세스(CLI/MCP stdio) 작업 파일 위치
         "live_stale_s": 90,               # heartbeat 가 이보다 오래되면 죽은 것으로 간주
     },
+    "debug": {
+        # 500 응답에 스택트레이스를 포함할지. 기본 false — 트레이스는 error.log 에 참조 id 와 함께 남고
+        # 클라이언트는 {"code":"internal","ref":…} 만 받는다 (admin 은 항상 트레이스를 본다). 개발 PC 에서만 true.
+        "expose_trace": False,
+    },
     # Web UI 협업(휘발성 채팅 + 게시판). **부수 기능** — 토글 collab 으로 끄면 화면에서 사라지고
     # 질의·빌드·MCP 에는 영향이 없다. 상세: docs/COLLAB.md · llmwiki/collab.py
     "collab": {
@@ -99,6 +109,20 @@ DEFAULTS: Dict[str, Any] = {
         "bubble_font_step_min": 30,       # 몇 분마다 키울지 (기본 30분에 1px)
         "bubble_font_max_px": 28,         # 상한
         "idle_hide_min": 240,             # 이만큼 조용하면 캐릭터를 숨긴다(분). 0 = 계속 표시
+    },
+    # MCP 서버(llmwiki/mcp.py · mcp_client.py) 운영 수치 — 2026-09-18 요청 3 (다른 MCP 서버와 공존·확장). 상세: docs/MCP.md §9.
+    # 읽는 곳: mcp.mcp_config() (5초 캐시). 환경변수 LLMWIKI_SERVER_MCP_<KEY> 로도 덮어쓸 수 있다.
+    "mcp": {
+        "fed_cache_ttl_s": 300,           # 페더레이션 소스의 tools/list 캐시(초). 연결에 실패한 소스도 이 시간 동안은 다시 시도하지 않는다(백오프)
+        "fed_list_timeout_s": 5,          # tools/list 가 원격 소스의 tools/list 를 기다리는 최대 시간(초). 소스가 느려도 우리 도구 목록은 이 안에 나온다
+        "source_timeout_s_default": 10,   # mcp_sources.json 소스에 timeout_s 가 없을 때의 호출 타임아웃(초; retrieve/expose 중계/test)
+        "ingest_timeout_s_default": 60,   # ingest(문서 내려받기)는 오래 걸리므로 timeout_s 가 없을 때 이 값을 쓴다
+        "bridge_timeout_s": 120,          # `mcp --connect` 브리지가 원격 /mcp 응답을 기다리는 최대 시간(초) — 예전에는 llm_timeout 을 빌려 썼다
+        "max_k": 50,                      # 도구 인자 k(근거/결과 수)의 상한 — 붙는 LLM 이 k=10000 을 보내도 이 값으로 잘린다
+        "max_doc_chars": 20000,           # wiki_doc max_chars 의 상한(문자)
+        "plugin_rescan_s": 5,             # 플러그인 폴더(mcp_plugins_dir)의 mtime 을 다시 검사하는 최소 간격(초). 0 = 요청마다
+        # initialize 응답의 instructions — 붙는 LLM 이 처음 읽는 사용 안내. 사내 용어에 맞게 바꿔도 된다
+        "instructions": "사내 LLM Wiki. wiki_query 로 질문(인용 [C#] 포함 답변) → 결과가 부족하면 wiki_forensic(request_id, expected_docs/terms) 로 원인 분석, wiki_feedback 으로 피드백, wiki_propose 로 제안.",
     },
 }
 
@@ -569,12 +593,18 @@ class RequestManager:
                 mode = "exclusive"
                 if weight == "soft" and pol in ("incremental", "always"):
                     mode = "soft"
-                elif weight == "write" and pol == "always" and build_mode:
+                elif pol == "always" and build_mode and weight in ("exclusive", "write"):
+                    # `always` = "빌드 중에도 질의를 받는다". 예전 조건은 `weight == "write"` 만 봤는데,
+                    # 전체/채널 리빌드는 weight 가 **"exclusive"** 로 들어오므로 이 분기가 한 번도 타지 않았다.
+                    # 즉 문서가 권하던 `reads_during_build=always` 가 **정확히 그 상황(전체 리빌드)에서 무효**였다.
+                    # 30명 부하 실측에서 always 를 켜도 질의가 빌드 시간만큼(5.5초) 그대로 기다렸다 (2026-09-19).
+                    # `build_mode` 는 빌드에서만 설정되므로(설정 저장·스냅샷 복원은 빈 문자열) 완화 범위는 빌드로 한정된다.
                     mode = "soft"
 
                 def on_wait(what: str) -> None:
                     _pg.note("다른 작업이 끝나기를 기다리는 중… (%s)" % what)
-                ok = self.rw.acquire_write(mode, timeout=float(conc.get("write_wait_timeout_s") or 600), on_wait=on_wait, label=label or kind)
+                ok = self.rw.acquire_write(mode, timeout=float(conc.get("write_wait_timeout_s") or DEFAULTS["concurrency"]["write_wait_timeout_s"]),
+                                           on_wait=on_wait, label=label or kind)
                 if not ok:
                     raise Rejected(503, "다른 작업(빌드/질의)이 끝나지 않아 %s 를 시작하지 못했습니다" % (label or kind), retry_after=30, code="write_wait_timeout")
                 held_write = True

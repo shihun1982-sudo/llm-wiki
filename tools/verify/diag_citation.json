@@ -1,0 +1,157 @@
+{
+ "answer": "## 핵심\nPDCCH 디코딩 실패의 원인은 HW rev B1 에서 타이밍 마진이 축소된(`t_setup 12ns → 8ns`) 때문입니다 [C3]. \n\n## 상세\n증상: PDCCH 디코더 블록에서 재현되며 HW rev B1 에서 발생 빈도가 높다. 로그에 `PDCCH_CFG` 레지스터 값 이상이 기록된다 [C14].\n\n원인: `t_setup` 가 12ns 에서 8ns 로 줄어들면서 PDCCH 디코더 초기화 시퀀스 2단계에서 문제가 시작되었습니다. 유사 이슈 ISSUE-2008 와 원인이 겹친다 [C6].\n\n수정(CL): PDCCH_CFG 레지스터 접근 순서를 바로잡고 PDCCH 디코더 를 동기화 한다. 자세한 것은 CL 문서에 나와있다.\n\n확인 방법: PDCCH 디코더 파형을 캡처해 `t_setup` 을 측정했고, `PDCCH_CFG` 를 읽어 pdcch_dec 상태를 확인했다.\n\n## 근거\n| 근거 | 문서 | 확인된 내용 |\n|---|---|---|\n| [C3] | ISSUE-2005 | 타이밍 마진 축소 |\n| [C6] | ISSUE-2005 | 유사 이슈 ISSUE-2008 와 원인이 겹친다. |\n\n## 미확인 · 추가 조사 필요\n없음\n\n## 상충\n없음",
+ "raw": "## 핵심\nPDCCH 디코딩 실패의 원인은 HW rev B1 에서 타이밍 마진이 축소된(`t_setup 12ns → 8ns`) 때문입니다 [C3]. 수정 CL 은 미정입니다. \n\n## 상세\n증상: PDCCH 디코더 블록에서 재현되며 HW rev B1 에서 발생 빈도가 높다. 로그에 `PDCCH_CFG` 레지스터 값 이상이 기록된다 [C14].\n\n원인: `t_setup` 가 12ns 에서 8ns 로 줄어들면서 PDCCH 디코더 초기화 시퀀스 2단계에서 문제가 시작되었습니다. 유사 이슈 ISSUE-2008 와 원인이 겹친다 [C6].\n\n근거가 된 값/코드: `t_setup` 가 12ns 에서 8ns 로 줄어들면서 디코더 초기화 시퀀스 2단계에서 문제가 시작되었습니다.\n\n수정(CL): CL-55301 의 FIFO 임계값 설정 오류 수정을 따를 것 입니다. 자세한 것은 CL 문서에 나와있다 [C8].\n\n확인 방법: PDCCH 디코더 파형을 캡처해 `t_setup` 을 측정했고, `PDCCH_CFG` 를 읽어 pdcch_dec 상태를 확인했다.\n\n## 근거\n| 근거 | 문서 | 확인된 내용 |\n|---|---|---|\n| [C3] | ISSUE-2005 | 타이밍 마진 축소 |\n| [C6] | ISSUE-2005 | 유사 이슈 ISSUE-2008 와 원인이 겹친다. |\n\n## 미확인 · 추가 조사 필요\nPDCCH 디코더 초기화 시퀀스 2단계에서 문제가 시작된 것을 확인했습니다. CL-55301 의 FIFO 임계값 설정 오류 수정을 따를 것 인지는 추후 확인이 필요합니다.\n\n## 상충\n없음",
+ "claims": {
+  "n_factual": 7,
+  "supported": 3,
+  "partial": 4,
+  "unsupported": 0,
+  "background": 0,
+  "groundedness": 0.714,
+  "citation_precision": 1.0,
+  "refined": true,
+  "before_groundedness": 0.409
+ },
+ "refs": [
+  {
+   "n": 1,
+   "chunk_id": "sample_corpus_modem/cls/CL-55305.md#2",
+   "doc_id": "sample_corpus_modem/cls/CL-55305.md",
+   "ext_id": "CL-55305",
+   "heading": "pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소 > 영향 범위",
+   "kind": "hit",
+   "chars": 59,
+   "preview": "## 영향 범위\npdcch_dec 모듈, HW rev B1. 코딩 규칙 RULE-ISR-001 준수 확인."
+  },
+  {
+   "n": 2,
+   "chunk_id": "sample_corpus_modem/cls/CL-55305.md#0",
+   "doc_id": "sample_corpus_modem/cls/CL-55305.md",
+   "ext_id": "CL-55305",
+   "heading": "pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소 > CL-55305 pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소",
+   "kind": "hit",
+   "chars": 47,
+   "preview": "# CL-55305 pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소"
+  },
+  {
+   "n": 3,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#2",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > 원인",
+   "kind": "hit",
+   "chars": 84,
+   "preview": "## 원인\nHW rev B1 에서 타이밍 마진 축소 (t_setup 12ns → 8ns). PDCCH 디코더 초기화 시퀀스 2단계에서 문제가 시작된다."
+  },
+  {
+   "n": 4,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#4",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > 수정",
+   "kind": "doc_expand",
+   "chars": 22,
+   "preview": "## 수정\n수정 CL 미정 (분석 중)."
+  },
+  {
+   "n": 5,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#5",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > 검증",
+   "kind": "hit",
+   "chars": 44,
+   "preview": "## 검증\nVP(virtual platform) 에서 100회 반복 시험 통과."
+  },
+  {
+   "n": 6,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#3",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > 분석",
+   "kind": "hit",
+   "chars": 128,
+   "preview": "## 분석\nPDCCH 디코더 파형을 캡처해 t_setup 을 측정했고, PDCCH_CFG 를 읽어 pdcch_dec 상태를 확인했다. 유사 이슈 ISSUE-2008 와 원인이 겹친다. 재현 TC 는 TC-PDCCH-DEC-005."
+  },
+  {
+   "n": 7,
+   "chunk_id": "sample_corpus_modem/cls/CL-55305.md#3",
+   "doc_id": "sample_corpus_modem/cls/CL-55305.md",
+   "ext_id": "CL-55305",
+   "heading": "pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소 > 테스트",
+   "kind": "hit",
+   "chars": 41,
+   "preview": "## 테스트\nTC-PDCCH-DEC-005 통과, 회귀 TC 12건 통과."
+  },
+  {
+   "n": 8,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2001.md#4",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2001.md",
+   "ext_id": "ISSUE-2001",
+   "heading": "DMA underrun 발생 후 PHY 재시작 실패 > 수정",
+   "kind": "hit",
+   "chars": 53,
+   "preview": "## 수정\nCL-55301 에서 FIFO 임계값 설정 오류 수정 반영. 상세는 CL 문서 참조."
+  },
+  {
+   "n": 9,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2001.md#1",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2001.md",
+   "ext_id": "ISSUE-2001",
+   "heading": "DMA underrun 발생 후 PHY 재시작 실패 > 현상",
+   "kind": "doc_expand",
+   "chars": 111,
+   "preview": "## 현상\nDMA underrun 발생 후 PHY 재시작 실패. RX DMA 블록에서 재현되며 HW rev A2 에서 발생 빈도가 높다. 로그에 `RX_DMA_CTRL` 레지스터 값 이상이 기록된다."
+  },
+  {
+   "n": 10,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2001.md#2",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2001.md",
+   "ext_id": "ISSUE-2001",
+   "heading": "DMA underrun 발생 후 PHY 재시작 실패 > 원인",
+   "kind": "doc_expand",
+   "chars": 69,
+   "preview": "## 원인\nFIFO 임계값 설정 오류 (0x20 → 0x40 필요). RX DMA 초기화 시퀀스 2단계에서 문제가 시작된다."
+  },
+  {
+   "n": 11,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2001.md#3",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2001.md",
+   "ext_id": "ISSUE-2001",
+   "heading": "DMA underrun 발생 후 PHY 재시작 실패 > 분석",
+   "kind": "doc_expand",
+   "chars": 121,
+   "preview": "## 분석\nRX DMA 파형을 캡처해 t_setup 을 측정했고, RX_DMA_CTRL 를 읽어 rx_dma 상태를 확인했다. 유사 이슈 ISSUE-2004 와 원인이 겹친다. 재현 TC 는 TC-RX-DMA-001."
+  },
+  {
+   "n": 12,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#0",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > ISSUE-2005 PDCCH 디코딩 실패율 증가",
+   "kind": "hit",
+   "chars": 29,
+   "preview": "# ISSUE-2005 PDCCH 디코딩 실패율 증가"
+  },
+  {
+   "n": 13,
+   "chunk_id": "sample_corpus_modem/cls/CL-55305.md#1",
+   "doc_id": "sample_corpus_modem/cls/CL-55305.md",
+   "ext_id": "CL-55305",
+   "heading": "pdcch_dec 수정: HW rev B1 에서 타이밍 마진 축소 > 변경 내용",
+   "kind": "hit",
+   "chars": 96,
+   "preview": "## 변경 내용\nISSUE-2005 문제(PDCCH 디코딩 실패율 증가)를 수정한다. `PDCCH_CFG` 레지스터 접근 순서를 바로잡고 PDCCH 디코더 를 동기화 한다."
+  },
+  {
+   "n": 14,
+   "chunk_id": "sample_corpus_modem/issues/ISSUE-2005.md#1",
+   "doc_id": "sample_corpus_modem/issues/ISSUE-2005.md",
+   "ext_id": "ISSUE-2005",
+   "heading": "PDCCH 디코딩 실패율 증가 > 현상",
+   "kind": "hit",
+   "chars": 100,
+   "preview": "## 현상\nPDCCH 디코딩 실패율 증가. PDCCH 디코더 블록에서 재현되며 HW rev B1 에서 발생 빈도가 높다. 로그에 `PDCCH_CFG` 레지스터 값 이상이 기록된다."
+  }
+ ]
+}

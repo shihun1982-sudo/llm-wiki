@@ -2,7 +2,7 @@
 
 > 대상: 이 위키를 함께 쓰는 팀. 화면을 보다가 바로 말을 걸고, 남길 만한 것만 게시판에 올리는 용도.
 > **부수 기능이다.** 토글 하나로 끌 수 있고, 꺼도 질의·빌드·MCP 는 그대로 동작한다.
-> 설계 배경: [IMPLEMENTATION_PLAN_0916.md](IMPLEMENTATION_PLAN_0916.md) §7 · 구현 `llmwiki/collab.py`
+> 설계 배경: [IMPLEMENTATION_PLAN_0916.md](history/2026-09-16/IMPLEMENTATION_PLAN_0916.md) §7 · 구현 `llmwiki/collab.py`
 
 ## 0. 한 장 요약
 
@@ -54,7 +54,7 @@
 
 | 무엇 | 어떻게 |
 |---|---|
-| **읽기 슬롯을 잡지 않는다** | `reqmgr.weight_for_level` 이 `collab…` 작업에 `none` 을 준다. 예전에 `read` 로 두었더니 폴링만으로 슬롯이 차서 질의가 밀렸다 — [VERIFICATION_0916_2.md](VERIFICATION_0916_2.md) §2.7.1 |
+| **읽기 슬롯을 잡지 않는다** | `reqmgr.weight_for_level` 이 `collab…` 작업에 `none` 을 준다. 예전에 `read` 로 두었더니 폴링만으로 슬롯이 차서 질의가 밀렸다 — [VERIFICATION_0916_2.md](history/2026-09-16/VERIFICATION_0916_2.md) §2.7.1 |
 | **바뀐 게 없으면 목록을 안 보낸다** | 화면이 `rev`(접속자 목록 개정 번호)를 같이 보내고, 서버는 같으면 `people_unchanged: true` 만 돌려준다 |
 | **새 메시지만 보낸다** | `since`(마지막 메시지 id) 이후만 |
 | **말풍선 문구를 미리 저장한다** | 조회 때마다 메시지를 거꾸로 훑지 않는다 (30명×500건 = 매 폴링 15,000회 비교 → O(1)) |

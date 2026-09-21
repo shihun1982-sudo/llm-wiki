@@ -54,8 +54,43 @@ aside h3{margin:0 0 8px;font-size:13px}aside small{color:var(--muted);font-weigh
 .toggle-group label{display:block;font-size:13px;padding:2px 0;cursor:pointer}
 .toggle-group label small{color:var(--muted);margin-left:4px}
 .toggle-group select,.toggle-group input[type=number]{margin-left:6px}
-.toggle-group.collapsed label{display:none}
 .toggle-group.perf{border-color:var(--perf-border);background:var(--perf-bg)}
+/* ---- 사이드바 블록 접기/펴기 (2026-09-18, 요청 13) ----
+   모든 블록(프리셋 · 토글 묶음 · 상세도 · 내 설정 · CLI)이 같은 구조: .sb-block > .sb-head + .sb-body.
+   제목을 누르면 접히고, 상태는 localStorage(llmwiki.sidebar) 와 프로파일(sidebar_collapsed) 에 남는다.
+   900px 이하(사이드바가 본문 위로 올라오는 폭)에서는 저장된 상태가 없으면 기본 접힘 — 화면을 사이드바가 다 차지하지 않게. */
+.sb-tools{display:flex;align-items:center;gap:4px;margin:0 0 8px;flex-wrap:wrap}
+.sb-tools .muted{margin-left:auto}
+.sb-block{margin-bottom:8px;min-width:0}
+.sb-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;min-width:0}
+.sb-head::before{content:"▾";font-size:10px;color:var(--muted);flex:none;width:10px}
+.sb-block.collapsed>.sb-head::before{content:"▸"}
+.sb-block.collapsed>.sb-body{display:none}
+aside h3.sb-head{margin:0 0 8px}
+.sb-block.collapsed>h3.sb-head{margin-bottom:0}
+.toggle-group.sb-block.collapsed>.tg-title{margin-bottom:0}
+.cli-hint.sb-block>.tg-title{margin-bottom:4px}
+/* ---- 좁은 사이드바에서 글자가 세로로 쪼개지지 않게 (2026-09-19) ----
+   제목은 **한 줄**로 두고, 넘치면 … 으로 줄인 뒤 마우스를 올렸을 때 전체가 보이게 한다(아래 .sb-note 오버레이·title 툴팁).
+   제목 옆 부연(<small>)은 남는 자리만 쓰고 먼저 줄어든다 — 제목이 밀려 "프리/셋" 이 되던 것을 막는다. */
+.sb-head{flex-wrap:nowrap;white-space:nowrap;overflow:hidden}
+.sb-head>small{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:400}
+.tg-title.sb-head{text-overflow:ellipsis}
+/* 사이드바 설명 문단: 기본은 **한 줄**(…), 마우스를 올리면 그 자리에 떠서 전문이 보인다.
+   사이드바가 좁아 서너 줄씩 접히던 안내가 화면을 차지하던 것을 없앤다. */
+.sb-note{position:relative;min-height:1.5em;font-size:11px;color:var(--muted);cursor:help}
+.sb-note>.t{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-note>.t br{display:none}
+.sb-note:hover>.t,.sb-note:focus-within>.t{position:absolute;left:0;top:-4px;z-index:30;
+  width:max(100%,232px);white-space:normal;line-height:1.5;
+  background:var(--card);border:1px solid var(--s1);border-radius:6px;padding:6px 8px;
+  box-shadow:0 6px 18px rgba(0,0,0,.22)}
+.sb-note:hover>.t br,.sb-note:focus-within>.t br{display:inline}
+/* 이름 + 컨트롤 한 쌍: 이름을 **윗줄**에 한 줄로 두고 컨트롤은 아래에서 칸을 꽉 채운다.
+   예전에는 같은 flex 줄에 있어서 폭이 넓은 <select> 가 이름을 0 폭으로 밀어냈다. */
+.toggle-group label.ov-row{display:flex;flex-direction:column;align-items:stretch;gap:2px;margin-bottom:4px}
+.toggle-group label.ov-row>.n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--muted);letter-spacing:.02em}
+.toggle-group label.ov-row>select,.toggle-group label.ov-row>input{margin-left:0;width:100%;min-width:0;max-width:100%}
 /* presets: labels with info button, toggles set by a preset */
 #preset-box label{display:flex;align-items:center;gap:6px}
 #preset-box label .pdesc{flex:1;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -71,11 +106,12 @@ aside h3{margin:0 0 8px;font-size:13px}aside small{color:var(--muted);font-weigh
 .toggle-group label.by-preset .src{font-size:10px;color:var(--s1);margin-left:4px}
 .by-preset-legend{color:var(--s1)}
 /* ---- 토글의 품질/속도/토큰 배지 ----
-   이름만 보고는 "켜면 뭐가 좋아지고 뭘 내주나" 를 알 수 없다. 누르기 전에 알 수 있게 오른쪽에 붙인다. */
+   이름만 보고는 "켜면 뭐가 좋아지고 뭘 내주나" 를 알 수 없다. 누르기 전에 알 수 있게 이름 **뒤**, 오른쪽 끝에 붙인다. */
 .toggle-group label{display:flex;align-items:center;gap:4px}
-.toggle-group label .tname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 배지는 이름 **앞**. 세 축(품·속·토)이 늘 같은 자리에 오도록 칸 폭을 고정해 이름이 세로로 정렬된다. */
-.toggle-group label .fxs{display:flex;gap:1px;flex:0 0 auto}
+.toggle-group label .tname{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 배지는 이름 뒤에서 오른쪽 정렬(margin-left:auto). 세 축(품·속·토)이 늘 같은 자리에 오도록 칸 폭을 고정해
+   세로로 훑을 때 "이 줄은 속도를 내주는구나" 가 한 열에서 읽힌다. 프리셋 출처(.src)는 이름과 배지 사이. */
+.toggle-group label .fxs{display:flex;gap:1px;flex:0 0 auto;margin-left:auto}
 .fx{font-size:9px;line-height:1.5;padding:0 2px;border-radius:3px;border:1px solid transparent;
   white-space:nowrap;min-width:16px;text-align:center;box-sizing:border-box}
 .fx.up{color:#0a7a4a;background:rgba(27,175,122,.12);border-color:rgba(27,175,122,.35)}
@@ -93,7 +129,6 @@ aside h3{margin:0 0 8px;font-size:13px}aside small{color:var(--muted);font-weigh
 .fx-hidden{display:none !important}
 .tg-stage{font-size:9px;border:1px solid var(--grid);border-radius:3px;padding:0 3px;margin-right:4px;color:var(--muted)}
 .tg-hint{font-size:10px;color:var(--muted);line-height:1.4;margin:0 0 5px}
-.toggle-group.collapsed .tg-hint{display:none}
 .cli-hint code{display:block;font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--page);padding:6px;border-radius:4px;border:1px solid var(--grid)}
 main{flex:1;padding:12px 18px;min-width:0}
 .groups{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
@@ -134,24 +169,39 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--ink2);text-transform:uppercase;l
 .feedback{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}.feedback input{flex:1;min-width:200px}
 /* trace waterfall */
 .trace{background:var(--card);border:1px solid var(--grid);border-radius:6px;padding:8px;font-size:12px}
-.tr-row{display:grid;grid-template-columns:230px 1fr 70px;align-items:center;gap:8px;padding:2px 0;border-bottom:1px solid var(--page)}
+.tr-row{display:grid;grid-template-columns:230px 1fr 92px;align-items:center;gap:8px;padding:2px 0;border-bottom:1px solid var(--page)}
 .tr-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .tr-name.skip{color:var(--muted);text-decoration:line-through}
 .tr-bar{height:10px;position:relative;background:var(--page);border-radius:2px;display:flex;align-items:center;gap:4px}
 .tr-bar i{position:absolute;top:0;bottom:0;border-radius:2px;background:var(--s1)}
 .tr-bar i.err{background:var(--critical)}
-.tr-bar .cnt{position:relative;z-index:1;margin-left:auto;font-size:10px;color:var(--ink2);background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:0 5px;white-space:nowrap}
+/* 배지 묶음은 통째로 오른쪽 끝에 붙인다. 배지마다 margin-left:auto 를 주면 flex 가 남는 공간을
+   배지 **사이에 나눠** 넣어, 배지가 2개인 줄만 첫 배지가 가운데로 밀린다 (막대로 오해된다) */
+.tr-bar .tr-badges{position:relative;z-index:1;margin-left:auto;display:flex;align-items:center;gap:4px;min-width:0}
+.tr-bar .cnt{position:relative;z-index:1;font-size:10px;color:var(--ink2);background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:0 5px;white-space:nowrap}
 .tr-bar .cnt.llm{border-color:var(--s7);color:var(--s7)}
-.tr-ms{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2)}
+.tr-ms{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2);line-height:1.15}
+/* 실측 밑의 '(≤ 제한)' — 이 단계를 끊을 수 있는 시간 제한. 80% 넘으면 주황, 넘겼으면 빨강 */
+.tr-lim{display:block;font-size:10px;color:var(--muted);white-space:nowrap;cursor:help}
+.tr-lim::before{content:'('}
+.tr-lim::after{content:')'}
+.tr-lim.near{color:var(--serious)}
+.tr-lim.over{color:var(--critical)}
+.stage-table .tr-lim{display:inline;font-size:11px}
+.stage-table .tr-lim::before,.stage-table .tr-lim::after{content:''}
 .tr-meta{grid-column:1/4;font-size:11px;background:var(--page);border-radius:4px;padding:6px;white-space:pre-wrap;word-break:break-all;display:none;max-height:260px;overflow:auto}
 .tr-row.open .tr-meta{display:block}
 .tr-row.has-err .tr-name{color:var(--critical)}
 /* 단계 재실행 ⟲ — 평소엔 흐리게 두고 그 줄에 마우스를 올리면 또렷해진다 (줄마다 버튼이 튀면 폭포 그림이 읽히지 않는다) */
 .tr-rerun{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;padding:0 3px;margin-right:2px;opacity:.35;line-height:1}
 .tr-row:hover .tr-rerun{opacity:1}
-.tr-rerun:hover{color:var(--accent);transform:rotate(-45deg)}
+.tr-rerun:hover{color:var(--s1);transform:rotate(-45deg)}
+/* 단계 복사 ⧉ — ⟲ 와 같은 규칙(흐리게 두고 그 줄에 마우스를 올리면 또렷). 이름·ms·meta·debug 를 JSON 으로 복사 (요청 16) */
+.tr-copy{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;padding:0 3px;margin-right:2px;opacity:.35;line-height:1}
+.tr-row:hover .tr-copy{opacity:1}
+.tr-copy:hover{color:var(--s1)}
 .tr-row.replayed .tr-bar i{opacity:.35;background-image:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,.6) 3px,rgba(255,255,255,.6) 6px)}
-.pill.replay{background:var(--page);color:var(--muted);border:1px dashed var(--line)}
+.pill.replay{background:var(--page);color:var(--muted);border:1px dashed var(--grid)}
 .tr-summary{font-size:12px;color:var(--ink2);background:var(--card);border:1px solid var(--grid);border-radius:6px;padding:6px 10px;margin-bottom:6px}
 .tr-meta .mb{margin-bottom:6px}.tr-meta .mb b{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:2px}
 .tr-meta .mb pre{margin:0;white-space:pre-wrap;word-break:break-all;font:11px/1.4 Consolas,"D2Coding",monospace}
@@ -174,6 +224,33 @@ tr.sel{background:var(--sel)}tr[data-id]{cursor:pointer}tr[data-id]:hover{backgr
 .list div{padding:4px 8px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--page)}.list div:hover,.list div.sel{background:var(--hover)}
 .prop{background:var(--card);border:1px solid var(--grid);border-radius:4px;padding:8px;margin-bottom:6px;font-size:12px;display:grid;grid-template-columns:1fr auto;gap:8px}
 .prop code{background:var(--page);padding:1px 4px;border-radius:3px}
+/* 채널 검색 — 찾은 말 강조 · 행 액션 (ask.js) */
+.s-tbl mark{background:var(--warn);color:#1a1a19;padding:0 1px;border-radius:2px}
+.nowrap{white-space:nowrap}
+#s-filters{align-items:center;flex-wrap:wrap;gap:6px}
+#s-types button{font-size:11px}
+#s-recent .pin-chip{cursor:pointer;font-size:11px}
+/* 제안 카드 — payload JSON 원문 대신 사람이 읽는 설명 (evolve.js propCard) */
+.prop-body{min-width:0}
+.prop-act{white-space:nowrap}
+.prop-bad{border-left:3px solid var(--critical)}
+.prop-title{font-size:13px;font-weight:600;margin:4px 0 2px}
+.prop-title.bad{color:var(--critical)}
+.prop-what{color:var(--muted);line-height:1.5;margin-bottom:4px}
+.prop-where{margin:2px 0}
+.prop-diff{background:var(--page);border:1px solid var(--grid);border-radius:3px;padding:6px;margin:2px 0 6px;
+  font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-all;overflow-x:auto}
+.prop-diff .dif-add{color:var(--good)}
+.prop-diff .dif-del{color:var(--critical)}
+.prop-impact{margin:4px 0;line-height:1.5}
+.prop-impact>div{color:var(--muted)}
+.prop-checks{margin:4px 0;display:flex;flex-direction:column;gap:2px}
+.chk-error{color:var(--critical)}
+.chk-warn{color:var(--serious)}
+.chk-info{color:var(--muted)}
+.prop-why summary{cursor:pointer;color:var(--muted);font-size:11px}
+.prop-why>*{margin-top:3px}
+@media(max-width:720px){.prop{grid-template-columns:1fr}.prop-act{white-space:normal}}
 /* 권한 단계 확인 모달 */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:98}
 .modal{background:var(--card);color:var(--ink);border:1px solid var(--grid);border-radius:10px;padding:18px 20px;width:100%;max-width:520px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
@@ -366,6 +443,103 @@ table.roles .reason{color:var(--serious);display:block;max-width:260px;white-spa
 .chip{font-size:9.5px;border-radius:8px;padding:0 5px;border:1px solid var(--grid);background:var(--card);white-space:nowrap}
 .chip.on{border-color:var(--s1);color:var(--s1)}.chip.off{border-color:var(--axis);color:var(--muted);text-decoration:line-through}
 .chip.tune{border-color:var(--s4);color:var(--chip-tune-ink);background:var(--chip-tune-bg)}.chip.ms{border-color:var(--s3);color:var(--chip-ms-ink);background:var(--chip-ms-bg)}.chip.skip{border-color:var(--axis);color:var(--muted)}
+/* 채널 검색 디버그 — 채널 체크박스 + OR/AND/RRF 조합 (docs/WEB_UI.md §0.67) */
+.s-chrow{gap:6px;align-items:center;flex-wrap:wrap}
+.s-chrow .sep{width:1px;height:16px;background:var(--grid);margin:0 4px}
+.s-stat{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
+.chip.ch-fts{border-color:var(--s1);color:var(--s1)}
+.chip.ch-vector{border-color:var(--s2);color:var(--s2)}
+.chip.ch-graph{border-color:var(--s3);color:var(--s3)}
+.s-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.s-tbl th,.s-tbl td{border-bottom:1px solid var(--grid);padding:3px 6px;text-align:left;vertical-align:top}
+.s-tbl tr.multi td{background:var(--sel)}
+/* 다른 화면에서 건너왔을 때 "여기다" 를 잠깐 알려 주는 강조 */
+tr.flash > td{animation:row-flash 1.4s ease-out}
+@keyframes row-flash{0%{background:var(--warn)}100%{background:transparent}}
+/* 보안 탭: 사용자·API 키·스냅샷 표는 좁은 화면에서 **접어서** 폭에 맞춘다.
+   감사 로그만 원래 넓어(시각·사용자·역할·결과·등급·op·상세) 자기 상자 안에서 스크롤한다.
+   예전에는 셋 다 페이지를 밀어 1024px 이하에서 가로 스크롤이 세 개 생겼다. */
+#sec-users table,#sec-keys table,#sec-snapshots table{width:100%;table-layout:fixed}
+#sec-users td,#sec-keys td,#sec-snapshots td,
+#sec-users th,#sec-keys th,#sec-snapshots th{overflow-wrap:anywhere;word-break:break-word}
+#sec-users .mono,#sec-keys .mono{font-size:11px}
+/* 화면 머리의 설명 상자 — "이 화면이 무엇이고 언제 오는가". 기능은 있는데 쓰는 법을 모르겠다는
+   보고가 반복돼서(2026-09-19 메모리 화면) 화면마다 같은 모양으로 둘 수 있게 공용 클래스로 만든다. */
+.panel-intro{background:var(--card);border:1px solid var(--grid);border-left:3px solid var(--s1);
+             border-radius:4px;padding:8px 10px;margin:0 0 8px;font-size:12px;line-height:1.55}
+.panel-intro u{text-decoration:none;border-bottom:1px dotted currentColor}
+/* 부스트 막대: 양(+)은 오른쪽, 음(−)은 왼쪽으로 — 부호를 숫자 말고 방향으로도 보이게 */
+.bst{display:inline-grid;grid-template-columns:1fr 1fr;width:88px;height:8px;vertical-align:middle;
+     background:var(--page);border-radius:2px;overflow:hidden}
+.bst i{display:block;height:100%}
+.bst i.neg{justify-self:end;background:var(--critical)}
+.bst i.pos{grid-column:2;background:var(--s1)}
+/* 규칙 효과 표 — 기여율 막대와 '한 번도 기여 못 한 규칙' 강조 (llmwiki/ruleeffect.py) */
+.eff-bar{display:inline-block;width:48px;height:6px;background:var(--page);border-radius:3px;vertical-align:middle;margin-left:4px;overflow:hidden}
+.eff-bar i{display:block;height:100%;background:var(--s1)}
+tr.bad-row td{background:color-mix(in srgb, var(--critical) 8%, transparent)}
+tr.bad-row td:first-child{border-left:2px solid var(--critical)}
+/* 🧭 Pipeline › 앙상블 — 편집은 이 한 곳에서만 (Settings 는 상태만 보여 준다) */
+.ens-intro{border:1px solid var(--grid);border-radius:6px;padding:8px 12px;background:var(--card);margin-bottom:8px}
+.ens-intro h3{margin:0 0 6px;font-size:14px}
+/* 도식의 **기본** 모양 — 어느 탭에 놓여도 똑같이 보여야 한다.
+   2026-09-20 이전에는 이 규칙들이 `#tab-models` 에만 걸려 있었는데 도식은 Pipeline › 앙상블(#tab-ensemble)
+   로 옮겨져 있었다. 그래서 flex 도 테두리도 먹지 않아 칸들이 한 줄 글자로 뭉개져 보였다
+   ("→앙상블 OFF … 또는앙상블 ON"). 탭에 매지 말고 컴포넌트에 건다. */
+.ens-flow{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:6px 0 8px}
+.ens-flow .step{border:1px solid var(--grid);border-radius:12px;padding:1px 9px;background:var(--card);font-size:11px;white-space:nowrap}
+.ens-flow .step.on{border-color:var(--s1);color:var(--s1);font-weight:600}
+.ens-flow .ar,.ens-eff .ar{color:var(--muted);font-size:11px}
+.ens-flow.big{flex-wrap:wrap;gap:6px;margin:6px 0}
+.ens-flow.big .step{padding:4px 10px}
+.ens-flow .or{color:var(--muted);font-size:11px;padding:0 2px}
+.ens-flow .step.off{border-style:dashed;color:var(--muted)}
+.ens-tbl{width:100%;border-collapse:collapse}
+.ens-tbl tbody{border-bottom:1px solid var(--grid)}
+.ens-tbl td{padding:0}
+.ens-status .ens-lbl{font-size:11px;color:var(--ink2);margin-right:4px}
+.ens-status td{padding:3px 6px;background:var(--page)}
+/* 앙상블 요약 줄의 on/off 스위치 — 접힌 상태에서도 켜고 끌 수 있게 (summary 클릭이 접기로 가지 않도록 stopPropagation) */
+.ens-sw{margin-left:8px;font-size:11px}
+.ens-note{margin:2px 0 6px}
+.ens-flow .step small{display:block;font-size:10px;color:var(--muted);font-weight:400}
+.s-tbl tr.s-row{cursor:pointer}
+.s-tbl tr.s-row:hover td{background:var(--sel);outline:1px solid var(--grid)}
+.s-cond{border-collapse:collapse;font-size:12px;margin:4px 0}
+.s-cond th,.s-cond td{border:1px solid var(--grid);padding:2px 8px;text-align:center}
+.s-cond td:first-child,.s-cond th:first-child{text-align:left;white-space:nowrap}
+.s-cond th{color:var(--ink2);font-weight:600;background:var(--page)}
+.doc-chunk{margin:4px 0;border:1px solid var(--grid);border-radius:4px;padding:4px 8px}
+.doc-chunk summary{cursor:pointer;font-size:12px}
+.s-tbl td:nth-child(2){white-space:nowrap}
+.s-graph{margin-top:8px;border:1px solid var(--grid);border-radius:6px;padding:6px 10px;background:var(--card)}
+.s-graph summary{cursor:pointer;font-size:12px}
+/* 디버그 탭 — 질의 해부 (llmwiki/querydebug.py) */
+.dbg-sec{margin:10px 0;border:1px solid var(--grid);border-radius:6px;padding:8px 10px;background:var(--card)}
+.dbg-sec h4{margin:0 0 6px;font-size:13px}
+.dbg-kv{width:100%;border-collapse:collapse;font-size:12px}
+.dbg-kv th{text-align:left;width:120px;vertical-align:top;color:var(--ink2);font-weight:600;padding:3px 6px 3px 0;white-space:nowrap}
+.dbg-kv td{padding:3px 0;vertical-align:top;overflow-wrap:anywhere}
+.dbg-w{display:flex;flex-direction:column;gap:3px;margin:4px 0}
+.dbg-wrow{display:grid;grid-template-columns:78px 1fr 44px;align-items:center;gap:6px;font-size:12px}
+.dbg-wrow i{height:8px;border-radius:2px;background:var(--s1);display:block}
+.dbg-wrow b{text-align:right;font-variant-numeric:tabular-nums}
+.dbg-more{margin-top:10px;border:1px solid var(--grid);border-radius:6px;padding:6px 10px;background:var(--card)}
+.dbg-more summary{cursor:pointer;font-size:12px;color:var(--ink2)}
+/* 질의 로그의 '사용자' 칸 — id 만 보이고 역할·창구·IP 는 툴팁. 클릭하면 그 사용자만 거른다 */
+.qlog-who{cursor:pointer;white-space:nowrap}
+.qlog-who:hover{text-decoration:underline}
+.qlog-who.me{font-weight:600;color:var(--s1)}
+.qlog-who .pill{margin-left:3px;font-size:10px}
+/* 시간 제한 칩 — 실측이 제한의 80% 를 넘으면 주황, 넘겼으면 빨강 (architecture.stage_limits) */
+.chip.lim{border-style:dashed;border-color:var(--axis);color:var(--muted);cursor:help}
+.chip.lim.near{border-color:var(--serious);color:var(--serious)}
+.chip.lim.over{border-color:var(--critical);color:var(--critical)}
+#pl-flow-head .lims{margin-top:3px;display:flex;flex-wrap:wrap;gap:3px;align-items:center;font-size:11px;color:var(--muted)}
+.pl-lim-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.pl-lim-tbl th,.pl-lim-tbl td{border-bottom:1px solid var(--grid);padding:3px 5px;text-align:left;vertical-align:top}
+.pl-lim-tbl tr.near td:first-child{color:var(--serious)}
+.pl-lim-tbl tr.over td:first-child{color:var(--critical)}
 .chip.err{border-color:var(--critical);color:var(--critical)}
 .arrow{align-self:center;color:var(--axis);font-size:16px;flex:0 0 auto}
 .snode .msbar{position:absolute;left:0;bottom:0;height:3px;background:var(--s3);border-radius:0 0 6px 6px}
@@ -376,6 +550,91 @@ table.roles .reason{color:var(--serious);display:block;max-width:260px;white-spa
 .adetail code,.prop code,.hit code{background:var(--page);padding:1px 4px;border-radius:3px;font-size:11px}
 .tg-row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--page)}.tg-row .muted{font-size:11px}
 table.tuning td.k{font-family:Consolas,monospace;font-size:11px;white-space:nowrap}table.tuning td.d{max-width:360px}
+/* ---- Settings › 모델·프로바이더 (2026-09-19 정리) ----
+   카탈로그가 20행이 넘고 설명 열이 길어 표가 화면을 넘겼다. 칸 폭을 고정하고 긴 글은 … 로 줄인 뒤
+   전문은 마우스를 올려 보게 한다. 지금 쓰고 있는 모델은 배경으로 구분한다. */
+/* 카탈로그 표는 전역 규칙(`table{display:block;overflow-x:auto}`)대로 **자기 칸 안에서** 가로 스크롤한다.
+   display:table + table-layout:fixed 로 강제로 접으려 했더니 칸 폭이 확정되지 않아 페이지 자체가 넘쳤다
+   (2026-09-19 verify_responsive 로 확인). 넓은 참조 표 하나가 자기 상자에서 스크롤하는 것은 정상 패턴이므로
+   여기서는 열 폭·말줄임으로 **표를 좁게** 만드는 데만 집중한다. */
+#tab-models table.cat{width:100%;min-width:0}
+#tab-models table.cat td,#tab-models table.cat th{max-width:320px}
+#tab-models table.cat th:nth-child(1){width:23%}
+#tab-models table.cat th:nth-child(2){width:8%}
+#tab-models table.cat th:nth-child(3){width:13%}
+#tab-models table.cat th:nth-child(5){width:14%}
+#tab-models table.cat th:nth-child(6){width:44px}
+#tab-models table.cat th:nth-child(7){width:56px}
+#tab-models table.cat td.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tab-models table.cat td.c{text-align:center}
+#tab-models table.cat tr.in-use{background:var(--sel)}
+#tab-models table.cat td.mono{overflow-wrap:anywhere}
+.cat-filter{gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 4px}
+#tab-models .cat-add{margin:0 0 6px}
+#tab-models .cat-add>summary{cursor:pointer;font-size:11.5px;color:var(--s1)}
+#tab-models .cat-add .row{margin-top:4px}
+/* 역할 표: 열이 많아 가로로 넘치던 것 — 용도는 역할 칸의 툴팁으로 내리고 나머지는 줄바꿈시킨다 */
+#tab-models table.roles{table-layout:auto}
+#tab-models table.roles td,#tab-models table.roles th{vertical-align:top}
+#tab-models table.roles td.small{overflow-wrap:break-word;word-break:keep-all}
+/* 역할 칸: 이름 아래 용도를 두 줄까지만 (예전에는 별도 열이라 표가 1800px 이 됐다) */
+#tab-models table.roles .ell2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:130px;line-height:1.3}
+#tab-models table.roles td:first-child{min-width:120px}
+/* 정책 입력칸을 조금 좁혀 열 12개가 한 화면에 들어오게 */
+#tab-models table.roles input[type=number]{width:62px !important}
+/* ---- 앙상블 편집 (역할 행 아래 접이식, 요청 6) ----
+   2026-09-19 정리: 멤버 줄을 **격자**로 맞춰 provider·모델·가중치가 세로로 정렬되게 하고,
+   줄마다 "실제로 어떤 provider/model 이 불리는지" 를 오른쪽에 붙였다. 글자 크기는 표와 같게 통일. */
+tr.ens-row>td{padding:0 6px 8px;border-top:0}
+details.ens>summary{cursor:pointer;font-size:11.5px;color:var(--ink2);padding:3px 0}
+details.ens[open]>summary{color:var(--s1);font-weight:600}
+.ens-body{border-left:3px solid var(--s1);padding:8px 10px;background:var(--page);border-radius:0 6px 6px 0;font-size:11.5px}
+/* 흐름 한 줄: 요청 → 동시 호출 → 취합 → 결과
+   (기본 모양은 위 `.ens-flow` 에 있다 — 탭에 매지 않는다. 여기 중복을 두면 또 한쪽만 옮겨졌을 때 깨진다.) */
+/* 멤버 격자 — 머리글과 줄이 같은 폭을 쓴다 */
+.ens-grid{display:inline-block;min-width:0;max-width:100%}
+.ens-h,.ens-m{display:grid;
+  grid-template-columns:34px 30px 130px minmax(170px,330px) 62px minmax(120px,1fr);
+  gap:6px;align-items:center}
+.ens-h{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding-bottom:2px;border-bottom:1px solid var(--grid);margin-bottom:3px}
+.ens-h>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ens-members{display:flex;flex-direction:column;gap:3px}
+.ens-m{padding:2px 0}
+.ens-m.off{opacity:.5}
+/* 「쓰기」는 켰는데 모델이 비어 빠지는 줄 — 흐리게 두면 "잠긴 칸" 으로 보인다. 또렷하게 두고 이유를 옆에 쓴다 */
+.ens-m.need{opacity:1}
+.ens-m.need>select.m{border-color:var(--warn);background:var(--imp-bg)}
+.ens-actual.need{color:var(--serious);font-weight:600}
+.ens-eff.warnbox{display:block;background:var(--banner-warn-bg);border:1px solid var(--warn);
+  border-radius:4px;padding:6px 8px;line-height:1.6;color:var(--ink)}
+.ens-eff.warnbox button{margin-left:4px}
+.ens-m>.c{text-align:center}
+.ens-m>.n{color:var(--muted);font-family:Consolas,"D2Coding",monospace;font-size:11px}
+.ens-m>input,.ens-m>select{font-size:11.5px;padding:2px 4px;width:100%;min-width:0;box-sizing:border-box;height:24px}
+.ens-m>.w{text-align:right}
+.ens-actual{font-size:10.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ens-actual b{font-weight:600}
+/* 취합 LLM · 정책 줄 — 라벨 폭을 맞춰 왼쪽 정렬 */
+.ens-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px}
+.ens-line>.lbl{flex:none;width:64px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ens-line>.p{width:130px}
+.ens-line>.m{max-width:min(330px,100%)}
+.ens-line input,.ens-line select{font-size:11.5px;padding:2px 4px;height:24px;box-sizing:border-box}
+.ens-eff{margin-top:8px;padding-top:6px;border-top:1px dashed var(--grid);display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px}
+.ens-eff>b{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:2px}
+/* 못 쓰는 모델은 회색 + 선택 불가 (드롭다운) */
+#tab-models select option:disabled,select option.opt-off{color:var(--muted);background:var(--page)}
+#tab-models select optgroup{font-size:10.5px;color:var(--muted)}
+#tab-models select option{font-size:11.5px;color:var(--ink)}
+/* 전역 설정 3칸(위) — 좁아지면 자연스럽게 아래로 쌓인다 */
+#tab-models .cols.models-top{margin-bottom:10px}
+#tab-models .cols.models-top>.col{flex:1 1 300px;min-width:min(300px,100%)}
+#tab-models .cols.models-top .form label{display:block;margin-bottom:4px}
+#tab-models .cols.models-top input,#tab-models .cols.models-top select{max-width:100%}
+/* '＋ 모델 추가' 폼: 좁은 폭에서 한 줄이 화면을 넘지 않게 */
+#tab-models .cat-add .row{flex-wrap:wrap}
+#tab-models .cat-add .row>*,#tab-models .cat-add label.inline,#tab-models .cat-add select,#tab-models .cat-add input{max-width:100%}
+@media (max-width:600px){#tab-models .cat-add .row>input,#tab-models .cat-add .row>select{width:100% !important}}
 table.tuning tr.changed td.k{color:var(--s1);font-weight:600}table.tuning tr.stage-head td{background:var(--page);font-weight:600;color:var(--ink2)}
 table.tuning input,table.tuning select{font-size:12px;padding:2px 4px;width:120px}
 table.tuning .imp{color:var(--chip-tune-ink)}
@@ -390,6 +649,63 @@ table.tuning .imp{color:var(--chip-tune-ink)}
 td.best{color:var(--good);font-weight:600}
 .claim{font-size:12px;padding:2px 6px;border-radius:4px;margin:2px 0}.claim.supported{background:var(--banner-ok-bg)}.claim.unsupported{background:var(--banner-err-bg)}.claim.partial,.claim.uncited{background:var(--banner-warn-bg)}
 @media (max-width:900px){.layout{flex-direction:column}aside{width:100%;position:static;max-height:none}.col.narrow-wide{flex:1}}
+
+/* ================= 창 크기 내성 (2026-09-18, 요청 4) =================
+   기준: 360 · 768 · 1024 · 1366 · 1920 과 최대화/복원에서 **가로 스크롤 0**, 화면 밖으로 나가는 요소 0.
+   검사: python tools/verify/verify_responsive.py (Edge/Chrome headless, 폭마다 scrollWidth 와 화면 밖 요소 수).
+   원칙 — ① 표는 자기 칸 안에서 가로 스크롤 ② flex 자식은 min-width:0 ③ 긴 토큰은 줄바꿈
+          ④ 고정 폭(inline width) 은 칸 폭을 넘지 못함 ⑤ 헤더·고정 패널은 폭에 따라 줄바꿈/열 축소. */
+/* 줄바꿈 정책 (2026-09-19 수정).
+   예전에는 `overflow-wrap:anywhere` 였는데 그것이 **flex 항목의 min-content 를 한 글자로** 만든다.
+   그래서 `<label>trace <select>…</select></label>` 처럼 넓은 컨트롤과 나란히 놓인 글자가
+   한 글자씩 세로로 쌓였다("t/r/a/c/e"). `break-word` 는 넘칠 때만 끊고 min-content 는 그대로라 같은 일이 없다.
+   한글은 기본이 '글자 사이 아무 데서나' 줄바꿈이라 "프리/셋" 이 되므로 `keep-all`(공백에서만) 로 둔다.
+   코드·식별자처럼 공백 없는 긴 토큰은 아래 `code,pre,.mono` 에서 `break-all` 로 되돌린다. */
+main,aside{overflow-wrap:break-word;word-break:keep-all}
+code,pre,.mono,.cli-hint code,kbd{word-break:break-all}
+main{max-width:100%}
+.tbl-wrap{overflow:auto;max-width:100%}
+/* 표 — 넓은 표(역할·튜닝·요청 목록)가 페이지 전체를 밀지 않게 표 자신이 스크롤한다.
+   table 을 block 으로 두고 tbody 를 table 로 그리면 100% 폭·테두리 규칙은 그대로다 (innerHTML 로 만든 <tr> 은 브라우저가 tbody 를 넣는다). */
+table{display:block;overflow-x:auto;max-width:100%}
+table>tbody{display:table;width:100%}
+.tbl-wrap>table{display:table;overflow:visible}
+/* …그런데 위 `table>tbody{display:table}` 는 그대로 남아 있었다. 그러면 바깥 table(display:table) 안에
+   tbody 가 **중첩 표**가 되어, 익명 행/칸 하나에 통째로 들어간다. <thead> 가 있는 표에서는 그 결과가
+   눈에 띄게 깨진다 — 헤더 5칸은 바깥 표의 열로 전체 폭에 퍼지고, 본문은 익명 칸 하나 안에서 제 내용
+   크기로만 좁게 그려져 글자가 세로로 한 자씩 쌓인다 (2026-09-19 '자동 매핑 제안' 표에서 발견).
+   .tbl-wrap 은 감싸는 div 가 이미 스크롤하므로 tbody 를 평범한 행 그룹으로 되돌린다. */
+.tbl-wrap>table>tbody{display:table-row-group;width:auto}
+main pre{max-width:100%;overflow:auto}
+main input,main select,main textarea{max-width:100%}
+.col{min-width:min(280px,100%)}   /* 칸보다 좁은 창에서는 100% 로 줄어들며 줄을 바꾼다 (min-width:0 으로 두면 두 열이 짓눌린다) */
+.tr-bar{min-width:0;overflow:hidden}
+.modal-bg{padding:12px}
+.live-head>*,.hit .h>*{min-width:0}
+/* Settings › 모델 제목 오른쪽의 버튼 묶음 (예전 inline float) — 좁으면 줄을 바꾼다 */
+.h-acts{float:right;display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:100%;justify-content:flex-end}
+@media (max-width:1100px){.h-acts{float:none;display:flex;margin-top:4px}}
+/* 헤더: 배지가 많아 좁은 창에서는 두세 줄로 접힌다. 부제는 700px 아래에서 숨긴다 */
+@media (max-width:700px){
+  header{gap:8px;padding:8px 12px}
+  .brand .sub{display:none}
+  .hud{margin-left:0}
+  .badge{max-width:100%}
+}
+/* 워터폴: 이름 열을 줄여 막대가 남게 */
+@media (max-width:640px){
+  .tr-row{grid-template-columns:120px 1fr 74px}
+  .tr-meta{grid-column:1/4}
+}
+/* 폰 폭: 입력칸의 inline min-width(320px 등)가 칸을 넘지 못하게 (stylesheet !important 가 inline 을 이긴다) */
+@media (max-width:600px){
+  main .row>input[type=text],main .row>input:not([type]),main .row>input[type=search],main .form input[type=text],main .form input:not([type]){
+    min-width:0 !important;width:100% !important;flex:1 1 100%}
+  main .row>select,main .row>button{max-width:100%}
+  .col.narrow,.col.narrow-wide,.col.wide{flex:1 1 100%}
+  .stat{margin-right:10px}
+  #gcanvas{height:360px}
+}
 
 /* ================= 협업: 사이드바 채팅 · 게시판 · 접속자 캐릭터 (2026-09-16) =================
    채팅창은 사이드바 최상단에 고정되고 **기본은 접힘**이다. 대화는 창에 쌓지 않고
@@ -462,3 +778,226 @@ td.best{color:var(--good);font-weight:600}
 /* 모델 표: 임베딩·리랭크 행은 배경을 달리해 LLM 역할과 구분 */
 table.roles tr.extra-row{background:var(--perf-bg)}
 table.roles tr.extra-row td{border-top:1px solid var(--perf-border)}
+/* 역할 표의 '앙상블 ▸' 펼침 행 (llm_roles.<role>.ensemble 편집) */
+table.roles tr.ens-row td{background:var(--perf-bg);border-top:none;padding:6px 10px 10px 28px}
+table.roles tr.ens-row table.ens-members{margin:4px 0;width:auto}
+table.roles tr.ens-row table.ens-members th,table.roles tr.ens-row table.ens-members td{padding:2px 6px}
+table.roles tr.ens-row input[type=number]{width:70px}
+table.roles tr.ens-row input[list]{width:150px}
+table.roles button[data-ens-toggle]{margin-top:3px}
+
+/* ================= 🧭 Pipeline 페이지 (2026-09-18, IMPLEMENTATION_PLAN_0918_2 §2.6) =================
+   세 열: 흐름(고정 폭) · 단계 블록(세로, 화살표) · 상세(토글 스위치 · config 값 · 튜닝 표 · 스윕).
+   900px 아래에서는 한 열로 쌓이고(사이드바가 본문 위로 올라오는 폭과 같은 값), 표·입력은 기존 규칙(표 자기 스크롤 · 입력 max-width) 을 그대로 따른다. */
+.pl-grid{display:grid;grid-template-columns:170px minmax(0,1fr) minmax(0,1.6fr);gap:14px;align-items:start}
+.pl-col{min-width:0}
+.pl-col h3{margin-top:4px}
+@media (max-width:1400px){.pl-grid{grid-template-columns:150px minmax(0,1fr) minmax(0,1.4fr)}}
+/* 1200px 아래에서는 **상세를 아래로** 내린다. 세 열을 억지로 유지하면 칸이 좁아 표마다 가로 스크롤이 생긴다
+   (2026-09-19 사용자 보고: "횡 스크롤이 너무 많다"). 흐름+단계는 나란히, 상세는 전체 폭으로. */
+@media (max-width:1200px){
+  .pl-grid{grid-template-columns:150px minmax(0,1fr)}
+  .pl-col-detail{grid-column:1/-1}
+}
+@media (max-width:900px){.pl-grid{grid-template-columns:1fr}.pl-flows{flex-direction:row;flex-wrap:wrap}}
+/* ---- 가로 스크롤 줄이기 (2026-09-19) ----
+   전역 규칙 `table{display:block;overflow-x:auto}` 는 넓은 표가 페이지를 밀지 않게 하려는 것이지만,
+   Pipeline 상세처럼 **좁은 칸 안의 표**에서는 칸마다 가로 스크롤바가 생겨 읽기 어려웠다.
+   이 패널의 표는 칸 폭에 맞춰 **줄바꿈**시키고(table-layout:fixed), 가로 스크롤은 값 개수가 가변인
+   스윕 격자에만 남긴다. */
+.pl-detail table,.pl-col-detail table{display:table;width:100%;table-layout:fixed;overflow:visible}
+.pl-detail table td,.pl-detail table th{overflow-wrap:break-word;word-break:keep-all}
+.pl-detail .adetail{overflow-x:hidden}
+.pl-detail pre,.pl-detail .pre{max-width:100%;white-space:pre-wrap;word-break:break-all;overflow-x:hidden}
+.pl-detail code{overflow-wrap:anywhere}
+/* 튜닝 표: 설명을 아래 줄로 내려 5열을 4열 폭에 담는다 (칸이 좁을수록 설명이 가로를 다 먹는다) */
+.pl-detail table.pl-tune{table-layout:fixed}
+.pl-detail table.pl-tune td.k{white-space:normal;overflow-wrap:anywhere}
+.pl-detail table.pl-tune td:last-child{font-size:10.5px;line-height:1.45}
+.pl-phase-tbl{table-layout:fixed}
+.pl-phase-tbl td:first-child{overflow-wrap:anywhere}
+/* 스윕 격자만 가로 스크롤을 유지한다 — 값 개수가 최대 20개라 줄바꿈으로는 읽을 수 없다.
+   대신 단계 이름 열을 **고정**해 가로로 밀어도 어느 단계인지 보이게 한다. */
+#pl-sweep-grid{overflow-x:auto;max-width:100%}
+#pl-sweep-grid table{display:table;width:auto;min-width:100%}
+.pl-sw-grid td.stage,.pl-sw-grid th:first-child{position:sticky;left:0;z-index:2;background:var(--card);box-shadow:1px 0 0 var(--grid)}
+/* 흐름 선택: 세로 라디오 버튼 모양 */
+.pl-flows{display:flex;flex-direction:column;gap:4px}
+.pl-flows button{text-align:left;background:var(--card);color:var(--ink2);border:1px solid var(--grid);border-radius:6px;padding:6px 10px;font-size:12.5px}
+.pl-flows button .n{display:block;font-size:10px;color:var(--muted)}
+.pl-flows button.active{border-color:var(--s1);background:var(--sel);color:var(--ink);font-weight:600}
+.pl-flows button.active .n{color:var(--s1)}
+.pl-legend{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;line-height:1.7}
+/* 단계 블록: 위→아래, 사이에 화살표 */
+.pl-blocks{display:flex;flex-direction:column;align-items:stretch}
+.pl-block{background:var(--node-on);border:1.5px solid var(--s1);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:11.5px;position:relative;min-width:0}
+.pl-block:hover{background:var(--hover)}
+.pl-block.off{border-color:var(--axis);background:var(--node-off);color:var(--ink2)}
+.pl-block.err{border-color:var(--critical);background:var(--node-err)}
+.pl-block.sel{box-shadow:0 0 0 2px var(--s1)}
+.pl-block .st{font-weight:600;font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:6px;min-width:0}
+.pl-block .st .sk{font-family:Consolas,"D2Coding",monospace;font-weight:400;color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-block .chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;align-items:center}
+.pl-block .chips .ms-none{font-size:10px;color:var(--muted)}
+.pl-block .msbar{position:absolute;left:0;bottom:0;height:3px;background:var(--s3);border-radius:0 0 6px 6px;max-width:100%}
+.pl-arrow{text-align:center;color:var(--axis);font-size:14px;line-height:1.1;padding:1px 0}
+/* 상세: 기존 .adetail 규칙(카드·sec·imp) 위에 붙임 — 여기서는 sticky 를 끈다 (아래에 스윕이 이어진다) */
+.pl-detail .adetail{position:static;max-height:none}
+.pl-detail .pl-tg{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--page);font-size:12px;cursor:pointer;min-width:0}
+.pl-detail .pl-tg input{margin:0;flex:none}
+.pl-detail .pl-tg code{flex:none}
+.pl-detail .pl-tg .help{color:var(--muted);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.pl-detail .pl-tg .pill{margin-left:0;flex:none}
+.pl-detail .pl-tg.by-preset{border-left:3px solid var(--s1);padding-left:5px;background:var(--perf-bg)}
+.pl-detail table.pl-tune td{font-size:11.5px;vertical-align:middle}
+.pl-detail table.pl-tune td.k{font-family:Consolas,"D2Coding",monospace;white-space:nowrap}
+.pl-detail table.pl-tune input,.pl-detail table.pl-tune select{font-size:12px;padding:2px 4px;width:110px;max-width:100%}
+.pl-detail table.pl-tune tr.edited td.k{color:var(--s1);font-weight:600}
+.pl-detail table.pl-tune tr.ov td.k::after{content:" ●";color:var(--s4);font-size:9px}
+.pl-detail .pl-cfg-row{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--page);flex-wrap:wrap}
+.pl-detail .pl-cfg-row .help{color:var(--muted);font-size:11px;flex:1 1 100%}
+.pl-detail .pl-cfg-row input,.pl-detail .pl-cfg-row select{font-size:12px;padding:2px 4px;width:120px;max-width:100%}
+.pl-detail .pl-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.pl-ovchip{display:inline-block;font-size:10.5px;border:1px solid var(--s4);background:var(--chip-tune-bg);color:var(--chip-tune-ink);border-radius:8px;padding:0 6px;margin:1px 2px}
+.pl-ovchip i{font-style:normal;cursor:pointer;margin-left:4px;color:var(--muted)}
+.pl-ovchip i:hover{color:var(--critical)}
+/* 스윕 */
+.pl-sweep{margin-top:12px;border:1px solid var(--grid);border-radius:8px;background:var(--card);padding:6px 10px 10px}
+.pl-sweep>summary{cursor:pointer;font-weight:600;font-size:13px;padding:4px 0}
+/* ---- 페이즈(상위 단계) — 흐름 → 페이즈 → 단계 → trace 네 단 (2026-09-19, 구조·흐름 탭 흡수) ---- */
+.pl-flow-head{margin:6px 0 8px;padding:6px 8px;border:1px solid var(--grid);border-radius:6px;background:var(--page);font-size:11px}
+.pl-flow-head .entry code{font-size:10.5px}
+.pl-flow-head .last{margin-top:3px}
+.pl-phase-nav{margin-top:10px;display:flex;flex-direction:column;gap:3px}
+.pl-phase-nav .nav-h{font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+.pl-phase-nav button{text-align:left;background:var(--card);color:var(--ink2);border:1px solid var(--grid);border-radius:5px;padding:4px 7px;font-size:11.5px}
+.pl-phase-nav button .n{display:block;font-size:9.5px;color:var(--muted)}
+.pl-phase-nav button.active{border-color:var(--s1);background:var(--sel);color:var(--ink);font-weight:600}
+.pl-phase{border:1px solid var(--grid);border-radius:8px;margin-bottom:8px;background:var(--page);overflow:hidden}
+.ph-head{position:relative;display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:5px 8px;cursor:pointer;
+  background:var(--card);border-bottom:1px solid var(--grid);min-width:0}
+.ph-head:hover{background:var(--sel)}
+.ph-head.sel{border-left:3px solid var(--s1);background:var(--sel)}
+.ph-head.err{border-left:3px solid var(--critical)}
+.ph-fold{flex:none;width:12px;color:var(--muted);font-size:10px}
+.ph-t{font-weight:600;font-size:12.5px;white-space:nowrap}
+.ph-k{font-size:10px;color:var(--muted);font-family:Consolas,"D2Coding",monospace}
+.ph-chips{display:flex;gap:3px;flex-wrap:wrap;margin-left:auto;min-width:0}
+.msbar.ph{position:absolute;left:0;bottom:0;height:2px;background:var(--s1);opacity:.5}
+.ph-body{padding:6px 8px}
+/* 지도·전체 보기: 가로로 읽되 **줄바꿈**한다. 예전에는 페이즈마다 overflow-x:auto 라
+   한 화면에 가로 스크롤바가 여러 개 생겼다 (2026-09-19 사용자 보고). 줄바꿈하면 스크롤이 0 이고
+   왼→오른쪽 순서도 그대로 읽힌다. */
+.ph-body.horiz{display:flex;align-items:stretch;gap:4px;flex-wrap:wrap;padding-bottom:6px}
+.ph-body.horiz .pl-block{flex:1 1 160px;min-width:150px;max-width:100%}
+.ph-body.horiz .pl-arrow{align-self:center;flex:none}
+.pl-arrow.ph{color:var(--muted);text-align:center;font-size:11px;margin:-4px 0 4px}
+.pl-flowsec.horiz .pl-phase{margin-bottom:6px}
+.pl-flow-title{padding:4px 6px;margin:8px 0 4px;border-left:3px solid var(--grid);cursor:pointer;font-size:12px}
+.pl-flow-title.sel{border-left-color:var(--s1);background:var(--sel)}
+.pl-phase-tbl td,.pl-phase-tbl th{font-size:11px;vertical-align:top}
+.pl-phase-tbl tr[data-ph-stage]{cursor:pointer}
+.pl-phase-tbl tr[data-ph-stage]:hover{background:var(--sel)}
+.ph-keys{display:flex;flex-wrap:wrap;gap:3px;margin:3px 0}
+.ph-keys .k{cursor:pointer;border:1px solid var(--grid);border-radius:4px;padding:0 4px;background:var(--card)}
+.ph-keys .k:hover{border-color:var(--s1);color:var(--s1)}
+.pl-legend .lg.err{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--critical);vertical-align:-1px}
+.pl-sw-form{margin-top:4px;min-width:0}
+.pl-sw-form .row{margin-bottom:6px;flex-wrap:wrap;min-width:0}
+/* 키 목록의 option 문구가 길어 select 가 칸을 밀어내고 **페이지에 가로 스크롤**을 만들던 것을 막는다
+   (2026-09-18 verify_responsive.py 가 1024px 에서 찾음). 라벨·입력 모두 칸 안에서 줄바꿈된다. */
+.pl-sw-form label{min-width:0;max-width:100%}
+.pl-sw-form select,.pl-sw-form input[type=text]{max-width:100%}
+#pl-sw-key{max-width:min(420px,100%);text-overflow:ellipsis}
+.pl-sw-range{display:inline-flex;gap:4px;flex-wrap:wrap;min-width:0}
+.pl-sw-head{font-size:12px;margin-bottom:6px;padding:6px 8px;border:1px solid var(--grid);border-radius:6px;background:var(--page)}
+.pl-sw-head .best{color:var(--good)}
+.pl-sw-grid table{font-size:11.5px}
+.pl-sw-grid th.val{text-align:center;white-space:nowrap}
+.pl-sw-grid th.val.base{color:var(--s1)}
+.pl-sw-grid td.cell{text-align:center;font-variant-numeric:tabular-nums;cursor:pointer;white-space:nowrap}
+.pl-sw-grid td.cell:hover{background:var(--hover)}
+.pl-sw-grid td.cell.changed{background:var(--chip-tune-bg);color:var(--chip-tune-ink);font-weight:600}
+.pl-sw-grid td.cell.replayed{color:var(--muted)}
+.pl-sw-grid td.cell.sel{outline:2px solid var(--s1);outline-offset:-2px}
+.pl-sw-grid td.cell.err{color:var(--critical)}
+.pl-sw-grid td.stage{font-family:Consolas,"D2Coding",monospace;white-space:nowrap;color:var(--ink2)}
+.pl-sw-grid tr.final td{border-top:2px solid var(--grid);font-weight:600}
+.pl-sw-grid tr.final td.cell{font-weight:400;white-space:normal;min-width:120px;text-align:left;font-size:11px}
+.pl-sw-diff{margin-top:8px;border:1px solid var(--s1);border-radius:6px;padding:8px 10px;font-size:12px;background:var(--page)}
+.pl-sw-diff h4{margin:0 0 6px;font-size:12.5px}
+.pl-sw-diff pre{margin:4px 0;max-height:260px}
+.pl-sw-diff .dl{font-family:Consolas,"D2Coding",monospace;font-size:11px;white-space:pre-wrap;word-break:break-all}
+.pl-sw-diff .dl .add{color:var(--good)}.pl-sw-diff .dl .del{color:var(--critical)}
+#pl-sweep-list .sw-row{display:flex;gap:8px;align-items:center;padding:3px 6px;border-bottom:1px solid var(--page);cursor:pointer;flex-wrap:wrap}
+#pl-sweep-list .sw-row:hover{background:var(--hover)}
+#pl-sweep-list .sw-row.sel{background:var(--sel)}
+#pl-sweep-list .sw-row .q{flex:1 1 200px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
+/* ---- 사이드바 토글 블록 compact 모드 (프로파일 sidebar_toggles, 기본 compact) ----
+   묶음·범례·축 필터는 display:none 으로 숨길 뿐 DOM 에 남는다 → [data-toggle] 체크박스 상태는 그대로 (overrides/프리셋/프로파일 불변). */
+.sb-block[data-sb="toggles"] .sb-mode{margin-left:auto;flex:none;font-size:10px;padding:1px 6px}
+.sb-summary{display:none;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;border:1px dashed var(--grid);border-radius:6px;background:var(--page);margin-bottom:6px}
+.sb-summary #sb-summary-text{flex:1 1 auto;min-width:0;color:var(--ink2)}
+.sb-summary #sb-summary-text.has-ov{color:var(--chip-tune-ink);font-weight:600}
+.sb-block[data-sb="toggles"].compact .sb-summary{display:flex}
+.sb-block[data-sb="toggles"].compact .fx-legend,.sb-block[data-sb="toggles"].compact .fx-filter,.sb-block[data-sb="toggles"].compact #toggle-groups{display:none}
+.arch-edit-hint{margin-bottom:4px}
+
+/* 포렌식 필터 칩 — 어느 판정을 보고 있는지. `.chip` 은 다른 화면(#preset-detail·.snode)에
+   스코프돼 있어 여기서 쓸 수 없다. 탭에 갇힌 스타일 때문에 화면이 깨진 적이 있어(2026-09-20
+   앙상블) 화면 공용 요소는 스코프 없이 따로 둔다. */
+.fx-chips{gap:6px;flex-wrap:wrap;align-items:center}
+.fx-chips .chip{font-size:12px;padding:3px 10px;border:1px solid var(--grid);border-radius:14px;
+  background:var(--card);color:var(--ink);cursor:pointer;line-height:1.6}
+.fx-chips .chip b{margin-left:4px;font-variant-numeric:tabular-nums}
+.fx-chips .chip:hover{border-color:var(--s1)}
+.fx-chips .chip.on{border-color:var(--s1);background:var(--s1);color:#fff}
+.fx-chips .chip.on b{color:#fff}
+.fx-chips .chip.warn:not(.on) b{color:var(--warn)}
+.fx-chips .chip.ok:not(.on) b{color:var(--good)}
+
+/* 운영 통계 추세 차트 — 외부 라이브러리 없이 inline SVG.
+   비율을 유지해 그린다(preserveAspectRatio 기본). 예전에는 `none` 으로 늘려서 점이 타원이 되고
+   선이 뭉개졌다. 색은 **계열 번호**(.ch-s0·.ch-s1)로 주며, 선의 fill 은 절대 덮어쓰지 않는다 —
+   `.ch-c0{fill:…}` 이 `.ch-line{fill:none}` 을 덮어써 꺾은선이 주황 덩어리로 칠해진 적이 있다. */
+.chart{margin:4px 0 12px}
+.chart svg{width:100%;height:auto;display:block;background:var(--card);
+  border:1px solid var(--grid);border-radius:6px}
+.ch-grid{stroke:var(--grid);stroke-width:1;opacity:.55}
+.ch-axisline{stroke:var(--grid);stroke-width:1.2}
+.ch-ylab,.ch-xlab{font-size:11px;fill:var(--muted)}
+.ch-bar{opacity:.85}
+.ch-line{fill:none !important;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.ch-dot{stroke:var(--card);stroke-width:1}
+/* 계열 색 — 막대/선/점/범례가 같은 색을 쓴다 */
+.ch-s0{fill:var(--s1);stroke:var(--s1)}
+.ch-s1{fill:var(--warn);stroke:var(--warn)}
+.ch-s2{fill:var(--good);stroke:var(--good)}
+.ch-a-l{fill:var(--s1)}
+.ch-a-r{fill:var(--warn)}
+.ch-legend{font-size:11.5px;color:var(--muted);margin-top:3px}
+.ch-leg{margin-right:14px}
+.ch-leg.ch-s0{color:var(--s1)}
+.ch-leg.ch-s1{color:var(--warn)}
+.ch-leg.ch-s2{color:var(--good)}
+.ch-title{margin:12px 0 2px;font-size:12.5px;font-weight:600}
+.oktxt{color:var(--good)}
+
+/* 다음에 할 일 안내 — trial 비교는 걸음이 여러 개라 '지금 할 일' 하나를 굵게 말해 준다 */
+.banner.info{background:var(--card);border-color:var(--s1)}
+.banner.info code{font-size:11.5px}
+
+/* 앙상블 표시 — trace 의 answer_llm 줄에서 "여러 LLM 이 동시에 돌았다" 를 바로 보이게.
+   예전에는 model 이름의 `+` 로 사람이 유추해야 했다 (2026-09-20). */
+/* 앙상블 표시는 **글씨만** — 배경도 테두리도 없다 (2026-09-20 요청).
+   알약 모양이면 워터폴에서 막대 조각으로 읽혀 "단계가 안 이어진다" 로 보였다. */
+.ens-txt{background:transparent;border:0;padding:0;font-size:10px;color:var(--s1);font-weight:600;white-space:nowrap}
+.ens-txt.warn{color:var(--serious)}
+.mb.ens{border-left:3px solid var(--s1);padding-left:8px}
+.ens-tbl{width:100%;font-size:11.5px}
+.ens-tbl th{font-weight:600;color:var(--muted);text-align:left}
+.ens-tbl td{padding:2px 6px 2px 0;vertical-align:middle}
+.ens-barcell{width:38%;min-width:90px}
+.ens-bar{display:block;height:8px;border-radius:3px;background:var(--s1);opacity:.8}
+.ens-bar.agg{background:var(--warn)}
+.ens-bad td{opacity:.7}

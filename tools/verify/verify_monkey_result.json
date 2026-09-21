@@ -1,15 +1,15 @@
 {
- "seed": 799916200,
+ "seed": 403741778,
  "requests": 1205,
- "elapsed_s": 267.1,
+ "elapsed_s": 621.6,
  "codes": {
-  "200": 476,
-  "400": 150,
-  "501": 56,
-  "404": 166,
-  "405": 6,
-  "-1": 61,
-  "503": 290
+  "200": 462,
+  "404": 163,
+  "400": 146,
+  "501": 47,
+  "-1": 142,
+  "405": 13,
+  "503": 232
  },
  "findings": [],
  "alive": true,
@@ -17,14 +17,104 @@
  "healthy_after": false,
  "mid": [
   [
-   true,
-   200,
-   1.4
+   false,
+   -1,
+   180.0
   ],
   [
-   true,
-   200,
-   16.3
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   0.0
+  ],
+  [
+   false,
+   503,
+   137.7
   ],
   [
    false,
@@ -145,6 +235,6 @@
   "external": 0,
   "lock": null,
   "limits": null,
-  "response": "{\"error\": \"\uc11c\ubc84\uac00 \ubc14\uc069\ub2c8\ub2e4: \ub300\uae30\uc5f4\uc774 \uac00\ub4dd \ucc3c\uc2b5\ub2c8\ub2e4 (64)\", \"code\": \"queue_full\", \"retry_after_s\": 10.0}"
+  "response": "TimeoutError: timed out"
  }
 }

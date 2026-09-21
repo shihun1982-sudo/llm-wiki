@@ -38,6 +38,16 @@ SUITES = [
      r"Ran (?P<total>\d+) tests", "quick"),
     ("docs", "문서 ↔ 코드 정합", [PY, "tools/verify/verify_docs.py"], None, "quick"),
     ("align", "CLI · Web · MCP 정렬", [PY, "tools/verify/verify_surface_align.py"], None, "quick"),
+    ("tri_surface", "세 창구 동작 동등성 (CLI 프로세스 · Web · MCP)", [PY, "tools/verify/verify_tri_surface.py", "--port", "8879"],
+     r"검사 (?P<total>\d+)건 · 통과 (?P<passed>\d+)", "quick"),
+    ("stage_align", "단계 정렬 (코드 ↔ 레지스트리 ↔ 라벨 ↔ 손잡이)", [PY, "tools/verify/verify_stage_align.py"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "quick"),
+    ("settings_sync", "설정 UI ↔ 파일 ↔ 서버 양방향", [PY, "tools/verify/verify_settings_sync.py", "--port", "8934"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "quick"),
+    ("llm_switch", "LLM 연결 전환 (API ↔ headless, 세 창구)", [PY, "tools/verify/verify_llm_switch.py", "--port", "8973"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "quick"),
+    ("build_load", "빌드 중 서비스 (30명 동시 · 채널별)", [PY, "tools/verify/verify_build_load.py", "--port", "8975", "--users", "30"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "quick"),
     ("cli", "CLI 전수", [PY, "tools/verify/verify_cli.py"],
      r"CLI 검증: (?P<total>\d+) 명령 중 (?P<passed>\d+) 통과", "quick"),
     ("web", "Web API 전수", [PY, "tools/verify/verify_web.py"],
@@ -46,8 +56,16 @@ SUITES = [
      r"MCP (?:OK|실패)\s+(?P<passed>\d+)/(?P<total>\d+) 통과", "quick"),
     ("wiring", "UI 배선", [PY, "tools/verify/verify_ui_wiring.py"], None, "quick"),
     ("browser", "브라우저 렌더", [PY, "tools/verify/verify_browser.py", "--port", "8901", "--cdp", "9401"], None, "base"),
+    ("responsive", "창 크기 대응 (폭 5종)", [PY, "tools/verify/verify_responsive.py", "--port", "8904"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
     ("buttons", "버튼 전수", [PY, "tools/verify/verify_buttons.py", "--port", "8902", "--cdp", "9402"],
      r"버튼 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
+    # 앙상블 편집기는 "켰는데 멤버 0개" 라는 **조용히 아무 일도 안 하는** 상태를 만들 수 있어 따로 눌러 본다.
+    ("ensemble-ui", "앙상블 편집기 (실제 클릭)", [PY, "tools/verify/verify_ensemble_ui.py"],
+     r"(?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
+    # 워터폴은 DOM·API 검사를 다 통과하면서도 **레이아웃만 틀릴 수 있다** — 픽셀을 재서 본다.
+    ("waterfall", "워터폴 기하 (픽셀 측정)", [PY, "tools/verify/verify_trace_waterfall.py"],
+     r"(?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
     ("security_ui", "보안 · 사용자 화면", [PY, "tools/verify/verify_security_ui.py", "--port", "8903", "--cdp", "9403"],
      r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
     ("rerun_ui", "단계 재실행 · 작업 상세", [PY, "tools/verify/verify_rerun_ui.py", "--port", "8905", "--cdp", "9405"],
@@ -65,6 +83,9 @@ SUITES = [
      r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "base"),
     ("monkey", "무작위 입력 내성", [PY, "tools/verify/verify_monkey.py"], None, "base"),
     # --full 에서만
+    # 실제 모델은 느리다(20분+). 붙는 모델이 없으면 스스로 SKIP(exit 0) 하므로 CI 에서도 안전하다.
+    ("live_models", "실제 모델 종단 (mock 아님)", [PY, "tools/verify/verify_live_models.py"],
+     r"검사 (?P<total>\d+)개 중 (?P<passed>\d+)개 통과", "full"),
     ("mcp_full", "MCP 종단 (전체)", [PY, "tools/verify/verify_mcp.py"],
      r"MCP (?:OK|실패)\s+(?P<passed>\d+)/(?P<total>\d+) 통과", "full"),
     ("collab30", "협업 다중 접속 (30명)", [PY, "tools/verify/verify_collab_many.py", "--people", "30",
@@ -156,7 +177,9 @@ def main(argv=None) -> int:
     # 단 `--quick` 은 8종만 도는 **부분 집합**이다. 그것으로 문서를 덮으면 21종 전체 표가 8줄로 줄어들어
     # "검증 범위가 좁아진 것처럼" 보인다 (실제로 한 번 그렇게 됐다). 부분 실행은 문서를 건드리지 않는다.
     if not only and not ns.quick:
-        doc = os.path.join(ROOT, "docs", "VERIFICATION_0917.md")
+        # 현행 문서에 쓴다. 날짜가 박힌 회차 보고서(docs/history/…)는 **그날의 사실**이라 덮으면 안 된다
+        # (2026-09-20 재배치: 살아 있는 결과 표는 docs/VERIFICATION.md 하나다).
+        doc = os.path.join(ROOT, "docs", "VERIFICATION.md")
         mark = "<!-- VERIFY_ALL_TABLE -->"
         try:
             with open(doc, encoding="utf-8") as f:
@@ -168,7 +191,7 @@ def main(argv=None) -> int:
                     res["when"], res["python"], "\n".join(table))
                 with open(doc, "w", encoding="utf-8") as f:
                     f.write(head + mark + body + "<!-- /VERIFY_ALL_TABLE -->" + tail)
-                print("문서 표 갱신: docs/VERIFICATION_0917.md")
+                print("문서 표 갱신: docs/VERIFICATION.md")
         except OSError as e:
             print("문서 표 갱신 실패(무시): %s" % e)
     print("\n%d개 중 %d개 통과" % (len(rows), len(rows) - len(bad)))

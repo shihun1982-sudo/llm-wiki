@@ -158,6 +158,94 @@ def remove_model(mid: str, provider: Optional[str] = None) -> Dict[str, Any]:
     return load_catalog(force=True)
 
 
+def provider_for(model_id: str) -> Optional[str]:
+    """model id 가 카탈로그의 enabled LLM 항목에 **정확히 하나의 provider** 로만 있으면 그 provider, 아니면 None.
+
+    계획 §0.1-(b): 역할 provider 를 비우고 model 만 적어도(예 "anthropic/claude-sonnet-4-5") 카탈로그가 가리키는 provider
+    (headless:opencode) 가 선택되게 한다. 같은 id 가 두 provider 에 있으면(예 qwen2.5:7b 가 ollama 와 openai) 판단하지 않는다.
+    provider 가 auto/빈 값인 항목은 정보가 없는 것으로 본다. 파일이 없거나 깨져도 None (설정 해석이 카탈로그 때문에 죽지 않게)."""
+    mid = str(model_id or "").strip()
+    if not mid:
+        return None
+    try:
+        provs = {str(m.get("provider") or "") for m in load_catalog().get("models", [])
+                 if m.get("enabled", True) and str(m.get("id") or "") == mid}
+    except Exception:
+        return None
+    provs.discard("")
+    provs.discard("auto")
+    return provs.pop() if len(provs) == 1 else None
+
+
+def window_tokens(model_id: str) -> int:
+    """이 모델이 받아 주는 입력 창(토큰). 카탈로그의 `context_k`(천 토큰 단위) 기준, 모르면 0.
+
+    같은 id 가 여러 provider 에 있으면 **가장 작은 값**을 쓴다 — 창을 넘겨 잘리는 쪽이
+    조금 덜 넣는 쪽보다 나쁘기 때문이다(잘리면 뒤쪽 근거가 통째로 사라지고, 모델은 그 사실을 말해 주지 않는다).
+    """
+    mid = str(model_id or "").strip()
+    if not mid:
+        return 0
+    try:
+        ks = [int(m.get("context_k") or 0) for m in load_catalog().get("models", [])
+              if m.get("enabled", True) and str(m.get("id") or "") == mid]
+    except Exception:
+        return 0
+    ks = [k for k in ks if k > 0]
+    return min(ks) * 1000 if ks else 0
+
+
+def context_budget(settings: Any, role: str = "answer", configured: Optional[int] = None) -> Dict[str, Any]:
+    """답변 컨텍스트에 실제로 넣을 **글자 수 상한**을 정한다.
+
+    ## 왜 필요한가
+
+    `context_max_chars` 는 사람이 정한 값이고, 모델의 입력 창과는 아무 관계가 없었다. 그래서 창이 작은 모델
+    (예 `context_k: 32`, 로컬 7B)에 `deep_research` 프리셋(20000자)을 걸면, 프롬프트가 조용히 잘린 채로
+    호출된다 — **뒤쪽 근거가 통째로 사라지고** 모델은 그 사실을 말해 주지 않아서, 인용 번호만 맞고 내용은
+    비는 답이 나온다. 카탈로그에 `context_k` 가 이미 있는데도 쓰이지 않던 값이라 여기서 연결한다.
+
+    ## 계산
+
+        여유 토큰 = 창 − 출력 상한(answer_max_tokens) − 예비(context_budget_reserve_tokens: 시스템 프롬프트·질문·형식)
+        상한(글자) = min(설정값, 여유 토큰 × context_chars_per_token)
+
+    `context_chars_per_token` 기본 2.0 은 한글·혼합 문서에서 **토큰을 넉넉히 잡는**(= 안전한) 값이다.
+    영문 위주 코퍼스라면 3~4 로 올려 더 많이 넣을 수 있다. 창을 모르면(0) 설정값을 그대로 쓴다 —
+    카탈로그에 없는 모델 때문에 근거가 줄어들지는 않게 한다.
+
+    반환: {chars, configured, window_tokens, model, limited(bool), reason}
+    """
+    from . import tuning as _tuning
+    cfg = int(configured if configured is not None else getattr(settings, "context_max_chars", 9000) or 9000)
+    out: Dict[str, Any] = {"chars": cfg, "configured": cfg, "window_tokens": 0, "model": "", "limited": False, "reason": ""}
+    try:
+        roles = getattr(settings, "llm_roles", None) or {}
+        r = roles.get(role) if isinstance(roles, dict) else None
+        model = str((r or {}).get("model") or "") or str(getattr(settings, "llm_model", "") or "")
+        out["model"] = model
+        win = window_tokens(model)
+        out["window_tokens"] = win
+        if win <= 0:
+            out["reason"] = "카탈로그에 창 정보 없음 (context_k) — 설정값 사용"
+            return out
+        T = _tuning.T
+        reserve = int(T.get("context_budget_reserve_tokens"))
+        cpt = float(T.get("context_chars_per_token"))
+        free = win - int(getattr(settings, "answer_max_tokens", 2000) or 2000) - reserve
+        allowed = int(max(0, free) * cpt)
+        if allowed < cfg:
+            out["chars"] = max(500, allowed)     # 0 으로 만들지는 않는다 — 근거 없는 답보다 조금이라도 넣는 편이 낫다
+            out["limited"] = True
+            out["reason"] = "모델 창 %d토큰 − 출력 %d − 예비 %d → %d자 (설정 %d자)" % (
+                win, int(getattr(settings, "answer_max_tokens", 2000) or 2000), reserve, out["chars"], cfg)
+        else:
+            out["reason"] = "모델 창 %d토큰 안에 설정값 %d자가 들어감" % (win, cfg)
+    except Exception as e:
+        out["reason"] = "예산 계산 실패(설정값 사용): %s" % str(e)[:80]
+    return out
+
+
 def list_models(role: Optional[str] = None, provider: Optional[str] = None, enabled_only: bool = True) -> List[Dict[str, Any]]:
     out = []
     for m in load_catalog().get("models", []):

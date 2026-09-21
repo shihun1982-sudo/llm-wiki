@@ -1,4 +1,4 @@
-# 스케줄러 — 정해진 시각·간격마다 작업 실행 (2026-09-15)
+# SCHEDULER — 정해진 시각·간격마다 작업 실행
 
 > 서버(`serve`) 안에서 도는 작업 스케줄러. 설정은 [schedule.json](../setup/schedule.example.json) 하나이고, 코드 수정이 필요 없다.
 > Web: **Settings › 스케줄** · CLI: `python -m llmwiki schedule …` · 함께 읽기: [CONCURRENCY.md](CONCURRENCY.md) · [BRINGUP_GUIDE.md](BRINGUP_GUIDE.md) §8.

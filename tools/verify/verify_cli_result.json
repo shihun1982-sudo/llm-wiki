@@ -5,7 +5,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 182,
+  "ms": 189,
   "out": "health: OK (fail=0 warn=1)"
  },
  {
@@ -14,7 +14,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 164,
   "out": "health: OK (fail=0 warn=1)"
  },
  {
@@ -23,7 +23,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -32,7 +32,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 146,
+  "ms": 158,
   "out": "corpus_dirs                        = [\"C:\\\\Users\\\\user\\\\project\\\\ll [file] (기본 [\"C:\\\\Users\\\\user\\\\p)  LLMWIKI_"
  },
  {
@@ -41,8 +41,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
-  "out": "config         C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\config.json"
+  "ms": 158,
+  "out": "config         C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json"
  },
  {
   "name": "config set",
@@ -50,7 +50,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -59,8 +59,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='')"
+  "ms": 161,
+  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='bge-m3')"
  },
  {
   "name": "models test",
@@ -68,7 +68,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 163,
   "out": "[OK ] answer     mock/mock  0ms  mock (deterministic, no network)"
  },
  {
@@ -77,7 +77,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
+  "ms": 161,
   "out": "[OK ] answer     mock/mock  0ms  mock (deterministic, no network)  live: OK 0ms reply='(mock answer) 컨텍스트 기반 요"
  },
  {
@@ -86,8 +86,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
-  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='')"
+  "ms": 164,
+  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='bge-m3')"
  },
  {
   "name": "tuning show",
@@ -95,7 +95,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 159,
   "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
  },
  {
@@ -104,7 +104,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
+  "ms": 158,
   "out": "[context] 컨텍스트 구성 (질의)"
  },
  {
@@ -113,7 +113,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 161,
   "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
  },
  {
@@ -122,7 +122,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 163,
   "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
  },
  {
@@ -131,7 +131,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 150,
+  "ms": 156,
   "out": "ERROR: 'unknown tunable: no_such_key'"
  },
  {
@@ -140,7 +140,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 159,
   "out": "quality        품질 최적화 — LLM 개입 단계(확장·근거 판정·claim 검증·fallback)를 모두 켜고 후보/컨텍스트를 넓힘. 지연·토큰 ↑."
  },
  {
@@ -149,7 +149,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -158,7 +158,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 158,
   "out": "* toggles.rerank_llm               True → False"
  },
  {
@@ -167,7 +167,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 158,
   "out": "applied ['token']: toggles=13 tuning=4 settings=5 conflicts=0 (이번 프로세스만; --save 로 저장)"
  },
  {
@@ -176,8 +176,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
-  "out": "answer_system       908 chars (edited)  C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\prompts\\answer_syst"
+  "ms": 170,
+  "out": "answer_system      1236 chars (edited)  C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\prompts\\answer_syst"
  },
  {
   "name": "prompts show",
@@ -185,7 +185,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 157,
   "out": "# 답변 가이드 — 모뎀 PHY 임베디드 개발자용 (근거 누락 없이 · 구조화 · 지어내지 않기)"
  },
  {
@@ -194,8 +194,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 146,
-  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\prompts\\answer_guide.md"
+  "ms": 156,
+  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\prompts\\answer_guide.md"
  },
  {
   "name": "prompts reset",
@@ -203,8 +203,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
-  "out": "reset: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\prompts\\rerank.md"
+  "ms": 158,
+  "out": "reset: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\prompts\\rerank.md"
  },
  {
   "name": "corpus types",
@@ -212,7 +212,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 166,
   "out": "cl             Change List (수정 반영)                      id=^CL-\\d{3,8}$"
  },
  {
@@ -221,7 +221,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 164,
+  "ms": 162,
   "out": "{"
  },
  {
@@ -230,7 +230,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 162,
   "out": "---"
  },
  {
@@ -242,7 +242,7 @@
    1
   ],
   "ok": true,
-  "ms": 152,
+  "ms": 162,
   "out": "doc_type=issue id=ISSUE-2001 date=2026-06-04(front_matter) inferred=False"
  },
  {
@@ -251,7 +251,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 140,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -260,7 +260,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -269,8 +269,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 146,
-  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\query_rules.json"
+  "ms": 157,
+  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\query_rules.json"
  },
  {
   "name": "rules add",
@@ -278,7 +278,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 163,
   "out": "{"
  },
  {
@@ -287,7 +287,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 164,
   "out": "{"
  },
  {
@@ -296,7 +296,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 159,
   "out": "removed"
  },
  {
@@ -305,7 +305,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 165,
   "out": "{"
  },
  {
@@ -314,7 +314,7 @@
   "code": 4,
   "expect": 4,
   "ok": true,
-  "ms": 150,
+  "ms": 162,
   "out": "!! 파괴적 작업: 색인 완전 초기화"
  },
  {
@@ -323,7 +323,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 383,
+  "ms": 410,
   "out": "  · reset: cleared 13 tables, kept_logs=True, removed_wiki_pages=0"
  },
  {
@@ -332,7 +332,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 189,
+  "ms": 194,
   "out": "  · health: ok (fail=0 warn=0)"
  },
  {
@@ -341,7 +341,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
+  "ms": 162,
   "out": "running=False"
  },
  {
@@ -350,7 +350,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
+  "ms": 165,
   "out": "verify: OK (problems=0)"
  },
  {
@@ -359,7 +359,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 168,
   "out": "verify: OK (problems=0) fixed={\"doc_nchunks\": 38}"
  },
  {
@@ -368,7 +368,7 @@
   "code": 4,
   "expect": 4,
   "ok": true,
-  "ms": 152,
+  "ms": 164,
   "out": "!! 파괴적 작업: 채널 리빌드: fts"
  },
  {
@@ -377,7 +377,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 179,
+  "ms": 192,
   "out": "  · fts reindexed: 190 chunks in 38 docs"
  },
  {
@@ -386,7 +386,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 177,
+  "ms": 190,
   "out": "  · embedded 0 chunks (todo 0, cache 0, failed 0, pruned other provider 0)"
  },
  {
@@ -395,7 +395,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 223,
+  "ms": 232,
   "out": "  · embedding 190/190 (batch 97, failed 0, cache 0)"
  },
  {
@@ -404,8 +404,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 263,
-  "out": "  · graph rebuilt: entities touched=65 explicit=52 id_links=92"
+  "ms": 305,
+  "out": "  · graph rebuilt: entities touched=77 explicit=52 id_links=92"
  },
  {
   "name": "build --channels fts",
@@ -413,7 +413,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 178,
+  "ms": 192,
   "out": "{"
  },
  {
@@ -422,7 +422,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 157,
+  "ms": 166,
   "out": "build aborted: unknown channel(s) ['nope'] (fts|vector|graph)"
  },
  {
@@ -431,8 +431,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
-  "out": "lint summary: {\"docs\": 38, \"errors\": 0, \"warnings\": 4, \"inferred\": 2, \"ts\": 1789592288.394471}"
+  "ms": 158,
+  "out": "lint summary: {\"docs\": 38, \"errors\": 0, \"warnings\": 4, \"inferred\": 2, \"ts\": 1789876517.1673713}"
  },
  {
   "name": "corpus stats",
@@ -440,7 +440,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -449,7 +449,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 161,
   "out": "embedder: hash/hash-ngram-256 dim=256 dtype=float32"
  },
  {
@@ -458,7 +458,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -467,7 +467,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 161,
   "out": "["
  },
  {
@@ -476,7 +476,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 161,
   "out": "{"
  },
  {
@@ -485,7 +485,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 204,
+  "ms": 227,
   "out": "Q: ISSUE-2001 의 원인과 수정 CL 은?"
  },
  {
@@ -494,7 +494,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 208,
+  "ms": 225,
   "out": "{"
  },
  {
@@ -503,7 +503,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 191,
+  "ms": 204,
   "out": "{"
  },
  {
@@ -512,7 +512,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 189,
+  "ms": 209,
   "out": "Q: ISSUE-2001 원인"
  },
  {
@@ -521,7 +521,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 204,
+  "ms": 226,
   "out": "Q: AGC 수렴 지연 원인"
  },
  {
@@ -530,7 +530,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 251,
+  "ms": 275,
   "out": "Q: 블루투스 오디오 코덱 aptX 지연"
  },
  {
@@ -539,8 +539,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "["
+  "ms": 165,
+  "out": "채널 fts · 조건 fts · k=8 — 합집합 8 · 교집합 8 · 표시 8"
  },
  {
   "name": "search vector",
@@ -548,8 +548,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
-  "out": "["
+  "ms": 163,
+  "out": "채널 vector · 조건 vector · k=3 — 합집합 3 · 교집합 3 · 표시 3"
  },
  {
   "name": "search graph",
@@ -557,7 +557,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 166,
   "out": "{"
  },
  {
@@ -566,7 +566,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 159,
   "out": "p1    doc=None chunk=corpus/imported/verify/NOTE-verify_cli_result.md#12 when={\"query\": \"ISSUE-2001 의 원인과 수정 C"
  },
  {
@@ -575,7 +575,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -584,7 +584,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -593,7 +593,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 163,
   "out": "removed"
  },
  {
@@ -602,8 +602,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 1317,
-  "out": "✔ rank=5 term=0.50  ISSUE-2001 의 원인과 수정 CL 은?"
+  "ms": 1639,
+  "out": "✔ rank=5    term=0.50  ISSUE-2001 의 원인과 수정 CL 은?"
  },
  {
   "name": "eval --matrix",
@@ -611,7 +611,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 5249,
+  "ms": 6173,
   "out": "fts          hit@5=0.840 mrr=0.790 term_recall=0.960"
  },
  {
@@ -620,8 +620,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 1359,
-  "out": "trial #1 a: {\"n\": 25, \"hit@k\": 1.0, \"mrr\": 0.848, \"term_recall\": 0.98, \"answer_term_recall\": 0.04, \"total_toke"
+  "ms": 1670,
+  "out": "문항 27개를 실제 질의 이력에서 가져왔습니다 (최근 7일) — 정답이 없어 hit@k·mrr·term_recall 은 계산하지 않습니다"
  },
  {
   "name": "trial run b",
@@ -629,8 +629,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 1333,
-  "out": "trial #2 b: {\"n\": 25, \"hit@k\": 1.0, \"mrr\": 0.848, \"term_recall\": 0.98, \"answer_term_recall\": 0.04, \"total_toke"
+  "ms": 1646,
+  "out": "문항 27개를 실제 질의 이력에서 가져왔습니다 (최근 7일) — 정답이 없어 hit@k·mrr·term_recall 은 계산하지 않습니다"
  },
  {
   "name": "trial list",
@@ -638,8 +638,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "#2    b                        v7   n=25  hit=1.0   mrr=0.848 g=1.0   insuf=0.04  ms=36.3    09-17 05:58"
+  "ms": 164,
+  "out": "#2    b                      질의이력   v7   n=27  hit=—     mrr=—     g=1.0   insuf=0.037 ms=42.9    09-20 12:55"
  },
  {
   "name": "trial compare",
@@ -647,7 +647,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 163,
   "out": "# Trial 비교: a vs b"
  },
  {
@@ -656,7 +656,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
+  "ms": 164,
   "out": "# trial a (#1)"
  },
  {
@@ -665,7 +665,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 163,
   "out": "{"
  },
  {
@@ -674,7 +674,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 162,
   "out": "{"
  },
  {
@@ -683,8 +683,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 2594,
-  "out": "rrf        hit@5=1.000 mrr=0.848 term_recall=0.980 avg_ms=37.5"
+  "ms": 3092,
+  "out": "rrf        hit@5=1.000 mrr=0.831 term_recall=0.980 avg_ms=47.2"
  },
  {
   "name": "forensic last",
@@ -692,8 +692,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "forensic #104 request=296 run=25a6b4613c15 verdict=weak groundedness=1.0"
+  "ms": 163,
+  "out": "forensic #104 request=300 run=96ea42c6e054 verdict=weak groundedness=1.0"
  },
  {
   "name": "forensic list",
@@ -701,8 +701,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
-  "out": "#104  req=296   weak         g=1.0   재전송타이머 초기화 누락"
+  "ms": 164,
+  "out": "판정별 전체: weak 90 · insufficient 14   (지금 보기: 문제 건만)"
  },
  {
   "name": "forensic summary",
@@ -710,7 +710,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 161,
   "out": "{"
  },
  {
@@ -719,8 +719,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
-  "out": "forensic #105 request=9 run=33843478d84b verdict=sufficient groundedness=1.0"
+  "ms": 166,
+  "out": "forensic #105 request=9 run=17b01d704bfd verdict=sufficient groundedness=1.0"
  },
  {
   "name": "forensic <id> --llm",
@@ -728,8 +728,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
-  "out": "forensic #105 request=9 run=33843478d84b verdict=sufficient groundedness=1.0"
+  "ms": 166,
+  "out": "forensic #105 request=9 run=17b01d704bfd verdict=sufficient groundedness=1.0"
  },
  {
   "name": "forensic expect (cited)",
@@ -737,7 +737,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 200,
+  "ms": 218,
   "out": "forensic expect — request #9  Q: HW rev B1 에서 t_setup 은 몇 ns 인가?"
  },
  {
@@ -746,7 +746,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 192,
+  "ms": 210,
   "out": "{"
  },
  {
@@ -755,7 +755,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 156,
+  "ms": 161,
   "out": "기대 결과를 하나 이상 주세요: --doc <ext_id|doc_id 부분> · --term <용어> · --chunk <chunk_id>"
  },
  {
@@ -764,7 +764,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 165,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -773,7 +773,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -782,7 +782,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 163,
+  "ms": 173,
   "out": "{"
  },
  {
@@ -791,7 +791,82 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 160,
+  "out": "#31    09-20 12:55  expectati negative   👎  str=1.00  TC-RX-DMA-001 사전 조건"
+ },
+ {
+  "name": "eval --check (평가셋 신뢰도)",
+  "argv": "eval --check --json",
+  "code": 1,
+  "expect": [
+   0,
+   1
+  ],
+  "ok": true,
+  "ms": 176,
+  "out": "{"
+ },
+ {
+  "name": "eval --retrieval-only (토큰 0)",
+  "argv": "eval --retrieval-only --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 1546,
+  "out": "{"
+ },
+ {
+  "name": "eval --retrieval-only --forensic",
+  "argv": "eval --retrieval-only --forensic --forensic-max 2 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 1654,
+  "out": "{"
+ },
+ {
+  "name": "memory boosts (지금 받는 피드백 부스트)",
+  "argv": "memory boosts --limit 10",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "피드백 부스트 10건 (반감기 60일 · fusion 의 post-boost 로 들어갑니다)"
+ },
+ {
+  "name": "memory decaying (사라지기 직전 제안)",
+  "argv": "memory decaying --limit 10",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "감쇠 중인 미승인 제안 10건 (임계 0.2 아래로 내려가면 archived)"
+ },
+ {
+  "name": "memory episodes --only negative",
+  "argv": "memory episodes --only negative --limit 5",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "#33    09-20 12:55  expectati negative   👎  str=1.00  FIFO 임계값 기본값이 바뀐 리비전"
+ },
+ {
+  "name": "memory episodes --q 검색",
+  "argv": "memory episodes --q ISSUE --limit 5",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "#23    09-20 12:55  query     sufficient     str=1.00  ISSUE-2006 관련 코딩 규칙"
+ },
+ {
+  "name": "memory boosts --json",
+  "argv": "memory boosts --json --limit 5",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 225,
   "out": "["
  },
  {
@@ -800,7 +875,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 176,
   "out": "auto_apply=False min_conf=0.80 pending=14 applied=0 synonyms=0"
  },
  {
@@ -809,7 +884,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
+  "ms": 173,
   "out": "["
  },
  {
@@ -818,7 +893,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 172,
   "out": "{"
  },
  {
@@ -827,7 +902,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 165,
   "out": "{"
  },
  {
@@ -836,7 +911,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 240,
+  "ms": 171,
   "out": "{"
  },
  {
@@ -845,7 +920,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
+  "ms": 169,
   "out": "{"
  },
  {
@@ -854,8 +929,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 199,
-  "out": "wiki pages written: 54 -> C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\wiki"
+  "ms": 211,
+  "out": "wiki pages written: 66 -> C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\wiki"
  },
  {
   "name": "docs",
@@ -863,7 +938,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 164,
   "out": "sample_corpus_modem/README.md                                          md    chunks=1"
  },
  {
@@ -872,7 +947,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 158,
+  "ms": 164,
   "out": "{"
  },
  {
@@ -881,8 +956,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
-  "out": "index: docs=38 chunks=190 embeddings=190 entities=65 relations=397 db=36.7MB wal=0.0MB"
+  "ms": 160,
+  "out": "index: docs=38 chunks=190 embeddings=190 entities=77 relations=479 db=50.4MB wal=0.0MB"
  },
  {
   "name": "graph",
@@ -890,8 +965,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
-  "out": "nodes=10 edges=41 communities=5 provenance={\"cooccur\": 253, \"explicit\": 52, \"rule\": 92}"
+  "ms": 161,
+  "out": "nodes=10 edges=41 communities=9 provenance={\"cooccur\": 335, \"explicit\": 52, \"rule\": 92}"
  },
  {
   "name": "graph --provenance",
@@ -899,8 +974,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
-  "out": "nodes=5 edges=0 communities=5 provenance={\"cooccur\": 253, \"explicit\": 52, \"rule\": 92}"
+  "ms": 161,
+  "out": "nodes=5 edges=0 communities=9 provenance={\"cooccur\": 335, \"explicit\": 52, \"rule\": 92}"
  },
  {
   "name": "entity",
@@ -908,8 +983,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 234,
-  "out": "ISSUE-2001 (issue) src=rule deg=32 C0"
+  "ms": 158,
+  "out": "ISSUE-2001 (issue) src=rule deg=33 C3"
  },
  {
   "name": "entity (missing)",
@@ -917,7 +992,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 164,
+  "ms": 196,
   "out": "not found. candidates: []"
  },
  {
@@ -926,8 +1001,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 163,
-  "out": "#299   09-17 05:58:26 eval     1251.3 ms llm=162 tok=238570/7459 sql=149593 eval k=5 n=25 hit@k=1.000"
+  "ms": 174,
+  "out": "#355   09-20 12:55:43 eval     1363.0 ms llm=10 tok=84/296 sql=115833 eval k=5 n=25 hit@k=0.920"
  },
  {
   "name": "requests last",
@@ -935,8 +1010,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "#299 eval  eval k=5 n=25 hit@k=1.000  (1251.3 ms, debug_level=1)"
+  "ms": 171,
+  "out": "#355 eval  eval k=5 n=25 hit@k=0.920  (1363.0 ms, debug_level=1)"
  },
  {
   "name": "requests show",
@@ -944,8 +1019,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
-  "out": "#9 query  HW rev B1 에서 t_setup 은 몇 ns 인가?  (36.8 ms, debug_level=1)"
+  "ms": 167,
+  "out": "#9 query  HW rev B1 에서 t_setup 은 몇 ns 인가?  (43.3 ms, debug_level=1)"
  },
  {
   "name": "logs tail",
@@ -953,8 +1028,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 200,
-  "out": "2026-09-17 05:58:27 INFO    query  df8fc96fb775 query finish 25.8ms {\"run_id\": \"df8fc96fb775\", \"total_ms\": 25."
+  "ms": 222,
+  "out": "2026-09-20 12:55:43 INFO    query  ce40868cb4eb query finish 85.6ms {\"run_id\": \"ce40868cb4eb\", \"total_ms\": 85."
  },
  {
   "name": "logs files",
@@ -962,8 +1037,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
-  "out": "audit.jsonl          6210 B  09-17 05:58:29"
+  "ms": 160,
+  "out": "audit.jsonl          7194 B  09-20 12:55:45"
  },
  {
   "name": "logs grep --text",
@@ -971,8 +1046,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 254,
-  "out": "2026-09-17 05:58:24 INFO    query  5d2aed15677f query_expand done 0.1ms {\"stage\": \"query_expand\", \"ms\": 0.1, \""
+  "ms": 299,
+  "out": "2026-09-20 12:55:41 INFO    query  43b3de8de9f0 fts_search_alt done 1.5ms {\"stage\": \"fts_search_alt\", \"ms\": 1."
  },
  {
   "name": "logs grep --request",
@@ -980,8 +1055,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 190,
-  "out": "2026-09-17 05:58:11 INFO    query  33843478d84b query start {\"run_id\": \"33843478d84b\"}"
+  "ms": 210,
+  "out": "2026-09-20 12:55:20 INFO    query  17b01d704bfd query start {\"run_id\": \"17b01d704bfd\"}"
  },
  {
   "name": "logs dir",
@@ -989,8 +1064,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 148,
-  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\logs"
+  "ms": 164,
+  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\logs"
  },
  {
   "name": "arch",
@@ -998,7 +1073,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 147,
+  "ms": 158,
   "out": "== build — Data Build (색인)"
  },
  {
@@ -1007,7 +1082,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 159,
   "out": "{"
  },
  {
@@ -1016,7 +1091,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 422,
+  "ms": 484,
   "out": "{"
  },
  {
@@ -1025,7 +1100,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
+  "ms": 166,
   "out": "{"
  },
  {
@@ -1034,7 +1109,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 167,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -1043,7 +1118,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 161,
+  "ms": 158,
   "out": "{"
  },
  {
@@ -1052,7 +1127,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 165,
   "out": "{"
  },
  {
@@ -1061,7 +1136,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 159,
   "out": "{"
  },
  {
@@ -1070,8 +1145,8 @@
   "code": 4,
   "expect": 4,
   "ok": true,
-  "ms": 150,
-  "out": "!! 파괴적 작업: requests 테이블(요청 프로파일 이력 299건) 삭제"
+  "ms": 159,
+  "out": "!! 파괴적 작업: requests 테이블(요청 프로파일 이력 355건) 삭제"
  },
  {
   "name": "maintenance purge_requests --yes",
@@ -1079,7 +1154,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 174,
+  "ms": 188,
   "out": "{"
  },
  {
@@ -1088,7 +1163,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 164,
   "out": "{"
  },
  {
@@ -1097,8 +1172,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 1421,
-  "out": "  · precompute 1/27: ISSUE-2001 의 원인과 수정 CL 은?"
+  "ms": 1629,
+  "out": "  · precompute 1/25: ISSUE-2001 의 원인과 수정 CL 은?"
  },
  {
   "name": "precompute doc-vectors",
@@ -1106,7 +1181,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 170,
+  "ms": 181,
   "out": "{"
  },
  {
@@ -1115,7 +1190,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
+  "ms": 165,
   "out": "{"
  },
  {
@@ -1124,7 +1199,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 162,
   "out": "peer_wiki  enabled=False http  다른 팀의 LLM Wiki(같은 소프트웨어) 또는 MCP 를 제공하는 사내 RAG — Streamable HTTP. 토큰은 그 서버에서 api"
  },
  {
@@ -1133,7 +1208,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 230,
+  "ms": 240,
   "out": "["
  },
  {
@@ -1142,7 +1217,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 224,
+  "ms": 242,
   "out": "{"
  },
  {
@@ -1151,7 +1226,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 159,
   "out": "[]"
  },
  {
@@ -1160,7 +1235,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 222,
+  "ms": 236,
   "out": "{"
  },
  {
@@ -1169,7 +1244,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 152,
+  "ms": 159,
   "out": "usage: mcp-source fetch <name> <tool> [json args]"
  },
  {
@@ -1178,7 +1253,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 232,
+  "ms": 235,
   "out": "["
  },
  {
@@ -1187,7 +1262,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 151,
+  "ms": 162,
   "out": "unknown source nope"
  },
  {
@@ -1196,7 +1271,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 224,
+  "ms": 235,
   "out": "ext hits=1"
  },
  {
@@ -1205,7 +1280,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
+  "ms": 164,
   "out": "{"
  },
  {
@@ -1214,7 +1289,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 284,
+  "ms": 306,
   "out": "ext in hits=True"
  },
  {
@@ -1223,7 +1298,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 314,
+  "ms": 356,
   "out": "{"
  },
  {
@@ -1232,8 +1307,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 293,
-  "out": "tools=15 federated=['mock__search']"
+  "ms": 316,
+  "out": "tools=21 federated=['mock__search']"
  },
  {
   "name": "snapshot create",
@@ -1241,7 +1316,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 188,
+  "ms": 212,
   "out": "{"
  },
  {
@@ -1250,26 +1325,26 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
-  "out": "p3_1789592309                    evolve                 36.9MB  {} "
+  "ms": 165,
+  "out": "20260920-125555_t1               t1                     50.6MB  {\"docs\": 38, \"chunks\": 190, \"embeddings\": 190,"
  },
  {
   "name": "snapshot restore (no --yes)",
-  "argv": "snapshot restore 20260917-055838_t1",
+  "argv": "snapshot restore 20260920-125555_t1",
   "code": 4,
   "expect": 4,
   "ok": true,
-  "ms": 153,
-  "out": "!! 파괴적 작업: 스냅샷 20260917-055838_t1 로 복원"
+  "ms": 162,
+  "out": "!! 파괴적 작업: 스냅샷 20260920-125555_t1 로 복원"
  },
  {
   "name": "snapshot restore --yes",
-  "argv": "snapshot restore 20260917-055838_t1 --yes",
+  "argv": "snapshot restore 20260920-125555_t1 --yes",
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 234,
-  "out": "restored 20260917-055838_t1: {\"docs\": 38, \"chunks\": 190, \"embeddings\": 190, \"entities\": 65, \"relations\": 397, "
+  "ms": 261,
+  "out": "restored 20260920-125555_t1: {\"docs\": 38, \"chunks\": 190, \"embeddings\": 190, \"entities\": 77, \"relations\": 479, "
  },
  {
   "name": "snapshot restore missing",
@@ -1281,7 +1356,7 @@
    3
   ],
   "ok": true,
-  "ms": 171,
+  "ms": 188,
   "out": ""
  },
  {
@@ -1290,7 +1365,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 152,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -1299,7 +1374,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 158,
   "out": "kh82.kim         admin     kh82.kim"
  },
  {
@@ -1308,7 +1383,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 175,
+  "ms": 184,
   "out": "added bob role=class1"
  },
  {
@@ -1317,7 +1392,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 153,
+  "ms": 159,
   "out": "error: role 은 viewer/class3/class2/class1/builder/admin 중 하나"
  },
  {
@@ -1326,7 +1401,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 144,
+  "ms": 161,
   "out": "role updated: bob → builder"
  },
  {
@@ -1335,7 +1410,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 176,
+  "ms": 185,
   "out": "password updated: bob"
  },
  {
@@ -1344,8 +1419,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
-  "out": "file: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\security.json"
+  "ms": 161,
+  "out": "file: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\security.json"
  },
  {
   "name": "security init (exists)",
@@ -1353,8 +1428,8 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 148,
-  "out": "already exists: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\security.json"
+  "ms": 159,
+  "out": "already exists: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\security.json"
  },
  {
   "name": "security audit",
@@ -1362,8 +1437,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
-  "out": "2026-09-17 05:58:39 user         admin     ok    admin        cli:users add"
+  "ms": 158,
+  "out": "2026-09-20 12:55:56 user         admin     ok    admin        cli:users add"
  },
  {
   "name": "security perms",
@@ -1371,7 +1446,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
+  "ms": 158,
   "out": "역할 (낮→높): viewer < class3 < class2 < class1 < builder < admin"
  },
  {
@@ -1380,7 +1455,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 158,
+  "ms": 164,
   "out": "역할 (낮→높): viewer < class3 < class2 < class1 < builder < admin"
  },
  {
@@ -1392,7 +1467,7 @@
    1
   ],
   "ok": true,
-  "ms": 159,
+  "ms": 162,
   "out": "역할 (낮→높): viewer < class3 < class2 < class1 < builder < admin"
  },
  {
@@ -1401,8 +1476,125 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
+  "ms": 161,
   "out": "역할 (낮→높): viewer < class3 < class2 < class1 < builder < admin"
+ },
+ {
+  "name": "query --set (전역 키)",
+  "argv": "query ISSUE-2001 원인 --no-log --json --set llm_timeout=9,llm_retries=1",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 222,
+  "out": "{"
+ },
+ {
+  "name": "query --set (역할 단축키)",
+  "argv": "query ISSUE-2001 원인 --no-log --json --set answer_timeout_s=30",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 216,
+  "out": "{"
+ },
+ {
+  "name": "query --set (여러 번)",
+  "argv": "query ISSUE-2001 원인 --no-log --json --set llm_retries=1 --set llm_timeout=9",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 213,
+  "out": "{"
+ },
+ {
+  "name": "query --set 형식 오류 → 2",
+  "argv": "query x --no-log --set llm_timeout",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 165,
+  "out": "!! --set: 'key=value' 형태여야 합니다: 'llm_timeout'"
+ },
+ {
+  "name": "query --set 모르는 키 → 2 (조용히 버리지 않는다)",
+  "argv": "query x --no-log --set nope_zzz=1",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 159,
+  "out": "!! --set: 요청 단위 overrides 에 알 수 없는 키: nope_zzz — `config show --effective` 로 키 이름을 확인하세요 (튜닝 값은 overrides.tuni"
+ },
+ {
+  "name": "security docacl show (파일 없음)",
+  "argv": "security docacl show",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 158,
+  "out": "file: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\docacl.json  (파일 없음 — 아무도 막지 않음. 'security docacl ini"
+ },
+ {
+  "name": "security docacl init",
+  "argv": "security docacl init",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "created C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\docacl.json — setup/docacl.example.json 의 rules 를 참"
+ },
+ {
+  "name": "security docacl init (exists)",
+  "argv": "security docacl init",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 159,
+  "out": "already exists: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\docacl.json"
+ },
+ {
+  "name": "security docacl check (규칙 0 → 0건 가려짐)",
+  "argv": "security docacl check --role viewer --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "{"
+ },
+ {
+  "name": "security docacl show (규칙 1개)",
+  "argv": "security docacl show",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "file: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\docacl.json"
+ },
+ {
+  "name": "security docacl check viewer (가려짐 > 0)",
+  "argv": "security docacl check --role viewer --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "{"
+ },
+ {
+  "name": "security docacl check admin (0건)",
+  "argv": "security docacl check --role admin --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "{"
+ },
+ {
+  "name": "security docacl 잘못된 하위 명령",
+  "argv": "security docacl nope",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 160,
+  "out": "usage: security docacl [show | check --role <역할> | init]"
  },
  {
   "name": "apikey add",
@@ -1410,7 +1602,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 152,
   "out": "API key created (지금만 표시됩니다 — 안전한 곳에 보관):"
  },
  {
@@ -1419,8 +1611,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
-  "out": "a9aa0b67   zzz                      viewer   created=09-17 00:23 last_used=- "
+  "ms": 166,
+  "out": "585416e4   k1                       viewer   created=09-20 12:56 last_used=- "
  },
  {
   "name": "--user login ok",
@@ -1428,7 +1620,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 176,
+  "ms": 191,
   "out": "{"
  },
  {
@@ -1437,7 +1629,7 @@
   "code": 5,
   "expect": 5,
   "ok": true,
-  "ms": 114,
+  "ms": 117,
   "out": "!! 로그인 실패: bob"
  },
  {
@@ -1446,7 +1638,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 149,
+  "ms": 161,
   "out": "{"
  },
  {
@@ -1455,7 +1647,7 @@
   "code": 5,
   "expect": 5,
   "ok": true,
-  "ms": 91,
+  "ms": 95,
   "out": "!! LLMWIKI_API_KEY 가 올바르지 않습니다"
  },
  {
@@ -1464,7 +1656,7 @@
   "code": 5,
   "expect": 5,
   "ok": true,
-  "ms": 91,
+  "ms": 95,
   "out": "!! 권한 부족: 'cli:build' 작업(색인 갱신(복구 가능))은 class1 이상만 실행할 수 있습니다 (현재 viewer@cli). --user <id> 로 로그인하거나 security.j"
  },
  {
@@ -1473,7 +1665,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 202,
+  "ms": 204,
   "out": "Q: ISSUE-2001"
  },
  {
@@ -1482,7 +1674,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 222,
+  "ms": 213,
   "out": "  · fts reindexed: 190 chunks in 38 docs"
  },
  {
@@ -1491,7 +1683,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 164,
   "out": "removed"
  },
  {
@@ -1500,7 +1692,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 159,
   "out": "removed"
  },
  {
@@ -1509,7 +1701,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 160,
   "out": "watching ['C:\\\\Users\\\\user\\\\project\\\\llm-wiki-rag-selfevolving\\\\setup\\\\sample_corpus_modem'] every 30s (Ctrl+C"
  },
  {
@@ -1518,8 +1710,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
-  "out": "responses=3 tools=14"
+  "ms": 169,
+  "out": "responses=3 tools=20"
  },
  {
   "name": "mcp --connect (bad url → bridge error json)",
@@ -1527,7 +1719,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 2191,
+  "ms": 2210,
   "out": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32000, \"message\": \"remote MCP HTTP 599: <urlopen error [WinErro"
  },
  {
@@ -1536,7 +1728,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 161,
+  "ms": 167,
   "out": "keys=['bridge_json', 'http_claude_code', 'http_json', 'stdio_claude_code', 'stdio_json']"
  },
  {
@@ -1545,7 +1737,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 161,
+  "ms": 162,
   "out": "{"
  },
  {
@@ -1554,7 +1746,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
+  "ms": 160,
   "out": "corpus_dirs                        = [\"C:\\\\Users\\\\user\\\\project\\\\ll [file] (기본 [\"C:\\\\Users\\\\user\\\\p)  LLMWIKI_"
  },
  {
@@ -1563,7 +1755,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 322,
+  "ms": 356,
   "out": "Q: CL-55302 는 어떤 이슈를 수정했나?"
  },
  {
@@ -1572,8 +1764,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 174,
-  "out": "분석 리포트: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\logs\\analysis\\req_331.md  (json: C:\\Users\\user\\AppD"
+  "ms": 185,
+  "out": "분석 리포트: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\logs\\analysis\\req_388.md  (json: C:\\Users\\user\\AppD"
  },
  {
   "name": "analyze last --print --focus speed",
@@ -1581,8 +1773,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 174,
-  "out": "md chars=112691"
+  "ms": 182,
+  "out": "md chars=114855"
  },
  {
   "name": "analyze (unknown id)",
@@ -1590,7 +1782,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 153,
+  "ms": 162,
   "out": "ERROR: request 999999 not found"
  },
  {
@@ -1599,7 +1791,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 179,
+  "ms": 187,
   "out": "{"
  },
  {
@@ -1608,7 +1800,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 164,
   "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
  },
  {
@@ -1617,7 +1809,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 172,
   "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
  },
  {
@@ -1626,7 +1818,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 161,
   "out": "written: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\docs\\TUNING.md"
  },
  {
@@ -1635,8 +1827,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 163,
-  "out": "모델 카탈로그 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\models.json)"
+  "ms": 162,
+  "out": "모델 카탈로그 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json)"
  },
  {
   "name": "models list --role rerank",
@@ -1644,8 +1836,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
-  "out": "모델 카탈로그 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\models.json) — role=rerank"
+  "ms": 160,
+  "out": "모델 카탈로그 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json) — role=rerank"
  },
  {
   "name": "models policy",
@@ -1653,7 +1845,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 151,
+  "ms": 164,
   "out": "역할별 LLM 정책 (llm_roles.<role>.<attr> > config 전역 > 기본값; headless 는 agents.json timeout_s/retries 가 전역보다 우선)"
  },
  {
@@ -1662,8 +1854,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
-  "out": "added: verify-model (ollama) → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\models.json"
+  "ms": 164,
+  "out": "added: verify-model (ollama) → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json"
  },
  {
   "name": "models catalog add (임베딩)",
@@ -1671,8 +1863,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 158,
-  "out": "added: verify-embed (ollama) → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\models.json"
+  "ms": 163,
+  "out": "added: verify-embed (ollama) → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json"
  },
  {
   "name": "models catalog remove (임베딩)",
@@ -1680,7 +1872,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 162,
   "out": "removed: verify-embed"
  },
  {
@@ -1689,7 +1881,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 150,
+  "ms": 159,
   "out": "{"
  },
  {
@@ -1698,7 +1890,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 160,
   "out": "{"
  },
  {
@@ -1707,7 +1899,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
+  "ms": 165,
   "out": "removed: verify-model"
  },
  {
@@ -1716,7 +1908,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 152,
+  "ms": 160,
   "out": "ERROR: 카탈로그에 없는 모델: nope-model"
  },
  {
@@ -1725,8 +1917,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 4241,
-  "out": "ollama (http://localhost:11434): 1 models"
+  "ms": 4256,
+  "out": "ollama (http://localhost:11434): 2 models"
  },
  {
   "name": "models set 역할 정책",
@@ -1734,8 +1926,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 162,
-  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='')"
+  "ms": 172,
+  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='bge-m3')"
  },
  {
   "name": "models policy (역할 반영)",
@@ -1743,7 +1935,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 163,
+  "ms": 166,
   "out": "역할별 LLM 정책 (llm_roles.<role>.<attr> > config 전역 > 기본값; headless 는 agents.json timeout_s/retries 가 전역보다 우선)"
  },
  {
@@ -1752,8 +1944,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 157,
-  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='')"
+  "ms": 163,
+  "out": "embedder: hash model=hash-ngram-256 dim=256 available=True (embed_provider=hash embed_model='bge-m3')"
  },
  {
   "name": "schedule list (비어 있음)",
@@ -1761,8 +1953,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 164,
-  "out": "스케줄 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\schedule.json) — 서버(serve)가 실행 중일 때 동작; 서버 없이 한 번 실행: "
+  "ms": 167,
+  "out": "스케줄 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\schedule.json) — 서버(serve)가 실행 중일 때 동작; 서버 없이 한 번 실행: "
  },
  {
   "name": "schedule add",
@@ -1770,8 +1962,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
-  "out": "saved: verify-maint → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\schedule.json"
+  "ms": 162,
+  "out": "saved: verify-maint → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\schedule.json"
  },
  {
   "name": "schedule list",
@@ -1779,8 +1971,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 159,
-  "out": "스케줄 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\schedule.json) — 서버(serve)가 실행 중일 때 동작; 서버 없이 한 번 실행: "
+  "ms": 168,
+  "out": "스케줄 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\schedule.json) — 서버(serve)가 실행 중일 때 동작; 서버 없이 한 번 실행: "
  },
  {
   "name": "schedule show",
@@ -1788,7 +1980,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 162,
+  "ms": 169,
   "out": "{"
  },
  {
@@ -1797,7 +1989,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 164,
   "out": "  OK   verify-maint"
  },
  {
@@ -1806,8 +1998,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 669,
-  "out": "verify-maint: done (3 ms) {\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 0.0, \"stats\": {\"docs\": 38, \"chunks\": "
+  "ms": 181,
+  "out": "verify-maint: done (2 ms) {\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 0.1, \"stats\": {\"docs\": 38, \"chunks\": "
  },
  {
   "name": "schedule history",
@@ -1815,8 +2007,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 159,
-  "out": "  09-17 05:58:54 verify-maint         done           3ms {\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 0.0, \""
+  "ms": 164,
+  "out": "  09-20 12:56:14 verify-maint         done           2ms {\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 0.1, \""
  },
  {
   "name": "schedule disable",
@@ -1824,7 +2016,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 172,
   "out": "disable: verify-maint"
  },
  {
@@ -1833,17 +2025,17 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 154,
+  "ms": 182,
   "out": "enable: verify-maint"
  },
  {
   "name": "schedule add (query 동작)",
-  "argv": "schedule add --task {\"name\": \"verify-digest\", \"at\": \"03:00\", \"days\": [\"mon\"], \"action\": {\"type\": \"query\", \"q\": \"ISSUE-2001 \\uc6d0\\uc778\", \"out\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwverify_lww2w7xa\\\\digest.md\", \"log\": false}}",
+  "argv": "schedule add --task {\"name\": \"verify-digest\", \"at\": \"03:00\", \"days\": [\"mon\"], \"action\": {\"type\": \"query\", \"q\": \"ISSUE-2001 \\uc6d0\\uc778\", \"out\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwverify_rcowdfga\\\\digest.md\", \"log\": false}}",
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 160,
-  "out": "saved: verify-digest → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_lww2w7xa\\schedule.json"
+  "ms": 173,
+  "out": "saved: verify-digest → C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\schedule.json"
  },
  {
   "name": "schedule run (query)",
@@ -1851,8 +2043,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 677,
-  "out": "verify-digest: done (35 ms) {\"request_id\": 332, \"answer_mode\": \"llm\", \"out\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\"
+  "ms": 686,
+  "out": "verify-digest: done (42 ms) {\"request_id\": 389, \"answer_mode\": \"llm\", \"out\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\"
  },
  {
   "name": "schedule add (잘못된 cron)",
@@ -1860,7 +2052,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 158,
+  "ms": 165,
   "out": "ERROR: cron 은 5필드: 분 시 일 월 요일 (예 '0 3 * * *')"
  },
  {
@@ -1869,7 +2061,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 156,
+  "ms": 164,
   "out": "ERROR: bad2: action.type 은 build|fetch_url|python|cli|query|llm|headless|mcp_ingest|maintenance|http|evolve|me"
  },
  {
@@ -1878,7 +2070,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 153,
+  "ms": 163,
   "out": "no such task: nope"
  },
  {
@@ -1887,7 +2079,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 155,
+  "ms": 167,
   "out": "removed"
  },
  {
@@ -1896,7 +2088,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 154,
+  "ms": 165,
   "out": "no such task: nope"
  },
  {
@@ -1905,7 +2097,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 156,
+  "ms": 166,
   "out": "removed"
  },
  {
@@ -1914,7 +2106,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 4238,
+  "ms": 4251,
   "out": "ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했"
  },
  {
@@ -1923,7 +2115,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 152,
+  "ms": 166,
   "out": "usage: server cancel <token>"
  },
  {
@@ -1932,7 +2124,7 @@
   "code": 1,
   "expect": 1,
   "ok": true,
-  "ms": 2199,
+  "ms": 2210,
   "out": "ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했"
  },
  {
@@ -1941,7 +2133,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 205,
+  "ms": 218,
   "out": "Q: ISSUE-2001 원인"
  },
  {
@@ -1950,8 +2142,1080 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 225,
-  "out": "2026-09-17 05:58:26 INFO    query  12e37ea5f348 query start {\"run_id\": \"12e37ea5f348\"}"
+  "ms": 241,
+  "out": "2026-09-20 12:55:43 INFO    query  ce40868cb4eb doc_vector_search done 0.3ms {\"stage\": \"doc_vector_search\", \"m"
+ },
+ {
+  "name": "--version",
+  "argv": "--version",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 75,
+  "out": "llmwiki 3.3.0"
+ },
+ {
+  "name": "query --output fused --json",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --output fused --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 220,
+  "out": "result_type=candidates_fused candidates=24 lists=['doc_vector', 'fts', 'fts_alt1', 'fts_alt2']"
+ },
+ {
+  "name": "query --output reranked",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --output reranked --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 219,
+  "out": "Q: ISSUE-2001 의 원인과 수정 CL"
+ },
+ {
+  "name": "query --output reranked --json",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --output reranked --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 223,
+  "out": "{"
+ },
+ {
+  "name": "query --output context --json",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --output context --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 222,
+  "out": "context 3973자 refs=16"
+ },
+ {
+  "name": "query --output context (text)",
+  "argv": "query ISSUE-2001 의 원인 --output context --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 210,
+  "out": "Q: ISSUE-2001 의 원인"
+ },
+ {
+  "name": "query --answer-mode best_effort --json (근거 있음 → result_type=best_effort)",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --answer-mode best_effort --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 227,
+  "out": "result_type=best_effort answer_llm.meta.answer_mode=best_effort"
+ },
+ {
+  "name": "query --answer-mode best_effort --json (근거 부족 → LLM 호출·[BK])",
+  "argv": "query 블루투스 오디오 코덱 aptX 지연 --answer-mode best_effort --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 284,
+  "out": "result_type=best_effort verdict=insufficient answer_llm.enabled=True"
+ },
+ {
+  "name": "query --answer-mode best_effort --no-llm-answer",
+  "argv": "query ISSUE-2001 원인 --answer-mode best_effort --no-llm-answer --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 211,
+  "out": "answer_mode=extractive result_type=extractive"
+ },
+ {
+  "name": "query --answer-mode grounded",
+  "argv": "query ISSUE-2001 원인 --answer-mode grounded --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 209,
+  "out": "Q: ISSUE-2001 원인"
+ },
+ {
+  "name": "query --answer-mode bad → argparse 2",
+  "argv": "query x --answer-mode nope",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 76,
+  "out": ""
+ },
+ {
+  "name": "query --output bad → argparse 2",
+  "argv": "query x --output nope",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 72,
+  "out": ""
+ },
+ {
+  "name": "query --tuning fts_topk_n=1,fts_topk_w=1.5 (요청 단위)",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --tuning fts_topk_n=1,fts_topk_w=1.5 --output fused --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 220,
+  "out": "rrf_fuse.meta.topk={\"fts\": {\"n\": 1, \"topk_w\": 1.5, \"tail_w\": 1.0}}"
+ },
+ {
+  "name": "query --tuning (모르는 키) → 2",
+  "argv": "query x --tuning nope_key=1 --no-log",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 160,
+  "out": "!! --tuning: 'unknown tunable: nope_key'"
+ },
+ {
+  "name": "tuning set fts_topk_n=5 fts_topk_w=1.5",
+  "argv": "tuning set fts_topk_n=5 fts_topk_w=1.5",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
+ },
+ {
+  "name": "tuning show --stage rrf_fuse",
+  "argv": "tuning show --stage rrf_fuse",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "[rrf_fuse] 융합 · 부스트 (질의)"
+ },
+ {
+  "name": "tuning show --stage rrf_fuse --json",
+  "argv": "tuning show --stage rrf_fuse --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 158,
+  "out": "rrf_fuse 키 32개"
+ },
+ {
+  "name": "tuning.json 에 fts_topk_n=5 저장됨",
+  "argv": "(파일 확인)",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 0,
+  "out": "fts_topk_n=5 fts_topk_w=1.5"
+ },
+ {
+  "name": "tuning set channel_inject=fts:2,vector:1",
+  "argv": "tuning set channel_inject=fts:2,vector:1",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
+ },
+ {
+  "name": "query (channel_inject 적용)",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL --output reranked --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 231,
+  "out": "{"
+ },
+ {
+  "name": "tuning reset fts_topk_n",
+  "argv": "tuning reset fts_topk_n",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
+ },
+ {
+  "name": "tuning reset fts_topk_w",
+  "argv": "tuning reset fts_topk_w",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
+ },
+ {
+  "name": "tuning reset channel_inject",
+  "argv": "tuning reset channel_inject",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 166,
+  "out": "[chunk_index] 청킹 · FTS 색인 (빌드)"
+ },
+ {
+  "name": "query (스윕 기준, rerun_capture)",
+  "argv": "query ISSUE-2001 의 원인과 수정 CL 은? --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 226,
+  "out": "request_id=402 rerun.saved=True"
+ },
+ {
+  "name": "sweep keys",
+  "argv": "sweep keys",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 168,
+  "out": "expand_effort              role    choice  plan        choices=['low', 'medium', 'high']"
+ },
+ {
+  "name": "sweep keys --json",
+  "argv": "sweep keys --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "keys=194 points=9"
+ },
+ {
+  "name": "sweep run last --key rrf_k --range 10:40:10",
+  "argv": "sweep run last --key rrf_k --range 10:40:10",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 229,
+  "out": "sweep_id=20260920-125628-5ba2"
+ },
+ {
+  "name": "sweep run last --key claim_check (토글, 값 생략)",
+  "argv": "sweep run last --key claim_check --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 199,
+  "out": "{"
+ },
+ {
+  "name": "sweep run last --key answer_mode --values grounded,best_effort",
+  "argv": "sweep run last --key answer_mode --values grounded,best_effort --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 203,
+  "out": "{"
+ },
+ {
+  "name": "sweep list",
+  "argv": "sweep list",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 167,
+  "out": "sw_20260920-125629-7152   answer_mode            answer_llm  #408     2값 09-20 12:56"
+ },
+ {
+  "name": "sweep show <id>",
+  "argv": "sweep show 20260920-125628-5ba2",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "스윕 sw_20260920-125628-5ba2 — rrf_k = 10, 20, 30, 40  (config · 재시작점 rrf_fuse · 기준 요청 #402)"
+ },
+ {
+  "name": "sweep show <id> --json",
+  "argv": "sweep show sw_20260920-125628-5ba2 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "runs=4 changed=[0, 6, 6, 6]"
+ },
+ {
+  "name": "sweep compare <id>",
+  "argv": "sweep compare 20260920-125628-5ba2",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "스윕 sw_20260920-125628-5ba2 — rrf_k = 10, 20, 30, 40  (config · 재시작점 rrf_fuse · 기준 요청 #402)"
+ },
+ {
+  "name": "sweep compare <id> --json",
+  "argv": "sweep compare 20260920-125628-5ba2 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "{"
+ },
+ {
+  "name": "sweep show (없는 id) → 1",
+  "argv": "sweep show nope-sweep",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 171,
+  "out": "스윕을 찾을 수 없습니다: nope-sweep (sweep list 로 확인)"
+ },
+ {
+  "name": "sweep run (--key 없음) → 2",
+  "argv": "sweep run last",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 163,
+  "out": "사용법: sweep run <request_id|last> --key K (--range a:b:s | --values v1,v2,…) [--repeats N] [--from POINT] [--qu"
+ },
+ {
+  "name": "sweep run (값 없음) → 2",
+  "argv": "sweep run last --key rrf_k",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 162,
+  "out": "스윕할 수 없습니다: rrf_k 의 값 목록(values) 또는 범위(range) 가 필요합니다"
+ },
+ {
+  "name": "sweep run (스윕 불가 토글) → 2",
+  "argv": "sweep run last --key rerun_capture",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 161,
+  "out": "스윕할 수 없습니다: 토글 rerun_capture 는 질의 결과를 바꾸지 않아 스윕할 수 없습니다"
+ },
+ {
+  "name": "sweep run (없는 요청) → 2",
+  "argv": "sweep run 999999 --key rrf_k --values 10,60",
+  "code": 2,
+  "expect": 2,
+  "ok": true,
+  "ms": 161,
+  "out": "스윕할 수 없습니다: 요청 #999999 의 중간 결과가 없습니다 (rerun --list 로 확인)"
+ },
+ {
+  "name": "sweep_dir 에 sw_*.json 저장",
+  "argv": "(파일 확인)",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 0,
+  "out": "files=3"
+ },
+ {
+  "name": "graph profile",
+  "argv": "graph profile",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 176,
+  "out": "그래프 진단 프로파일 — 2026-09-20 12:56:30 (build_version 8, 14 ms)"
+ },
+ {
+  "name": "graph profile --json",
+  "argv": "graph profile --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 179,
+  "out": "entities=77 suggestions=10 saved=gp_20260920_125631_056315.json"
+ },
+ {
+  "name": "graph profile --compare --json",
+  "argv": "graph profile --compare --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 181,
+  "out": "compare keys=['after', 'before', 'changed', 'deltas']"
+ },
+ {
+  "name": "graph profile --compare (text)",
+  "argv": "graph profile --compare",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 179,
+  "out": "그래프 진단 프로파일 — 2026-09-20 12:56:31 (build_version 8, 14 ms)"
+ },
+ {
+  "name": "graph profile --out",
+  "argv": "graph profile --out C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\gp.md",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 175,
+  "out": "마크다운 저장: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\gp.md"
+ },
+ {
+  "name": "graph_profiles 이력 파일 (graph_profile_keep)",
+  "argv": "(파일 확인)",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 0,
+  "out": "files=5"
+ },
+ {
+  "name": "rules explain PDCCH",
+  "argv": "rules explain PDCCH",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\query_rules.json  (related_symmetric"
+ },
+ {
+  "name": "rules explain PDCCH --json",
+  "argv": "rules explain PDCCH --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "entries=1 expanded_from=0"
+ },
+ {
+  "name": "rules explain (사전에 없는 말)",
+  "argv": "rules explain zzz-없는-용어",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\query_rules.json  (related_symme"
+ },
+ {
+  "name": "rules explain (인자 없음) → 1",
+  "argv": "rules explain",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 160,
+  "out": "usage: rules explain <용어>   (예: rules explain AGC)"
+ },
+ {
+  "name": "rules test PDCCH",
+  "argv": "rules test PDCCH 디코딩 실패 원인",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "{"
+ },
+ {
+  "name": "rules lint",
+  "argv": "rules lint",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 158,
+  "out": "규칙 사전 점검 — C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\query_rules.json"
+ },
+ {
+  "name": "graph-rules types",
+  "argv": "graph-rules types",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 158,
+  "out": "엔티티 type 33종 (types_for_cooccur · id_patterns · schema.entity_types 의 합집합)"
+ },
+ {
+  "name": "graph-rules lint",
+  "argv": "graph-rules lint",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "그래프 규칙 점검 — 엔티티 67 · 별칭 134 · type 33 · 관계패턴 10 · chunk_values 4 · id패턴 8 · link규칙 12 · 관계어휘 38"
+ },
+ {
+  "name": "graph-rules test",
+  "argv": "graph-rules test rev B1 에서 t_setup 은 4 ns 이다",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "엔티티 4개"
+ },
+ {
+  "name": "graph-rules test (doc-type)",
+  "argv": "graph-rules test ISSUE-2001 을 참고 --doc-type cl --ext-id CL-1",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "엔티티 2개"
+ },
+ {
+  "name": "graph-rules test (인자 없음) → 1",
+  "argv": "graph-rules test",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 159,
+  "out": "사용법: graph-rules test \"<문장>\" [--doc-type cl] [--ext-id CL-55302]"
+ },
+ {
+  "name": "graph-rules add-entity (없는 type) → 1",
+  "argv": "graph-rules add-entity 테스트엔티티 없는타입",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 161,
+  "out": "ERROR: 없는 type '없는타입' — 쓸 수 있는 값: amount, chip, cl, coding_rule, component, concept, date, decision, document,"
+ },
+ {
+  "name": "graph-rules add-entity",
+  "argv": "graph-rules add-entity 테스트엔티티 module 별칭1",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "엔티티 추가: 테스트엔티티 (module) 별칭 1개 — 반영하려면 `build graph`"
+ },
+ {
+  "name": "graph-rules add-alias",
+  "argv": "graph-rules add-alias 테스트엔티티 별칭2",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "별칭 1개 추가: 테스트엔티티 → 별칭2 — 반영하려면 `build graph`"
+ },
+ {
+  "name": "graph-rules fill-defaults",
+  "argv": "graph-rules fill-defaults",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\rules.json: 채운 절 (없음 — 이미 모두 있습니다)"
+ },
+ {
+  "name": "reset (범위 목록)",
+  "argv": "reset",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "초기화 범위 3가지 — `reset <범위>` 로 미리보기, `--apply` 로 실행"
+ },
+ {
+  "name": "stats (초기화 전)",
+  "argv": "stats --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "{"
+ },
+ {
+  "name": "reset data (미리보기)",
+  "argv": "reset data",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "초기화 범위: data"
+ },
+ {
+  "name": "reset settings (미리보기)",
+  "argv": "reset settings",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "초기화 범위: settings"
+ },
+ {
+  "name": "reset logs (미리보기)",
+  "argv": "reset logs",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 169,
+  "out": "초기화 범위: logs"
+ },
+ {
+  "name": "stats (미리보기 뒤 — 변화 없어야)",
+  "argv": "stats --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 166,
+  "out": "{"
+ },
+ {
+  "name": "reset logs --apply --yes",
+  "argv": "reset logs --apply --yes",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 268,
+  "out": "초기화 범위: logs"
+ },
+ {
+  "name": "stats (로그 초기화 뒤 색인 유지)",
+  "argv": "stats --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "{"
+ },
+ {
+  "name": "config bundle --out --dry-run",
+  "argv": "config bundle --out C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\conf-bundle --dry-run",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "모음 C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\conf-bundle (16개 · 미리보기)"
+ },
+ {
+  "name": "config bundle --out",
+  "argv": "config bundle --out C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\conf-bundle",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 187,
+  "out": "모음 C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\conf-bundle (16개)"
+ },
+ {
+  "name": "config bundle: .env 값이 빠져 있다",
+  "ok": true,
+  "code": 0,
+  "ms": 0,
+  "out": ".env 키만 복사"
+ },
+ {
+  "name": "config bundle (인자 없음) → 1",
+  "argv": "config bundle",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 164,
+  "out": "사용법: config bundle --out <폴더>   (모으기)"
+ },
+ {
+  "name": "config paths (묶음 안내)",
+  "argv": "config paths",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 158,
+  "out": "config         C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json"
+ },
+ {
+  "name": "config fill-defaults --dry-run",
+  "argv": "config fill-defaults --dry-run",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "[dry ] config                 C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json — 추가 69개"
+ },
+ {
+  "name": "config fill-defaults --all --dry-run",
+  "argv": "config fill-defaults --all --dry-run",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "[dry ] config                 C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json — 추가 69개"
+ },
+ {
+  "name": "config fill-defaults --all --dry-run --json",
+  "argv": "config fill-defaults --all --dry-run --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "["
+ },
+ {
+  "name": "config fill-defaults --all (실제 쓰기)",
+  "argv": "config fill-defaults --all",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "config keys=109 llm_roles=['answer', 'expand', 'extract']"
+ },
+ {
+  "name": "fill-defaults 뒤 tuning.json 에 모든 키 명시",
+  "argv": "(파일 확인)",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 0,
+  "out": "tuning keys=149"
+ },
+ {
+  "name": "health (fill-defaults 뒤에도 정상)",
+  "argv": "health --quick",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "health: OK (fail=0 warn=0)"
+ },
+ {
+  "name": "query (fill-defaults 뒤에도 정상)",
+  "argv": "query ISSUE-2001 원인 --no-log --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 207,
+  "out": "{"
+ },
+ {
+  "name": "config env",
+  "argv": "config env",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "masked=True overrides 표시=True"
+ },
+ {
+  "name": "config env --json",
+  "argv": "config env --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "keys=12 overrides=18"
+ },
+ {
+  "name": "config reload",
+  "argv": "config reload",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "config reloaded: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json"
+ },
+ {
+  "name": "config reload --env",
+  "argv": "config reload --env",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "config reloaded: C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\config.json  .env=C:\\Users\\user\\AppData\\Lo"
+ },
+ {
+  "name": "config reload --json",
+  "argv": "config reload --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "{"
+ },
+ {
+  "name": "models test --catalog",
+  "argv": "models test --catalog",
+  "code": 1,
+  "expect": [
+   0,
+   1
+  ],
+  "ok": true,
+  "ms": 17853,
+  "out": "카탈로그 연결 테스트 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json) — 17 항목 중 4 OK"
+ },
+ {
+  "name": "models test --catalog --json",
+  "argv": "models test --catalog --json",
+  "code": 1,
+  "expect": [
+   0,
+   1
+  ],
+  "ok": true,
+  "ms": 17722,
+  "out": "n=17 ok_n=4 kinds=['embed', 'llm']"
+ },
+ {
+  "name": "models automap",
+  "argv": "models automap",
+  "code": 0,
+  "expect": [
+   0,
+   1
+  ],
+  "ok": true,
+  "ms": 17717,
+  "out": "자동 매핑 (C:\\Users\\user\\AppData\\Local\\Temp\\lwverify_rcowdfga\\models.json) — 카탈로그 17개 중 연결 OK: LLM 2 · 임베딩 2 · 리랭크"
+ },
+ {
+  "name": "models automap --json",
+  "argv": "models automap --json",
+  "code": 0,
+  "expect": [
+   0,
+   1
+  ],
+  "ok": true,
+  "ms": 17723,
+  "out": "후보 {'llm': 2, 'embed': 2, 'rerank': 0} · 제안 11개"
+ },
+ {
+  "name": "search 다중채널 or",
+  "argv": "search fts,vector RX DMA underrun --mode or --k 3 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 172,
+  "out": "합집합 6 · 교집합 0"
+ },
+ {
+  "name": "search 다중채널 and",
+  "argv": "search all RX DMA underrun --mode and --k 3 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 174,
+  "out": "채널 ['fts', 'vector', 'graph'] · 교집합만 0행"
+ },
+ {
+  "name": "search 다중채널 rrf",
+  "argv": "search fts,vector RX DMA underrun --mode rrf --k 3 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 198,
+  "out": "가중치 {'fts': 1.0, 'vector': 0.9}"
+ },
+ {
+  "name": "search --doc-types (필터 없음 기준)",
+  "argv": "search fts RX DMA underrun --k 8 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 182,
+  "out": "{"
+ },
+ {
+  "name": "search --doc-types issue",
+  "argv": "search fts RX DMA underrun --k 8 --doc-types issue --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 179,
+  "out": "유형 필터 6행 (전체 8행) · 걸러냄 2"
+ },
+ {
+  "name": "search --doc-types (없는 유형 → 0행)",
+  "argv": "search fts RX DMA underrun --doc-types 없는유형 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 176,
+  "out": "오타가 '전체' 로 풀리지 않는다"
+ },
+ {
+  "name": "inspect",
+  "argv": "inspect 지난주 ISSUE-2001 의 원인",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 176,
+  "out": "질의: 지난주 ISSUE-2001 의 원인"
+ },
+ {
+  "name": "inspect --json",
+  "argv": "inspect 지난주 ISSUE-2001 의 원인 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 175,
+  "out": "토큰 6 · 규칙 0 · 라우팅 relational"
+ },
+ {
+  "name": "arch limits",
+  "argv": "arch limits",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 164,
+  "out": "== 역할별 LLM 1회 제한 (config.json llm_roles.<role>.timeout_s)"
+ },
+ {
+  "name": "arch limits --json",
+  "argv": "arch limits --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "단계 44 · trace 86"
+ },
+ {
+  "name": "requests queries",
+  "argv": "requests queries --limit 5",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "질의 로그가 비어 있습니다 (토글 evolve_capture 가 꺼져 있으면 기록하지 않습니다)"
+ },
+ {
+  "name": "requests queries --json",
+  "argv": "requests queries --limit 5 --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "0행"
+ },
+ {
+  "name": "requests users",
+  "argv": "requests users",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 161,
+  "out": "사용자                          질의    +1    -1  마지막"
+ },
+ {
+  "name": "logs status",
+  "argv": "logs status",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "log quota: ok"
+ },
+ {
+  "name": "logs status --json",
+  "argv": "logs status --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 160,
+  "out": "total=0.56 MB limit=500 MB action=warn"
+ },
+ {
+  "name": "models ensemble show",
+  "argv": "models ensemble show",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "answer    ensemble=off wait=all timeout_s=120 min_results=1 prompt=ensemble_merge"
+ },
+ {
+  "name": "models ensemble show answer",
+  "argv": "models ensemble show answer",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 170,
+  "out": "answer    ensemble=off wait=all timeout_s=120 min_results=1 prompt=ensemble_merge"
+ },
+ {
+  "name": "models ensemble show answer --json",
+  "argv": "models ensemble show answer --json",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 168,
+  "out": "{"
+ },
+ {
+  "name": "models ensemble show (없는 역할) → 1",
+  "argv": "models ensemble show king",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 160,
+  "out": "ERROR: 알 수 없는 역할 king (answer, rerank, extract, summary, review, expand, verify, forensic, fusion, select)"
+ },
+ {
+  "name": "models ensemble set (인자 없음) → 1",
+  "argv": "models ensemble set",
+  "code": 1,
+  "expect": 1,
+  "ok": true,
+  "ms": 161,
+  "out": "usage: models ensemble show [role] | models ensemble set <role> [--enabled true|false] [--member N k=v …] [--a"
+ },
+ {
+  "name": "models ensemble set answer (mock 2멤버)",
+  "argv": "models ensemble set answer --enabled true --member 1 provider=mock model=mock-a weight=1.5 --member 2 provider=mock model=mock-b --wait all --timeout 60 --min 1",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 167,
+  "out": "saved llm_roles.answer.ensemble: enabled=True members=['mock/mock-a×1.5', 'mock/mock-b×1.0'] aggregator=(첫 멤버)"
+ },
+ {
+  "name": "config.json llm_roles.answer.ensemble 저장",
+  "argv": "(파일 확인)",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 0,
+  "out": "members=['mock-a', 'mock-b'] wait=all"
+ },
+ {
+  "name": "models ensemble show answer (반영)",
+  "argv": "models ensemble show answer",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 162,
+  "out": "answer    ensemble=ON  wait=all timeout_s=60 min_results=1 prompt=ensemble_merge"
+ },
+ {
+  "name": "query (앙상블 켠 상태)",
+  "argv": "query ISSUE-2001 원인 --json --no-log",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 209,
+  "out": "{"
+ },
+ {
+  "name": "models ensemble set answer --enabled false",
+  "argv": "models ensemble set answer --enabled false",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "saved llm_roles.answer.ensemble: enabled=False members=['mock/mock-a×1.5', 'mock/mock-b×1.0'] aggregator=(첫 멤버"
+ },
+ {
+  "name": "models ensemble show answer (끔)",
+  "argv": "models ensemble show answer",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 165,
+  "out": "answer    ensemble=off wait=all timeout_s=60 min_results=1 prompt=ensemble_merge"
+ },
+ {
+  "name": "rerun --points",
+  "argv": "rerun --points",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 163,
+  "out": "plan         계획부터 (질의 규칙 · 라우터 · 질의 확장)"
+ },
+ {
+  "name": "rerun --list",
+  "argv": "rerun --list",
+  "code": 0,
+  "expect": 0,
+  "ok": true,
+  "ms": 159,
+  "out": "#412        74.1 KB  09-20 12:57"
  },
  {
   "name": "config reset (no --yes)",
@@ -1959,7 +3223,7 @@
   "code": 4,
   "expect": 4,
   "ok": true,
-  "ms": 155,
+  "ms": 156,
   "out": "!! 파괴적 작업: config.json 을 기본값으로 덮어쓰기"
  },
  {
@@ -1968,7 +3232,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 153,
+  "ms": 161,
   "out": "config reset"
  },
  {
@@ -1977,8 +3241,8 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 73,
-  "out": "usage: llmwiki [-h] [--user CLI_USER] [--password CLI_PASSWORD]"
+  "ms": 76,
+  "out": "usage: llmwiki [-h] [--version] [--user CLI_USER] [--password CLI_PASSWORD]"
  },
  {
   "name": "query --help",
@@ -1986,7 +3250,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 71,
+  "ms": 78,
   "out": "usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]"
  },
  {
@@ -1995,7 +3259,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 69,
+  "ms": 72,
   "out": "usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]"
  },
  {
@@ -2004,7 +3268,7 @@
   "code": 0,
   "expect": 0,
   "ok": true,
-  "ms": 68,
+  "ms": 72,
   "out": "usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
  }
 ]

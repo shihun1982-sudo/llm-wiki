@@ -149,5 +149,6 @@ def insufficient_text(query: str, ev: Dict[str, Any], llm_ev: Optional[Dict[str,
     lines.append("")
     lines.append("## 제안")
     lines.append("- 질문에 문서 ID(ISSUE-/CL-)나 모듈명·레지스터명을 포함하거나, 관련 문서를 코퍼스에 추가하세요.")
+    lines.append("- 근거가 얇아도 배경 지식을 곁들인 답이 필요하면 답변 모드 `best_effort` 로 다시 질의하세요 (CLI `--answer-mode best_effort` · MCP `answer_mode` · Web 답변 모드). 배경 지식 문장은 [BK] 로 표시됩니다.")
     lines.append("- `forensic last` 로 단계별 원인을 확인할 수 있습니다.")
     return "\n".join(lines)

@@ -9,6 +9,7 @@ from .profiler import Profiler
 from .providers import BaseLLM, LLMError
 from .textutil import keywords, sentences, normalize_token, words
 from . import tuning as _tuning
+from . import ctxguard as _ctxguard
 
 _LENGTH_HINT = {
     "short": "\n\n## 길이 지시\n핵심 답변과 근거 표만. 상세 설명은 2~3문장 이내.",
@@ -20,6 +21,57 @@ _LENGTH_HINT = {
 def ANSWER_SYSTEM(length_target: str = "normal") -> str:   # prompts/answer_system.md + prompts/answer_guide.md
     from . import prompts as _prompts
     return _prompts.answer_system() + _LENGTH_HINT.get(length_target, "")
+
+
+def ANSWER_SYSTEM_BEST_EFFORT(length_target: str = "normal") -> str:   # prompts/answer_best_effort.md (자체 뼈대 — answer_guide 를 붙이지 않는다)
+    from . import prompts as _prompts
+    return _prompts.get("answer_best_effort") + _LENGTH_HINT.get(length_target, "")
+
+
+ANSWER_MODES = ("grounded", "best_effort")
+
+
+def normalize_answer_mode(mode: Any) -> str:
+    """Settings.answer_mode / 요청 오버라이드 값을 grounded | best_effort 로 정규화 (모르는 값은 grounded)."""
+    m = str(mode or "grounded").strip().lower().replace("-", "_")
+    return m if m in ANSWER_MODES else "grounded"
+
+
+# 출력 모드 (docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.3): answer_mode 가 "어떻게 답할까" 라면 output_mode 는 "어디까지 만들고 무엇을 돌려줄까".
+#   answer   = 끝까지 (기본)           fused    = 융합·부스트 뒤(리랭크 전) 후보를 그대로
+#   reranked = 리랭크 뒤 후보를 그대로   context  = 컨텍스트([C#] 블록)까지 만들고 답변 LLM 은 부르지 않는다
+OUTPUT_MODES = ("answer", "fused", "reranked", "context")
+RESULT_CANDIDATES_FUSED = "candidates_fused"
+RESULT_CANDIDATES_RERANKED = "candidates_reranked"
+RESULT_CONTEXT = "context"
+# output_mode → RoundConfig.stop_after (_retrieve 가 그 지점에서 멈춘다)
+OUTPUT_STOP_AFTER = {"answer": None, "fused": "boost", "reranked": "rerank", "context": "context"}
+
+
+def normalize_output_mode(mode: Any) -> str:
+    """Settings.output_mode / 요청 오버라이드 값을 answer | fused | reranked | context 로 정규화 (모르는 값은 answer)."""
+    m = str(mode or "answer").strip().lower().replace("-", "_")
+    return m if m in OUTPUT_MODES else "answer"
+
+
+def render_candidates_table(cands: List[Dict[str, Any]], title: str = "") -> str:
+    """후보 목록(output_mode=fused|reranked 의 candidates[]) 을 마크다운 표로 — CLI 본문·Web 답변 칸·MCP text 가 같은 본문을 보이도록."""
+    def cell(v: Any) -> str:
+        return str("" if v is None else v).replace("|", "\\|").replace("\n", " ")
+    lines = [title, ""] if title else []
+    lines += ["| # | chunk_id | 문서 · ID | heading | fused | rerank | 채널(why) | boosts |", "|---:|---|---|---|---:|---:|---|---|"]
+    for i, c in enumerate(cands):
+        doc = c.get("ext_id") or c.get("doc_id") or ""
+        if c.get("ext_id") and c.get("doc_id"):
+            doc = "%s · %s" % (c["ext_id"], str(c["doc_id"]).rsplit("/", 1)[-1])
+        b = c.get("boosts") or {}
+        lines.append("| %d | %s | %s | %s | %.4f | %s | %s | %s |" % (
+            i + 1, cell(c.get("chunk_id")), cell(doc), cell((c.get("heading") or "")[:60]), float(c.get("fused") or 0.0),
+            "-" if c.get("rerank") is None else ("%.3f" % float(c["rerank"])), cell(" ".join(c.get("why") or [])),
+            cell(" ".join("%s×%s" % (k, v) for k, v in b.items()))))
+    if not cands:
+        lines.append("| - | (후보 없음) | | | | | | |")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- 반복 루프(LLM 고장) 탐지
@@ -122,11 +174,15 @@ def _tokset(text: str) -> set:
 def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[str, Any]], max_chars: int = 9000,
                   query: str = "", trim: bool = False, dedupe: bool = False, chunk_chars: int = 1200,
                   stage: Any = None, store: Any = None, neighbors: Optional[int] = None,
-                  extra: Optional[List[Tuple[str, str, float]]] = None) -> Dict[str, Any]:
+                  extra: Optional[List[Tuple[str, str, float]]] = None,
+                  guard: bool = True, guard_mark: str = "‹") -> Dict[str, Any]:
     """컨텍스트 조립. tuning: context_neighbors(인접 청크), dedupe_similarity(토큰 Jaccard 중복), context_graph_relations.
     neighbors 를 주면 tuning context_neighbors 대신 사용 (fallback 라운드 확대용).
-    extra: doc_expand 가 고른 [(chunk_id, parent_chunk_id, score)] — 부모 청크 바로 뒤에 kind=doc_expand 로 들어간다."""
+    extra: doc_expand 가 고른 [(chunk_id, parent_chunk_id, score)] — 부모 청크 바로 뒤에 kind=doc_expand 로 들어간다.
+    guard: 문서 본문을 구획으로 감싸고 구조 흉내 조각의 표시를 바꾼다 (config `context_guard`, llmwiki/ctxguard.py)."""
     T = _tuning.T
+    guard_on = bool(guard)
+    guard_marks: List[str] = []
     parts: List[str] = []
     cites: List[Dict[str, Any]] = []
     used = 0
@@ -134,9 +190,11 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
     seen_spans: List[Any] = []
     seen_toks: List[set] = []
     dropped: List[str] = []
+    truncated: List[str] = []          # 상한에 걸려 **잘라서** 넣은 근거 (빠진 것과 구분해야 한다)
     trimmed = 0
     raw_chars = 0
     sim_thr = T.get("dedupe_similarity")
+    min_fit = int(T.get("context_min_fit_chars"))
     # 인접 청크 확장 (상위 n개 청크의 앞/뒤) — 표/목록이 경계에서 잘린 경우 보완
     items: List[Any] = []
     n_nb = int(T.get("context_neighbors") if neighbors is None else neighbors)
@@ -190,12 +248,33 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
         if trim and len(text) > chunk_chars:
             text = _trim_chunk(text, kws, chunk_chars)
             trimmed += 1
-        block = "[C%d] (%s | %s)\n%s" % (len(cites) + 1, c["doc_id"], c["heading"][:80], text)
+        # 2026-09-19: 문서 본문은 **데이터**다. 구조를 흉내 내는 조각(## 질문 · system: · <<<…>>> · [C3])의
+        # 표시를 바꾸고 구획으로 감싼다 (llmwiki/ctxguard.py). 내용은 지우지 않는다 — 근거가 줄면 답이 나빠진다.
+        tag = "C%d" % (len(cites) + 1)
+        if guard_on:
+            text, gm = _ctxguard.neutralize(text, guard_mark)
+            guard_marks.extend(gm)
+            # 머리에 `[C1]` 도 그대로 남긴다 — 모델이 답변에 써야 하는 인용 표기가 그것이기 때문이다.
+            # 구획 표시(<<<C1>>>)는 구조용, [C1] 은 인용용으로 역할이 다르다.
+            block = _ctxguard.fence(tag, "[%s] (%s | %s)" % (tag, c["doc_id"], c["heading"][:80]), text)
+        else:
+            block = "[%s] (%s | %s)\n%s" % (tag, c["doc_id"], c["heading"][:80], text)
         if used + len(block) > max_chars:
             if kind in ("neighbor", "doc_expand"):
                 dropped.append(c["chunk_id"] + " (max_chars)")
                 continue        # 보조 청크가 상한을 넘기면 건너뛰고 다음 항목(다른 hit)은 계속 시도
-            break
+            # 2026-09-19: 예전에는 여기서 **break** 했다. 그래서 2위에 큰 청크 하나가 있으면 3위 이하가
+            # 들어갈 자리가 남아 있어도 통째로 빠졌다 — 상한에 걸린 이유가 순위가 아니라 **길이**인데도.
+            # 이제 (a) 남은 공간이 쓸 만하면 잘라서 넣고, (b) 아니면 건너뛰고 다음 후보를 계속 본다.
+            room = max_chars - used - (len(block) - len(text))     # 머리말·구획 표시를 뺀 본문 자리
+            if min_fit > 0 and room >= min_fit:
+                text = text[:room - 1].rstrip() + "…"
+                block = (_ctxguard.fence(tag, "[%s] (%s | %s)" % (tag, c["doc_id"], c["heading"][:80]), text) if guard_on
+                         else "[%s] (%s | %s)\n%s" % (tag, c["doc_id"], c["heading"][:80], text))
+                truncated.append(c["chunk_id"])
+            else:
+                dropped.append(c["chunk_id"] + " (max_chars)")
+                continue
         parts.append(block)
         cit: Dict[str, Any] = {"n": len(cites) + 1, "chunk_id": c["chunk_id"], "doc_id": c["doc_id"], "heading": c["heading"], "kind": kind}
         if kind == "doc_expand":
@@ -203,10 +282,14 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
             cit["parent"] = next((p_ for p_, lst in extra_by_parent.items() if any(x[0] == c["chunk_id"] for x in lst)), None)
         cites.append(cit)
         used += len(block)
+    guard_info = _ctxguard.summarize(guard_marks) if guard_on else {"n": 0, "kinds": {}, "suspect": 0}
     if stage is not None:
         stage.note(text_chars=raw_chars, dropped_duplicates=len(dropped), trimmed_chunks=trimmed, neighbors_added=len(nb_added), doc_expand_added=len(ex_added),
-                   saved_chars=max(0, raw_chars - used), est_tokens=used // 3)
-        stage.debug(dropped=dropped, neighbors=nb_added, doc_expand=ex_added)
+                   truncated_chunks=len(truncated),
+                   saved_chars=max(0, raw_chars - used), est_tokens=used // 3,
+                   # 컨텍스트 경계: 문서가 구조를 흉내 낸 자리 수 (0 이 정상, 커지면 그 문서를 봐야 한다)
+                   guard=guard_info if guard_on else "off")
+        stage.debug(dropped=dropped, neighbors=nb_added, doc_expand=ex_added, truncated=truncated, guard_marks=guard_marks[:40])
     graph_txt = ""
     if graph and graph.get("relations") and T.get("context_graph_relations") > 0:
         lines = ["## 그래프 관계 (참고)"]
@@ -221,19 +304,44 @@ def build_context(hits: List[Any], chunks: Dict[str, Any], graph: Optional[Dict[
                 continue
             lines.append("- [%s] %s %s: %s" % (e.get("source"), e.get("id"), e.get("title"), (e.get("text") or "")[:300].replace("\n", " ")))
         graph_txt = (graph_txt + "\n\n" if graph_txt else "") + "\n".join(lines)
-    return {"text": "\n\n".join(parts) + ("\n\n" + graph_txt if graph_txt else ""), "citations": cites, "chars": used,
-            "hits_used": [c["chunk_id"] for c in cites], "dropped": dropped, "neighbors": nb_added, "doc_expand": ex_added}
+    body = "\n\n".join(parts) + ("\n\n" + graph_txt if graph_txt else "")
+    # 컨텍스트 바로 앞에 한 줄 — 모델은 멀리 있는 시스템 규칙보다 가까운 지시를 잘 따른다
+    if guard_on and parts:
+        body = _ctxguard.guard_note() + "\n\n" + body
+    return {"text": body, "citations": cites, "chars": used,
+            "hits_used": [c["chunk_id"] for c in cites], "dropped": dropped, "neighbors": nb_added, "doc_expand": ex_added,
+            "truncated": truncated, "guard": guard_info}
 
 
 # ---------------------------------------------------------------- claim check (답변 검증)
 _CITE_RE = re.compile(r"\[C(\d+)\]")
+_BK_RE = re.compile(r"\[BK\]", re.I)     # best_effort 답변에서 '배경 지식' 문장 표시 — 근거 검증 대상이 아니다 (verdict=background)
 _ID_RE = re.compile(r"\b(?:ISSUE|CL|TC|SWD|HWD|RULE|WR)[-_]?[A-Z0-9][A-Z0-9_-]*\b", re.I)
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)*\s?(?:%|ms|us|ns|dB|dBm|MHz|kHz|GHz|Hz|V|mV|mA|byte|bytes|KB|MB|회|건|개|일|주|년|월)?", re.I)
 _NONFACT = ("확인되지 않", "근거 부족", "제공된 문서", "추가 조사", "미확인", "알 수 없", "없습니다", "?")
 
 
+def _is_cite_only(sent: str) -> bool:
+    """`[C1] [C2]` 처럼 **인용 표시만** 남은 조각인가 (구두점·괄호는 무시)."""
+    rest = _BK_RE.sub("", _CITE_RE.sub("", sent))
+    return not rest.strip(" \t.,;:·-—()[]{}\"'")
+
+
+def _classify(body: str, cites: List[int], background: bool) -> bool:
+    """이 문장이 근거로 검증할 '사실 문장' 인가. 숫자/ID/고유 표현 또는 6토큰 이상 서술."""
+    nonfact = any(x in body for x in _NONFACT) and not cites
+    toks = [normalize_token(w) for w in words(body)]
+    return (not nonfact) and (not background) and (bool(_ID_RE.search(body)) or bool(re.search(r"\d", body)) or len(toks) >= 6)
+
+
 def split_claims(answer: str) -> List[Dict[str, Any]]:
-    """답변을 문장(claim) 단위로 분해. 표 행·헤딩·근거 표는 검증 대상에서 제외. 사실 문장 판별: 숫자/ID/고유 표현 또는 6토큰 이상 서술."""
+    """답변을 문장(claim) 단위로 분해. 표 행·헤딩·근거 표는 검증 대상에서 제외. 사실 문장 판별: 숫자/ID/고유 표현 또는 6토큰 이상 서술.
+
+    2026-09-19: **마침표 뒤에 붙인 인용을 잃지 않는다.** LLM 은 `문장입니다. [C1]` 처럼 쓰는 일이 아주 흔한데,
+    예전에는 문장 분리에서 `[C1]` 이 8자 미만의 별개 조각이 되어 통째로 버려졌다. 그러면 제대로 인용한 답도
+    '인용 없음(uncited)' 으로 깎이고, 반대로 **없는 번호를 인용해도 검사 대상이 되지 않았다**.
+    인용만 남은 조각은 **앞 문장의 것**으로 합친다.
+    """
     claims: List[Dict[str, Any]] = []
     in_ref_table = False
     for line in (answer or "").splitlines():
@@ -246,16 +354,25 @@ def split_claims(answer: str) -> List[Dict[str, Any]]:
         if s.startswith("|") or s.startswith("```") or in_ref_table:
             continue
         s = s.lstrip("-*•0123456789. ").strip()
+        line_start = len(claims)          # 인용 조각은 **같은 줄의** 앞 문장에만 붙인다
         for sent in sentences(s):
             sent = sent.strip()
-            if len(sent) < 8:
+            if not sent:
                 continue
             cites = [int(n) for n in _CITE_RE.findall(sent)]
-            body = _CITE_RE.sub("", sent).strip()
-            nonfact = any(x in body for x in _NONFACT) and not cites
-            toks = [normalize_token(w) for w in words(body)]
-            factual = (not nonfact) and (bool(_ID_RE.search(body)) or bool(re.search(r"\d", body)) or len(toks) >= 6)
-            claims.append({"i": len(claims), "text": sent, "body": body, "cites": cites, "factual": factual})
+            if cites and _is_cite_only(sent) and len(claims) > line_start:
+                prev = claims[-1]
+                prev["text"] = (prev["text"] + " " + sent).strip()
+                prev["cites"] = list(dict.fromkeys(prev["cites"] + cites))
+                prev["background"] = False        # 인용이 붙었으면 배경 지식 문장이 아니다
+                prev["factual"] = _classify(prev["body"], prev["cites"], False)
+                continue
+            if len(sent) < 8:
+                continue
+            background = bool(_BK_RE.search(sent)) and not cites    # [BK] = 배경 지식 문장 (best_effort). [C#] 가 같이 있으면 문서 문장으로 본다
+            body = _BK_RE.sub("", _CITE_RE.sub("", sent)).strip()
+            claims.append({"i": len(claims), "text": sent, "body": body, "cites": cites,
+                           "factual": _classify(body, cites, background), "background": background})
     return claims
 
 
@@ -301,8 +418,13 @@ def check_claims(answer: str, citations: List[Dict[str, Any]], chunks: Dict[str,
             cite_text[c["n"]] = (ch["heading"] + "\n" + ch["text"])
     all_text = "\n".join(cite_text.values())
     claims = split_claims(answer)
-    n_fact = n_sup = n_partial = n_unsup = 0
+    n_fact = n_sup = n_partial = n_unsup = n_bg = n_bad = 0
     for cl in claims:
+        if cl.get("background"):
+            # best_effort 의 [BK] 문장: 문서 근거를 요구하지 않는다. 미지원으로 세지도, [미확인] 표기/제거 대상도 아니다.
+            cl["verdict"] = "background"
+            n_bg += 1
+            continue
         if not cl["factual"]:
             cl["verdict"] = "n/a"
             continue
@@ -317,10 +439,19 @@ def check_claims(answer: str, citations: List[Dict[str, Any]], chunks: Dict[str,
             else:
                 n_unsup += 1
             continue
+        # 없는 번호를 인용했나. 인용이 **있다는 것**만으로 맞는 줄 알면 안 된다 — 모델이 지어낸 `[C99]` 는
+        # 지금까지 "근거 본문이 비어 있다" 로만 취급돼 사람에게 그 이유가 보이지 않았다.
+        bad = [n for n in cl["cites"] if n not in cite_text]
+        if bad:
+            cl["bad_cites"] = bad
+            n_bad += len(bad)
         ev = "\n".join(cite_text.get(n, "") for n in cl["cites"])
         r = _support_ratio(cl, ev) if ev else 0.0
         cl["support"] = round(r, 2)
-        if r >= support_min:
+        if bad and not ev:
+            cl["verdict"] = "fabricated_citation"     # 인용한 번호가 아예 없다 = 가장 나쁜 경우
+            n_unsup += 1
+        elif r >= support_min:
             cl["verdict"] = "supported"
             n_sup += 1
         elif r >= support_min * 0.6:
@@ -330,7 +461,8 @@ def check_claims(answer: str, citations: List[Dict[str, Any]], chunks: Dict[str,
             cl["verdict"] = "unsupported"
             n_unsup += 1
     ground = (n_sup + 0.5 * n_partial) / float(n_fact) if n_fact else 1.0
-    return {"claims": claims, "n_factual": n_fact, "supported": n_sup, "partial": n_partial, "unsupported": n_unsup,
+    return {"claims": claims, "n_factual": n_fact, "supported": n_sup, "partial": n_partial, "unsupported": n_unsup, "background": n_bg,
+            "bad_citations": n_bad, "max_citation": max(cite_text) if cite_text else 0,
             "groundedness": round(ground, 3), "citation_precision": round(n_sup / float(n_sup + n_unsup), 3) if (n_sup + n_unsup) else 1.0}
 
 
@@ -607,16 +739,43 @@ def extractive_structured(query: str, ctx: Dict[str, Any], chunks: Dict[str, Any
     return {"text": text, "n_docs": len(order), "core": len(core), "missing": missing, "keywords": kws}
 
 
+def result_type_of(mode: str, answer_mode: str = "grounded") -> str:
+    """답변 산출 방식(ans.mode) + 답변 모드 → 결과 유형. grounded | best_effort | extractive | insufficient | error."""
+    if mode == "llm":
+        return "best_effort" if normalize_answer_mode(answer_mode) == "best_effort" else "grounded"
+    return mode if mode in ("extractive", "insufficient", "error") else "grounded"
+
+
+# 앙상블 요약은 **프로바이더 한 곳**에서 만든다 — 역할 11개 어디에 켜도 같은 모양이 나오게.
+# (여기에 두면 answer 역할에만 붙고 rerank·summary 등은 빠진다.)
+from .providers import summarize_ensemble      # noqa: F401  (호환용 재노출)
+
+
 def generate_answer(query: str, ctx: Dict[str, Any], llm: Optional[BaseLLM], use_llm: bool, prof: Profiler,
                     effort: str = "medium", chunks: Optional[Dict[str, Any]] = None, hits: Optional[List[Any]] = None,
-                    max_tokens: int = 3000, meta: Optional[Dict[str, Any]] = None, graph: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                    max_tokens: int = 3000, meta: Optional[Dict[str, Any]] = None, graph: Optional[Dict[str, Any]] = None,
+                    mode: str = "grounded", verdict: str = "sufficient", reasons: Optional[List[str]] = None,
+                    degrade: bool = True) -> Dict[str, Any]:
+    """답변 생성. 반환 {"answer","mode"(llm|extractive|error),"result_type","cited","model"[,"repeat_loop","error"]}.
+
+    mode: grounded = answer_system.md + answer_guide.md · best_effort = answer_best_effort.md ([C#] + [BK]).
+      best_effort 에서 근거 판정(verdict)이 sufficient 가 아니면 프롬프트 첫머리에 그 사실을 알려 배경 지식 사용을 허용한다.
+    degrade: LLM 이 최종 실패했을 때 추출식 답변으로 이어갈지(toggles.degrade_on_llm_failure). False 면 mode=error 로 끝낸다 —
+      incident 는 providers 가 이미 남겼으므로 llm_report 에는 그대로 나온다.
+    """
+    mode = normalize_answer_mode(mode)
     if use_llm and llm and llm.available:
         length_target = _tuning.T.get("answer_length_target")
-        sys_p = ANSWER_SYSTEM(length_target)
+        sys_p = ANSWER_SYSTEM_BEST_EFFORT(length_target) if mode == "best_effort" else ANSWER_SYSTEM(length_target)
         with prof.stage("answer_llm", model=getattr(llm, "model", llm.name), role=getattr(llm, "role", ""),
-                        context_chars=ctx["chars"], effort=effort, max_tokens=max_tokens, length_target=length_target) as st:
-            prompt = "## 질문\n%s\n\n## 컨텍스트\n%s" % (query, ctx["text"])
-            st.note(prompt_chars=len(prompt) + len(sys_p), est_input_tokens=(len(prompt) + len(sys_p)) // 3)
+                        context_chars=ctx["chars"], effort=effort, max_tokens=max_tokens, length_target=length_target, answer_mode=mode) as st:
+            head = ""
+            if mode == "best_effort" and verdict != "sufficient":
+                head = ("## 근거 판정\n검색된 문서 근거가 %s 로 판정되었습니다%s. 문서에 없는 부분은 배경 지식으로 보완하되 각 문장 끝에 [BK] 를 붙이고, "
+                        "문서에서 확인된 문장에만 [C#] 를 붙이세요.\n\n" % ("불충분(insufficient)" if verdict == "insufficient" else "약함(weak)",
+                                                                       (" — " + "; ".join(reasons)) if reasons else ""))
+            prompt = "%s## 질문\n%s\n\n## 컨텍스트\n%s" % (head, query, ctx["text"])
+            st.note(prompt_chars=len(prompt) + len(sys_p), est_input_tokens=(len(prompt) + len(sys_p)) // 3, verdict=verdict)
             st.sample(system=sys_p, prompt=prompt[:12000])
             try:
                 r = llm.complete(sys_p, prompt, max_tokens=max_tokens, effort=effort)
@@ -627,14 +786,20 @@ def generate_answer(query: str, ctx: Dict[str, Any], llm: Optional[BaseLLM], use
                                                 int(_tuning.T.get("answer_repeat_times")))
                 cited = sorted(set(int(n) for n in re.findall(r"\[C(\d+)\]", text)))
                 st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), cited=cited, model=r.get("model"),
-                        answer_chars=len(text), repeat_loop=repeat)
+                        answer_chars=len(text), repeat_loop=repeat, background_marks=len(_BK_RE.findall(text)))
                 st.sample(response=text[:6000])
-                out = {"answer": text, "mode": "llm", "cited": cited, "model": r.get("model")}
+                out = {"answer": text, "mode": "llm", "result_type": result_type_of("llm", mode), "cited": cited, "model": r.get("model")}
                 if repeat:
                     # 반복 루프가 난 답변은 캐시에 넣지 않는다 (pipeline 이 이 표시를 본다)
                     out["repeat_loop"] = repeat
                 return out
             except LLMError as e:
+                if not degrade:
+                    # degrade_on_llm_failure=false: 대체 경로 없이 오류로 끝낸다. incident 는 providers.complete 가 이미 기록했다.
+                    st.note(error=str(e)[:300], fallback="none (degrade_on_llm_failure=false)")
+                    text = ("LLM 호출 실패: %s\n\n답변을 만들지 않았습니다 (toggles.degrade_on_llm_failure=false). 추출식 답변으로 계속하려면 "
+                            "이 토글을 켜거나, llm_report 의 원인(재시도 횟수·timeout)을 확인하세요." % str(e)[:300])
+                    return {"answer": text, "mode": "error", "result_type": "error", "cited": [], "model": None, "error": str(e)[:300]}
                 st.note(error=str(e)[:300], fallback="extractive")
     elif use_llm:
         prof.skipped("answer_llm", "LLM provider unavailable → extractive fallback")
@@ -644,9 +809,9 @@ def generate_answer(query: str, ctx: Dict[str, Any], llm: Optional[BaseLLM], use
         if not ctx["citations"]:
             text = "관련 문단을 찾지 못했습니다. 근거 표가 비어 있습니다."
             st.note(sentences=0, cited=[], docs=0)
-            return {"answer": text, "mode": "extractive", "cited": [], "model": None}
+            return {"answer": text, "mode": "extractive", "result_type": "extractive", "cited": [], "model": None}
         r = extractive_structured(query, ctx, chunks or {}, meta, graph)
         text = r["text"]
         cited = sorted(set(int(n) for n in re.findall(r"\[C(\d+)\]", text)))
         st.note(sentences=r["core"], docs=r["n_docs"], cited=cited, keywords=r["keywords"], missing_terms=r["missing"], answer_chars=len(text))
-        return {"answer": text, "mode": "extractive", "cited": cited, "model": None}
+        return {"answer": text, "mode": "extractive", "result_type": "extractive", "cited": cited, "model": None}

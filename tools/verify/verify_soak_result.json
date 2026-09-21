@@ -3,32 +3,32 @@
   {
    "ok": true,
    "name": "서버 기동",
-   "detail": "http://127.0.0.1:8972"
+   "detail": "http://127.0.0.1:8971"
   },
   {
    "ok": true,
    "name": "부하 중 증분 빌드 시작",
-   "detail": "HTTP 200 job=a54a293d"
+   "detail": "HTTP 200 job=3772cb81"
   },
   {
    "ok": true,
    "name": "빌드 중에도 질의가 응답한다 (soft 락)",
-   "detail": "HTTP 200 · 4.2s"
+   "detail": "HTTP 200 · 1.0s"
   },
   {
    "ok": true,
    "name": "예상 밖 오류(5xx·연결실패) 0건",
-   "detail": "요청 11069건 · 200=11069 · 거절(429/503)=0 · 5xx=0"
+   "detail": "요청 3774건 · 200=3774 · 거절(429/503)=0 · 5xx=0"
   },
   {
    "ok": true,
    "name": "정상 처리된 요청이 있다",
-   "detail": "200 11069건 · 창구별 {\"web:poll\": 3324, \"mcp:query\": 2053, \"mcp:list\": 2053, \"web:search\": 2111, \"cli:search\": 243, \"web:query\": 1199, \"web:write\": 86}"
+   "detail": "200 3774건 · 창구별 {\"web:poll\": 224, \"mcp:query\": 1307, \"mcp:list\": 1307, \"web:search\": 755, \"cli:search\": 60, \"web:query\": 107, \"web:write\": 14}"
   },
   {
    "ok": true,
    "name": "p95 지연이 60초 미만",
-   "detail": "p50=286ms p95=2236ms max=4745ms"
+   "detail": "p50=9ms p95=956ms max=23461ms"
   },
   {
    "ok": true,
@@ -53,20 +53,20 @@
  ],
  "stats": {
   "codes": {
-   "200": 11069
+   "200": 3774
   },
   "err": [],
-  "n": 11069,
+  "n": 3774,
   "by_kind": {
-   "web:poll": 3324,
-   "mcp:query": 2053,
-   "mcp:list": 2053,
-   "web:search": 2111,
-   "cli:search": 243,
-   "web:query": 1199,
-   "web:write": 86
+   "web:poll": 224,
+   "mcp:query": 1307,
+   "mcp:list": 1307,
+   "web:search": 755,
+   "cli:search": 60,
+   "web:query": 107,
+   "web:write": 14
   }
  },
- "p50_ms": 285.7532501220703,
- "p95_ms": 2235.731840133667
+ "p50_ms": 8.588671684265137,
+ "p95_ms": 956.3682079315186
 }

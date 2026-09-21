@@ -230,6 +230,17 @@ def sec_protocol(cli):
     check("쓰기 도구만 readOnlyHint=false", ro.get("wiki_query") is True and ro.get("wiki_propose") is False,
           "query=%s propose=%s" % (ro.get("wiki_query"), ro.get("wiki_propose")))
     check("이름 중복 없음", len(names) == len(set(names)), len(names) - len(set(names)))
+    # 2026-09-18 신규 도구 3종 (docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.4·§2.5·§2.6) — 모두 annotations 와 함께, 읽기 전용
+    new3 = ("wiki_sweep", "wiki_rules", "wiki_graph_profile")
+    byname = {t["name"]: t for t in tools}
+    check("신규 도구 wiki_sweep · wiki_rules · wiki_graph_profile 등록", all(n in byname for n in new3), [n for n in new3 if n not in byname])
+    check("신규 도구 3종 annotations(readOnlyHint=true)", all((byname.get(n) or {}).get("annotations", {}).get("readOnlyHint") is True for n in new3),
+          {n: (byname.get(n) or {}).get("annotations") for n in new3})
+    qprops = ((byname.get("wiki_query") or {}).get("inputSchema") or {}).get("properties") or {}
+    check("wiki_query 에 output_mode(enum)·overrides 인자", (qprops.get("output_mode") or {}).get("enum") == ["answer", "fused", "reranked", "context"] and "overrides" in qprops,
+          "output_mode=%s" % (qprops.get("output_mode") or {}).get("enum"))
+    sprops = ((byname.get("wiki_sweep") or {}).get("inputSchema") or {}).get("properties") or {}
+    check("wiki_sweep 인자 request_id·key·values·range·repeats", all(k in sprops for k in ("request_id", "key", "values", "range", "repeats")), sorted(sprops))
 
     r = cli.send("resources/list")
     check("resources/list 빈 목록", (r.get("result") or {}).get("resources") == [], r.get("result"))
@@ -264,9 +275,13 @@ def sec_protocol(cli):
 TOOL_CALLS = [
     ("wiki_status", {}, "stats"),
     ("wiki_query", {"question": "ISSUE-2001 의 원인과 수정 CL 은?", "k": 4}, "request_id"),
-    ("wiki_search", {"channel": "fts", "query": "ISSUE-2001"}, "chunk_id"),
-    ("wiki_search", {"channel": "vector", "query": "전력 제어"}, "chunk_id"),
-    ("wiki_search", {"channel": "graph", "query": "ISSUE-2001"}, "chunks"),
+    # 2026-09-19: wiki_search 는 채널을 여러 개 조합한다 (retrieval.channel_search) — 응답에 per_channel·rows·counts 가 온다
+    ("wiki_search", {"channel": "fts", "query": "ISSUE-2001"}, "per_channel"),
+    ("wiki_search", {"channel": "vector", "query": "전력 제어"}, "per_channel"),
+    ("wiki_search", {"channel": "graph", "query": "ISSUE-2001"}, "graph"),
+    ("wiki_search", {"channels": ["fts", "vector"], "mode": "and", "query": "ISSUE-2001"}, '"mode": "and"'),
+    ("wiki_search", {"channels": ["fts"], "require": ["graph"], "query": "ISSUE-2001"}, '"mode": "composite"'),
+    ("wiki_inspect", {"query": "지난주 ISSUE-2001 의 원인"}, "채널 라우팅"),
     ("wiki_doc", {"id": "ISSUE-2001"}, "meta"),
     ("wiki_entity", {"name": "ISSUE-2001"}, ""),
     ("wiki_related", {"text": "TX 전력 제어 오동작으로 PA gain 테이블을 확인했다", "k": 3}, "유사 문서"),
@@ -280,6 +295,16 @@ TOOL_CALLS = [
     ("wiki_requests", {"kind": "query", "limit": 3}, "query"),
     # 단계 재실행: 인자 없이 부르면 재시작점 목록 (붙는 LLM 이 먼저 보는 화면)
     ("wiki_rerun", {}, "points"),
+    # 2026-09-18: 규칙 방향 설명·테스트 (읽기 전용) · 그래프 진단 · 스윕(키 없이 = 스윕 가능 키 목록) · 출력 모드
+    ("wiki_rules", {"action": "explain", "term": "PDCCH"}, "PDCCH"),
+    ("wiki_rules", {"action": "test", "q": "PDCCH 디코딩 실패 원인"}, "PDCCH"),
+    ("wiki_rules", {"action": "explain", "term": "zzz-없는-용어"}, "규칙 없음"),
+    ("wiki_graph_profile", {}, "suggestions"),
+    ("wiki_graph_profile", {"compare": True}, "compare"),
+    ("wiki_sweep", {}, "keys"),
+    ("wiki_query", {"question": "ISSUE-2001 의 원인과 수정 CL 은?", "output_mode": "fused"}, "candidates_fused"),
+    ("wiki_query", {"question": "ISSUE-2001 의 원인과 수정 CL 은?", "output_mode": "context"}, "[C1]"),
+    ("wiki_query", {"question": "ISSUE-2001 의 원인", "overrides": {"tuning": {"fts_topk_n": 3, "fts_topk_w": 1.5}}}, "request_id"),
 ]
 
 BAD_CALLS = [
@@ -290,10 +315,18 @@ BAD_CALLS = [
     ("wiki_doc", {"id": "존재하지-않는-문서-zzz"}, None),          # 오류는 아니고 "not found"
     ("wiki_propose", {"kind": "정체불명", "payload": {}}, "unsupported kind"),
     ("nope_tool", {}, "unknown tool"),
+    # 2026-09-18
+    ("wiki_rules", {"action": "explain"}, "term"),
+    ("wiki_rules", {"action": "test"}, "q"),
+    ("wiki_sweep", {"key": "nope_zzz", "values": [1]}, "모르는 키"),
+    ("wiki_sweep", {"key": "rrf_k"}, "values"),
+    ("wiki_sweep", {"key": "rerun_capture"}, "스윕할 수 없습니다"),
+    ("wiki_sweep", {"key": "rrf_k", "range": "1:100:1"}, "sweep_max_values"),
+    ("wiki_query", {"question": "x", "overrides": {"tuning": {"nope_zzz": 1}}}, "tuning"),
 ]
 
 
-QUICK_TOOLS = ("wiki_status", "wiki_query", "wiki_search", "wiki_sources")
+QUICK_TOOLS = ("wiki_status", "wiki_query", "wiki_search", "wiki_sources", "wiki_rules", "wiki_graph_profile", "wiki_sweep")
 
 
 def sec_tools(cli, label="stdio", quick=False):
@@ -307,16 +340,48 @@ def sec_tools(cli, label="stdio", quick=False):
             check("%s %s" % (tool, json.dumps(args, ensure_ascii=False)[:40]), False, "예외: %s" % e)
             continue
         txt = text_of(r)
-        ok = not is_error(r) and bool(txt) and (not expect or expect in txt or expect in json.dumps((r.get("result") or {}).get("structuredContent") or {}, ensure_ascii=False))
+        sc = (r.get("result") or {}).get("structuredContent") or {}
+        ok = not is_error(r) and bool(txt) and (not expect or expect in txt or expect in json.dumps(sc, ensure_ascii=False))
+        # 구조화 결과의 모양까지 본다 (붙는 LLM 은 text 보다 structuredContent 를 쓴다)
+        if ok and tool == "wiki_query" and args.get("output_mode") == "fused":
+            ok = bool(sc.get("candidates")) and sc.get("result_type") == "candidates_fused" and "lists" in sc and "stages" in sc
+            txt = "candidates=%d result_type=%s" % (len(sc.get("candidates") or []), sc.get("result_type"))
+        elif ok and tool == "wiki_query" and args.get("output_mode") == "context":
+            ok = bool((sc.get("context") or {}).get("text")) and sc.get("result_type") == "context" and "refs" in sc
+            txt = "context %d자 refs=%d" % (len((sc.get("context") or {}).get("text") or ""), len(sc.get("refs") or []))
+        elif ok and tool == "wiki_query" and not args.get("output_mode"):
+            # 2026-09-19: 기본(answer) 모드에도 구조화 결과를 준다 — 붙는 LLM 이 한국어 산문을 파싱하지 않게.
+            # 인용 번호는 Web `/api/query` 와 같은 뜻이어야 한다 (tests/test_surface_consistency.py 가 값까지 비교).
+            ok = (bool(sc.get("answer")) and isinstance(sc.get("citations"), list) and "evidence" in sc
+                  and sc.get("request_id") and all(isinstance(c.get("n"), int) and c.get("chunk_id") for c in sc["citations"]))
+            txt = "%s · citations=%d verdict=%s" % (txt[:40].replace("\n", " "), len(sc.get("citations") or []),
+                                                    (sc.get("evidence") or {}).get("verdict"))
+        elif ok and tool == "wiki_rules" and args.get("action") == "explain" and args.get("term") == "PDCCH":
+            ok = sc.get("term") == "PDCCH" and any(e.get("type") == "acronym" for e in sc.get("entries") or []) and "related_symmetric" in sc
+        elif ok and tool == "wiki_graph_profile":
+            ok = all(k in sc for k in ("size", "connectivity", "coverage", "quality", "rules", "usage", "suggestions", "saved"))
+            if args.get("compare"):
+                ok = ok and isinstance(sc.get("compare"), dict)      # 바로 앞 호출이 이력을 남겼으므로 비교가 있어야 한다
+            txt = "entities=%s suggestions=%d compare=%s" % ((sc.get("size") or {}).get("entities"), len(sc.get("suggestions") or []), "compare" in sc)
+        elif ok and tool == "wiki_sweep" and not args:
+            body = {}
+            try:
+                body = json.loads(txt)
+            except ValueError:
+                pass
+            ok = sc.get("n_keys", 0) > 10 and any(k.get("key") == "rrf_k" for k in body.get("keys") or []) and bool(body.get("points"))
+            txt = "n_keys=%s max_values=%s" % (sc.get("n_keys"), sc.get("max_values"))
         check("%s %s" % (tool, json.dumps(args, ensure_ascii=False)[:38]), ok, txt[:100].replace("\n", " "))
         if tool == "wiki_query":
-            for tok in txt.split():
-                if tok.isdigit():
-                    pass
-            import re
-            m = re.search(r"request_id: (\d+) · query_id: (\d+)", txt)
-            if m:
-                ids["request_id"], ids["query_id"] = int(m.group(1)), int(m.group(2))
+            # id 는 구조화 결과에서 읽는다 — 산문에서 정규식으로 긁어내던 예전 방식은 표현이 바뀌면 깨졌다
+            # (붙는 LLM 도 같은 자리를 본다: structuredContent.request_id / query_id).
+            if sc.get("request_id") and sc.get("query_id"):
+                ids["request_id"], ids["query_id"] = int(sc["request_id"]), int(sc["query_id"])
+            else:
+                import re
+                m = re.search(r"request_id: (\d+) · query_id: (\d+)", text_of(r) or "")
+                if m:
+                    ids["request_id"], ids["query_id"] = int(m.group(1)), int(m.group(2))
     # 재실행은 **실제 request_id** 가 있어야 의미가 있다 — 위 wiki_query 가 만든 것으로 한 번 돌려 본다
     if ids.get("request_id") and not quick:
         try:
@@ -334,12 +399,32 @@ def sec_tools(cli, label="stdio", quick=False):
             check("wiki_requests (한 건 상세)", not is_error(r) and '"answer"' in txt, txt[:100].replace("\n", " "))
         except Exception as e:
             check("wiki_requests (한 건 상세)", False, "예외: %s" % e)
+    # 스윕: 마지막 저장 요청("last")을 기준으로 rrf_k 두 값 → record/compare (docs/SWEEP.md). 위 wiki_query 가 중간 결과를 남겼다 (rerun_capture).
+    if ids.get("request_id"):
+        try:
+            args = {"request_id": "last", "key": "rrf_k", "values": [10, 60]}
+            r = cli.send("tools/call", {"name": "wiki_sweep", "arguments": args}) if isinstance(cli, Stdio) else cli.call("wiki_sweep", args)
+            txt = text_of(r)
+            sc = (r.get("result") or {}).get("structuredContent") or {}
+            rec, cmp_ = sc.get("record") or {}, sc.get("compare") or {}
+            ok = not is_error(r) and "rrf_k = 10, 60" in txt and rec.get("values") == [10, 60] and rec.get("n_ok") == 2 and rec.get("point") == "rrf_fuse" \
+                and (cmp_.get("baseline") or {}).get("value") == 10 and len(cmp_.get("runs") or []) == 2 and all("stages" in x for x in cmp_.get("runs") or [])
+            check("wiki_sweep (last · rrf_k=[10,60] → record/compare)", ok,
+                  ("values=%s n_ok=%s base=%s" % (rec.get("values"), rec.get("n_ok"), (cmp_.get("baseline") or {}).get("value"))) if not is_error(r) else txt[:100])
+            if not quick:
+                args = {"request_id": ids["request_id"], "key": "claim_check"}          # 토글: 값 생략 → [false, true]
+                r = cli.send("tools/call", {"name": "wiki_sweep", "arguments": args}) if isinstance(cli, Stdio) else cli.call("wiki_sweep", args)
+                rec = ((r.get("result") or {}).get("structuredContent") or {}).get("record") or {}
+                check("wiki_sweep (토글 claim_check · 값 생략)", not is_error(r) and rec.get("values") == [False, True] and rec.get("n_ok") == 2,
+                      "values=%s n_ok=%s" % (rec.get("values"), rec.get("n_ok")) if not is_error(r) else text_of(r)[:100])
+        except Exception as e:
+            check("wiki_sweep (last · rrf_k=[10,60])", False, "예외: %s" % e)
     if ids.get("query_id"):
         r = cli.send("tools/call", {"name": "wiki_feedback", "arguments": {"query_id": ids["query_id"], "feedback": 1, "note": "verify"}}) \
             if isinstance(cli, Stdio) else cli.call("wiki_feedback", {"query_id": ids["query_id"], "feedback": 1, "note": "verify"})
         check("wiki_feedback (query_id 연계)", not is_error(r), text_of(r)[:90])
     else:
-        check("wiki_query 결과에 request_id/query_id 표시", False, "정규식 불일치")
+        check("wiki_query 결과에 request_id/query_id 표시", False, "structuredContent·본문 모두에서 찾지 못함")
 
     print("\n[3] 잘못된 호출 (%s)" % label)
     for tool, args, expect in (BAD_CALLS[:3] if quick else BAD_CALLS):

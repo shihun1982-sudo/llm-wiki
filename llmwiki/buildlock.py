@@ -45,7 +45,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 class BuildLock:
-    def __init__(self, path: str, timeout: float = 0.0, stale_after_s: float = 6 * 3600, cmd: str = ""):
+    def __init__(self, path: str, timeout: float = 0.0, stale_after_s: float = 48 * 3600, cmd: str = ""):
         self.path = path
         self.timeout = float(timeout or 0)
         self.stale_after_s = stale_after_s
@@ -67,8 +67,16 @@ class BuildLock:
         return (time.time() - float(h.get("ts") or 0)) > self.stale_after_s
 
     def acquire(self) -> None:
+        """락을 잡는다. 이미 다른 빌드가 잡고 있으면 `timeout` 초까지 기다린다 (0 = 즉시 실패).
+
+        2026-09-19: 기본 대기가 48시간이 되면서 **기다리는 동안 아무 말도 없으면** 멈춘 것처럼 보인다.
+        그래서 5초마다 진행 레지스트리에 한 줄 남긴다 — Web 진행 패널·CLI 모니터·`server activity` 에 그대로 보인다.
+        기다리지 않고 바로 실패하려면 `build_lock_timeout=0`.
+        """
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         deadline = time.time() + self.timeout
+        t0 = time.time()
+        said = 0.0
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -86,6 +94,15 @@ class BuildLock:
                     continue
                 if time.time() >= deadline:
                     raise BuildLockedError(h or {})
+                now = time.time()
+                if now - said >= 5.0:
+                    said = now
+                    try:
+                        from . import progress as _pg
+                        _pg.note("다른 빌드가 끝나기를 기다리는 중… %.0f초 (pid=%s, 최대 %.0f분 — build_lock_timeout)"
+                                 % (now - t0, (h or {}).get("pid"), self.timeout / 60.0))
+                    except Exception:
+                        pass
                 time.sleep(0.5)
 
     def release(self) -> None:

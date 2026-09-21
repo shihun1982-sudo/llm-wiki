@@ -10,7 +10,7 @@
         "type": "build",
         "full": false
       },
-      "timeout_s": 3600,
+      "timeout_s": 172800,
       "overlap": "skip",
       "_note": "코퍼스 변경이 있으면 증분 빌드. 서버 내장 워처(toggles.auto_build)와 역할이 겹치므로 둘 중 하나만 쓰세요."
     },
@@ -22,7 +22,7 @@
         "type": "build",
         "full": true
       },
-      "timeout_s": 21600,
+      "timeout_s": 172800,
       "_note": "매일 03:00 전체 리빌드. 배타 실행이라 진행 중에는 질의가 대기합니다 — 사용자가 적은 시간에."
     },
     {

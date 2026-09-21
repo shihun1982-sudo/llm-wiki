@@ -69,6 +69,22 @@ def run_health(pipe, quick: bool = False, for_build: bool = False) -> Dict[str, 
         return free_gb > 1.0, "free %.1f GB at %s" % (free_gb, d)
     checks.append(_check("disk_free", _disk, "warn", "디스크 여유 1GB 미만"))
 
+    # ---- 로그 총량 (log_total_max_mb / log_limit_action) — data/requests·data/reruns 는 requests_keep_days·rerun_keep 로 따로 제한 ----
+    def _logq():
+        from . import logging_setup as _ls
+        from .config import path_for
+        q = _ls.check_quota(force=True, dir_hint=_ls.log_dir() or path_for("logs_dir"))
+        ok = not (q.get("over") or q.get("stopped"))
+        if q.get("enabled"):
+            state = "STOPPED" if q.get("stopped") else ("OVER" if q.get("over") else "ok")
+            detail = "logs %.1f/%d MB (%s%%) action=%s %s" % (q["total_mb"], q["limit_mb"], q.get("pct"), q.get("action"), state)
+        else:
+            detail = "logs %.1f MB (제한 없음)" % q["total_mb"]
+        detail += " | requests_keep_days=%s rerun_keep=%s analysis_keep=%s" % (getattr(s, "requests_keep_days", None), getattr(s, "rerun_keep", None),
+                                                                              getattr(s, "analysis_keep", None))
+        return ok, detail
+    checks.append(_check("log_quota", _logq, "warn", "logs status 로 확인 · log_total_max_mb 를 올리거나 log_limit_action=prune"))
+
     # ---- 코퍼스 ----
     def _corpus():
         missing = [d for d in s.corpus_dirs if not os.path.isdir(d)]
@@ -161,6 +177,42 @@ def run_health(pipe, quick: bool = False, for_build: bool = False) -> Dict[str, 
     checks.append(_check("embedder_quality", _embed_quality, "warn",
                          "Ollama 면 `ollama pull bge-m3` 후 `build vector --full` · 게이트웨이면 embed_provider=openai + openai_embed_model · "
                          "의도적으로 오프라인이면 embed_provider=hash 로 명시하세요 (이 경고가 사라집니다)"))
+
+    # ---- headless 에이전트 실행 파일 (2026-09-18, 요청 8) ----
+    # provider 가 headless:<agent> 인 역할마다: agents.json 에 그 에이전트가 있고 command[0] 이 PATH(또는 절대 경로)에 있는가.
+    # 네트워크를 쓰지 않으므로 quick 에서도 돈다. 없으면 질의 때마다 재시도 없이 즉시 실패하므로 FAIL 로 잡는다.
+    def _headless():
+        from . import headless as _hl
+        used: Dict[str, List[str]] = {}
+        for role in s.LLM_ROLES:
+            try:
+                prov = str((s.role_llm(role) or {}).get("provider") or "")
+            except Exception:
+                prov = ""
+            if prov == "headless" or prov.startswith("headless:"):
+                used.setdefault(prov.split(":", 1)[1] if ":" in prov else "opencode", []).append(role)
+        if not used:
+            return True, "headless 에이전트를 쓰는 역할 없음"
+        agents = _hl.load_agents()
+        bad, good = [], []
+        for name, roles in sorted(used.items()):
+            cfg = agents.get(name)
+            if not cfg or not cfg.get("command"):
+                bad.append("%s(%s): agents.json 에 없음" % (name, ",".join(roles)))
+                continue
+            cmd0 = str(cfg["command"][0])
+            exe = cmd0.replace("{python}", sys.executable).replace("{project_root}", _hl.ROOT)
+            exe = os.path.expandvars(os.path.expanduser(exe))
+            path = shutil.which(exe) or (exe if os.path.isabs(exe) and os.path.exists(exe) else "")
+            if path:
+                good.append("%s(%s): %s" % (name, ",".join(roles), path))
+            else:
+                bad.append("%s(%s): %r 를 찾을 수 없음" % (name, ",".join(roles), cmd0))
+        detail = " · ".join(bad + good)
+        return not bad, detail
+    checks.append(_check("headless_agents", _headless, "fail",
+                         "설치되지 않았거나 PATH 에 없음 — agents.json command 를 절대 경로로 적거나 PATH 를 설정 "
+                         "(서버를 실행하는 계정 기준; Windows 는 …\\npm\\opencode.cmd). 확인: python -m llmwiki models test --live"))
 
     if not quick:
         # ---- 프로바이더 ping ----

@@ -1139,8 +1139,12 @@ class ConsoleCliLimitTest(unittest.TestCase):
         from llmwiki import reqmgr
         self.assertGreater(float(reqmgr.DEFAULTS["timeouts"]["cli_s"]), 0,
                            "timeouts.cli_s 기본값이 0이면 느린 콘솔 명령이 읽기 슬롯을 계속 잡는다")
-        self.assertEqual(float(reqmgr.DEFAULTS["timeouts"]["job_s"]), 0,
-                         "빌드 같은 백그라운드 작업은 기본 무제한이어야 한다")
+        # 빌드는 48시간(172800초)까지 허용한다. 0(무제한)도 유효하지만, 기본값은 '멈춘 빌드'를 언젠가 회수하도록 48시간.
+        job_s = float(reqmgr.DEFAULTS["timeouts"]["job_s"])
+        self.assertTrue(job_s == 0 or job_s >= 172800,
+                        "빌드 같은 백그라운드 작업 제한은 48시간 이상이거나 0(무제한)이어야 한다 (지금 %s)" % job_s)
+        self.assertGreaterEqual(float(reqmgr.DEFAULTS["concurrency"]["write_wait_timeout_s"]), 172800,
+                                "write_wait_timeout_s 가 짧으면 오래 걸리는 빌드가 시작하지 못하고 503 으로 거부된다")
 
     def test_ticket_applies_the_limit(self):
         from llmwiki import reqmgr
@@ -1154,7 +1158,7 @@ class ConsoleCliLimitTest(unittest.TestCase):
         # 빌드처럼 오래 걸리는 CLI 는 서버가 job_s 를 명시적으로 넘긴다
         with mgr.ticket("cli", "none", client={"user": "u1", "role": "viewer"}, label="cli:build",
                         timeout_s=float(mgr.cfg["timeouts"]["job_s"])) as t:
-            self.assertEqual(float(t["limit_s"]), 0.0)
+            self.assertEqual(float(t["limit_s"]), float(mgr.cfg["timeouts"]["job_s"]))
 
 
 class RolePreviewTest(unittest.TestCase):

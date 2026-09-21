@@ -50,7 +50,7 @@ def shot(url, budget=BUDGET):
 
 
 env = dict(os.environ, PYTHONIOENCODING="utf-8")
-proc = subprocess.Popen([sys.executable, "-m", "llmwiki", "serve", "--port", str(PORT)], cwd=ROOT, env=env,
+proc = subprocess.Popen([sys.executable, "-m", "llmwiki", "serve", "--host", "127.0.0.1", "--port", str(PORT)], cwd=ROOT, env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 rows = []
 try:

@@ -46,7 +46,7 @@ WEIRD = [
     "'; DROP TABLE chunks; --", "<script>alert(1)</script>", "../../etc/passwd", "..\\..\\windows\\win.ini",
     "%s%s%s%n", "{{7*7}}", "null", "undefined", "NaN", "-1", "0", "1e308", "9" * 400,
     "한글 질의 테스트", "🙂🚀🔥", "日本語テスト", "العربية", "‮evil", "\ud83d", "a" * 10000,
-    "SELECT * FROM", "*", "?", "()", "[]", "{}", "|", "&&", ";", "​",
+    "SELECT * FROM", "*", "?", "()", "[]", "{}", "|", "&&", ";", "…",
     "ISSUE-2001", "CL-55301", "SWD-RFC-1661", "PPP LCP", "RFC 1661 옵션 협상",
 ]
 KEYS = ["q", "query", "question", "k", "limit", "id", "name", "action", "overrides", "preset", "mode", "channel",
@@ -85,7 +85,7 @@ def rnd_body(rng):
 
 GET_PATHS = ["/api/status", "/api/docs", "/api/graph", "/api/entity", "/api/chunk", "/api/doc_chunks", "/api/queries",
              "/api/requests", "/api/request", "/api/query_trace", "/api/models", "/api/models/catalog", "/api/system",
-             "/api/watch", "/api/tuning", "/api/architecture", "/api/evolve/status", "/api/evolve/proposals",
+             "/api/watch", "/api/tuning", "/api/architecture", "/api/limits", "/api/evolve/status", "/api/evolve/proposals",
              "/api/wiki/list", "/api/wiki/page", "/api/eval/questions", "/api/rules", "/api/health", "/api/config/effective",
              "/api/presets", "/api/presets/diff", "/api/prompts", "/api/logs/files", "/api/logs", "/api/forensics",
              "/api/forensics/summary", "/api/forensic", "/api/trials", "/api/trial", "/api/trials/compare", "/api/pins",
@@ -120,7 +120,7 @@ class Monkey:
         self.findings = []           # 500 / 연결 실패 / traceback
         self.slow = []
         self.n = 0
-        self.last_reject = ""     # 마지막 거절 응답 본문 (사후 확인이 실패했을 때 사유를 보고서에 남긴다)
+        self.last_reject = ""     # 마지막 거절 응답 본문 (사후 확인이 실패했을 때 이유를 보고서에 남긴다)
 
     @staticmethod
     def _quote_value(v):
@@ -148,7 +148,7 @@ class Monkey:
         data = None
         if body is not None:
             try:
-                # ensure_ascii=True: 홀로 있는 서러게이트(\ud83d)도 \uXXXX 로 이스케이프되어 클라이언트가 죽지 않는다
+                # ensure_ascii=True: 짝 없는 서러게이트(\ud83d)도 \uXXXX 로 이스케이프되어 클라이언트가 죽지 않는다
                 data = json.dumps(body, ensure_ascii=True, default=str).encode("ascii", "replace")
             except Exception:
                 data = b'{"q": "unserializable"}'
@@ -245,7 +245,7 @@ class Monkey:
         while time.time() - t0 < limit_s:
             code, _el, payload = self.req("GET", "/api/activity", timeout=20)
             if code != 200:
-                # 활동 목록을 못 읽으면(권한 없음 등) 판단 근거가 없으니 짧게만 기다린다
+                # 활동 목록을 볼 수 없으면 권한 없음 등 — 판단 근거가 없으니 짧게만 기다린다
                 time.sleep(2.0)
                 return None, None
             try:
@@ -255,7 +255,7 @@ class Monkey:
             running = len(j.get("running") or []) + len(j.get("external") or [])
             queued = len(j.get("queued") or [])
             lock = j.get("lock") or {}
-            # 대기열이 비어도 배타 작업이 잡고 있거나 쓰기가 줄 서 있으면 읽기는 계속 막힌다(writer preference).
+            # 대기열이 비어도 배타 작업이 있고 쓰기가 줄 서 있으면 읽기는 계속 막힌다(writer preference).
             blocked = bool(lock.get("writer")) or int(lock.get("writers_waiting") or 0) > 0
             last = (running, queued, "writer:%s/%s" % (lock.get("writer_label") or "-", lock.get("writers_waiting") or 0))
             if running == 0 and queued == 0 and not blocked:
@@ -309,8 +309,8 @@ def run_cli_monkey(rng, n, env, findings, lock):
         argv = list(rng.choice(CLI_ARGS))
         if rng.random() < 0.4:
             argv.append(str(rnd_scalar(rng))[:60])
-        # NUL 은 **실제 명령줄에 넣을 수 없다** — OS 가 금지한다. 여기서 넘기면 CLI 가 시작도 못 하고
-        # subprocess 가 ValueError 를 던져, 제품 결함이 아닌 하네스 오류가 결함으로 기록된다 (2026-09-16).
+        # NUL 은 **실제 명령줄에 넣을 수 없다** — OS 가 금지한다. 여기서 빼두지 않으면 CLI 가 시작도 못 하고
+        # subprocess 가 ValueError 로 터져, 제품 결함이 아닌 하네스 오류가 결함으로 기록된다 (2026-09-16).
         # Web 경로(/api/cli)는 JSON 으로 NUL 이 들어올 수 있어 서버가 400 으로 거절한다 (_as_argv).
         argv = [a.replace("\x00", "") for a in argv]
         try:
@@ -357,9 +357,9 @@ def main() -> int:
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     base = ns.url.rstrip("/")
     if not base:
-        # 쓰이고 있는 포트에는 절대 붙지 않는다 — 예전 실행에서 남은 서버(옛 코드)를 때리면 결과가 거짓이 된다.
-        # 다만 **중단하지는 않는다**: 고아 프로세스 하나 때문에 전체 검증이 못 도는 일이 실제로 있었다
-        # (verify_all 이 이 단계에서만 0.1초 만에 실패). 비어 있는 다음 포트를 찾아 계속한다.
+        # 이미 떠 있는 포트에는 새로 붙지 않는다 — 이전 실행에서 남은 서버(옛 코드)를 때리면 결과가 거짓이 된다.
+        # 다만 **중단하지는 않는다**: 고아 프로세스 하나 때문에 전체 검증이 멈추는 일이 실제로 있었다
+        # (verify_all 의 첫 단계에서만 0.1초 만에 실패). 비어 있는 다음 포트를 찾아 계속한다.
         import socket as _s
 
         def _busy(port):
@@ -382,8 +382,8 @@ def main() -> int:
         cfg["data_dir"] = os.path.join(tmp, "data")
         cfg["wiki_dir"] = os.path.join(tmp, "wiki")
         cfg["log_level"] = "DEBUG"
-        # 목적은 '서버가 쓰레기 입력을 견디는가' 이지 LLM 속도가 아니다 → mock LLM 으로 빠르게 많이 때린다.
-        # (실제 LLM 으로 부하를 보려면 --url 로 운영 서버를 지정하고 --requests 를 낮춘다)
+        # 목적은 '서버가 쓰레기 입력을 견디는가' 이지 LLM 속도가 아니다 — mock LLM 으로 빠르게 많이 때린다.
+        # (실제 LLM 으로 부하를 보려면 --url 로 운영 서버를 지정하고 --requests 를 줄인다.)
         if not ns.real_llm:
             cfg["llm_provider"] = "mock"
             cfg["llm_roles"] = {}
@@ -481,13 +481,13 @@ def main() -> int:
         cli_thread.join(600)
     m.findings.extend(cli_findings)
 
-    # 폭격으로 밀어 넣은 작업이 끝나기 전에 물으면 503 이 나오는데, 그건 결함이 아니라
+    # 폭격으로 밀어 넣은 작업이 끝나기 전에 물으면 503 이 나오는데, 그건 결함이 아니다
     # 용량 초과를 정직하게 거절한 것이다. 큐가 빈 뒤에 물어야 "살아남았는가"를 볼 수 있다.
-    # 폭격 중 끊긴 요청들의 서버 스레드는 클라이언트가 떠난 뒤에도 남아 대기열을 채운다.
-    # 그것들이 queue_timeout_s 로 정리될 때까지 기다린 뒤에 물어야 '살아남았는가' 를 볼 수 있다.
+    # 폭격 때 넣긴 요청들의 서버 스레드는 클라이언트가 떠난 뒤에도 살아 대기열을 채운다.
+    # 그것들이 queue_timeout_s 로 풀리기 전까지 기다린 뒤에 물어야 '살아남았는가' 를 볼 수 있다.
     drained, backlog = m.drain()
     print("사후 정리: 대기열 %s (진행/대기 %s)" % ("비움" if drained else ("확인 불가" if drained is None else "남음"), backlog))
-    # 폭격이 튜닝·프리셋을 무작위 값으로 바꿔 놓았을 수 있다. 그 조합은 '설정이 이상한 것' 이지
+    # 폭격에 튜닝·프리셋을 무작위 값으로 바꿔 놓았을 수 있다. 그 조합은 '설정이 비정상인 것' 이지
     # '서버가 망가진 것' 이 아니므로, 마지막 생존 확인 전에 기본값으로 되돌린다.
     if tmp:
         rc, _e, _b = m.req("POST", "/api/tuning", {"action": "reset"}, timeout=60)
@@ -528,10 +528,10 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
     elif tmp:
         print("임시 폴더 유지: %s" % tmp)
-    # 결함으로 세는 것: 서버 예외(500) · 서버 사망 · 연결 끊김(시간 초과 제외) · CLI traceback 유출.
+    # 결함으로 보는 것: 서버 예외(500) · 서버 사망 · 연결 실패(시간 초과 제외) · CLI traceback 노출.
     # 폭격 직후의 429/503 은 **설계된 정상 동작**이다 — 1200건을 쏟아붓고 수십 건을 중간에 끊으면
-    # 버려진 요청들이 queue_timeout_s 로 정리될 때까지 대기열이 차 있고, 그 동안 서버는 정직하게 거절한다.
-    # 그래서 '폭격 후 정상 질의' 는 보고만 하고 판정에는 넣지 않는다(서버가 살아 있는지는 따로 본다).
+    # 버려진 요청들이 queue_timeout_s 로 풀리기 전까지 대기열에 남아 있고, 그 동안 서버는 정직하게 거절한다.
+    # 그래서 '폭격 뒤 정상 질의' 는 보고만 하고 판정에는 넣지 않는다(서버가 살아 있는지는 따로 본다).
     fatal = (not alive) or m.codes.get(500, 0) or any(f["kind"] in ("server_died", "cli_traceback", "connection") for f in m.findings)
     if not ok1:
         print("  참고: 폭격 직후 정상 질의가 %s 로 거절됐습니다 — 대기열이 빠지는 중이면 정상입니다." % code1)

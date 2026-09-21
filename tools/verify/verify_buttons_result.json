@@ -1,882 +1,14 @@
 [
  {
   "verdict": "OK  ",
-  "tab": "activity",
-  "button": "btn-act-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 2322
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "arch",
-  "button": "btn-arch-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 20749
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "board",
-  "button": "btn-board-refresh",
+  "tab": "system",
+  "button": "btn-ops",
   "why": "",
   "state": {
    "errs": [],
    "fetches": 4,
    "toasts": [],
-   "len": 723
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "config",
-  "button": "btn-config-effective",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 46544
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "config",
-  "button": "btn-config-reload",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 46544
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "config",
-  "button": "btn-config-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 46566
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "console",
-  "button": "btn-console",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 1089
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "contract",
-  "button": "btn-lint-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 37180
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "embed",
-  "button": "btn-embed-cache-clear",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [],
-   "len": 5797
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "embed",
-  "button": "btn-embed-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 5797
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "embed",
-  "button": "btn-pc-clear",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "{\"removed\":7}"
-   ],
-   "len": 5797
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "evolve",
-  "button": "btn-ev-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 38776
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "evolve",
-  "button": "btn-mp-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [
-    "payload JSON 오류"
-   ],
-   "len": 38776
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "forensics",
-  "button": "btn-fx-expect",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 28795
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "forensics",
-  "button": "btn-fx-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 7,
-   "toasts": [],
-   "len": 28795
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "forensics",
-  "button": "btn-fx-run",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "request #3424 진단 완료"
-   ],
-   "len": 18610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "graph",
-  "button": "btn-graph",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 8214
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "logs",
-  "button": "btn-logs-load",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 7,
-   "toasts": [],
-   "len": 14357
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "memory",
-  "button": "btn-mem-decay",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [
-    "{\"proposals_decayed\":87,\"proposals_archived\":0,\"pins_decayed\":2}"
-   ],
-   "len": 12652
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "memory",
-  "button": "btn-mem-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 12652
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-agents-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "agents.json 저장됨"
-   ],
-   "len": 39484
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-cat-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "모델 id 를 입력하세요"
-   ],
-   "len": 39484
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-cat-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [
-    "카탈로그 새로고침"
-   ],
-   "len": 39484
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-models-reload",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 39480
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-models-reload-file",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 9,
-   "toasts": [
-    "config.json 다시 읽음"
-   ],
-   "len": 39564
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-models-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 7,
-   "toasts": [],
-   "len": 39562
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-models-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 41119
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-roles-reload",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 41119
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-roles-reload-file",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 9,
-   "toasts": [
-    "config.json 다시 읽음"
-   ],
-   "len": 41168
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "models",
-  "button": "btn-roles-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 7,
-   "toasts": [],
-   "len": 41119
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "pins",
-  "button": "btn-pin-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "pin p3"
-   ],
-   "len": 1729
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "presets",
-  "button": "btn-preset-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 2248
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "presets",
-  "button": "btn-preset-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [
-    "presets.json 저장됨"
-   ],
-   "len": 2248
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "prompts",
-  "button": "btn-prompt-reset",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 1565
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "prompts",
-  "button": "btn-prompt-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 1641
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "qlog",
-  "button": "btn-logs",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 19508
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "qrules",
-  "button": "btn-qr-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "추가: []"
-   ],
-   "len": 1175
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "qrules",
-  "button": "btn-qr-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [
-    "저장됨 {\"acronym\":69,\"synonym\":35,\"alias\":10,\"related\":11,\"exclude\":3,\"compound\":14}"
-   ],
-   "len": 1175
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "qrules",
-  "button": "btn-qr-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 1302
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-myreq-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 16966
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-q-analysis",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "먼저 질의를 실행하세요"
-   ],
-   "len": 16966
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-q-expect",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 16959
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-q-expect-run",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "먼저 질의를 실행하세요"
-   ],
-   "len": 16959
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-q-forensic",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 16959
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "query",
-  "button": "btn-q-inspect",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [],
-   "len": 16959
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "requests",
-  "button": "btn-req-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 20668
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "rules",
-  "button": "btn-rules-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [
-    "규칙 저장됨 — 빌드(전체) 시 반영"
-   ],
-   "len": 317
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "schedule",
-  "button": "btn-sch-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [],
-   "len": 11001
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "schedule",
-  "button": "btn-sch-cancel",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 11008
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "schedule",
-  "button": "btn-sch-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 11008
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "schedule",
-  "button": "btn-sch-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [
-    "이름을 입력하세요"
-   ],
-   "len": 11008
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "schedule",
-  "button": "btn-sch-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "이름을 입력하세요"
-   ],
-   "len": 11008
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "search",
-  "button": "btn-rules-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 1375
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "search",
-  "button": "btn-search",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 4641
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "search",
-  "button": "btn-time-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 3261
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "security",
-  "button": "btn-pw-change",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [
-    "현재 비밀번호와 새 비밀번호를 모두 입력하세요"
-   ],
-   "len": 16117
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "security",
-  "button": "btn-sec-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 9,
-   "toasts": [],
-   "len": 16117
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "security",
-  "button": "btn-sec-reload",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 11,
-   "toasts": [
-    "security.json 다시 읽음 (mode off)"
-   ],
-   "len": 16320
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "security",
-  "button": "btn-user-add",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "사용자 id 를 입력하세요"
-   ],
-   "len": 16320
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-block",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 9799
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-circuit-reset",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "회로 초기화"
-   ],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-loglevel",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "log_level=INFO"
-   ],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-maint",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-refresh",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-reload",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "server.json 다시 읽음"
-   ],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "server",
-  "button": "btn-srv-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 8,
-   "toasts": [
-    "서버 제한 저장됨 (server.json)"
-   ],
-   "len": 9610
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "sources",
-  "button": "btn-src-federated",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 1516
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "sources",
-  "button": "btn-src-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [
-    "저장됨"
-   ],
-   "len": 1516
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "sources",
-  "button": "btn-src-test",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 5,
-   "toasts": [],
-   "len": 1466
+   "len": 33456
   }
  },
  {
@@ -886,11 +18,47 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 5,
+   "fetches": 7,
    "toasts": [
     "설정 저장됨"
    ],
-   "len": 9157
+   "len": 33456
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "system",
+  "button": "btn-reset-data",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [],
+   "len": 35304
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "system",
+  "button": "btn-reset-logs",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 5,
+   "toasts": [],
+   "len": 35232
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "system",
+  "button": "btn-reset-settings",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 4,
+   "toasts": [],
+   "len": 36717
   }
  },
  {
@@ -902,7 +70,7 @@
    "errs": [],
    "fetches": 6,
    "toasts": [],
-   "len": 9157
+   "len": 36717
   }
  },
  {
@@ -914,9 +82,9 @@
    "errs": [],
    "fetches": 5,
    "toasts": [
-    "scan 8.7ms changed=0 removed=0"
+    "scan 12.6ms changed=0 removed=0"
    ],
-   "len": 9244
+   "len": 36806
   }
  },
  {
@@ -930,7 +98,7 @@
    "toasts": [
     "워처 시작"
    ],
-   "len": 9244
+   "len": 36806
   }
  },
  {
@@ -944,7 +112,7 @@
    "toasts": [
     "워처 중지"
    ],
-   "len": 9244
+   "len": 36806
   }
  },
  {
@@ -958,7 +126,7 @@
    "toasts": [
     "changed=0 built=false"
    ],
-   "len": 9244
+   "len": 36803
   }
  },
  {
@@ -972,7 +140,7 @@
    "toasts": [
     "2개 이상 선택"
    ],
-   "len": 4219
+   "len": 8154
   }
  },
  {
@@ -986,7 +154,19 @@
    "toasts": [
     "먼저 비교하세요"
    ],
-   "len": 4219
+   "len": 8154
+  }
+ },
+ {
+  "verdict": "OK  ",
+  "tab": "trials",
+  "button": "btn-tr-pick",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 6,
+   "toasts": [],
+   "len": 12797
   }
  },
  {
@@ -996,61 +176,9 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 6,
-   "toasts": [],
-   "len": 4219
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "tuning",
-  "button": "btn-tuning-reload",
-  "why": "",
-  "state": {
-   "errs": [],
    "fetches": 4,
    "toasts": [],
-   "len": 66799
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "tuning",
-  "button": "btn-tuning-reset",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 4,
-   "toasts": [],
-   "len": 66799
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "tuning",
-  "button": "btn-tuning-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 3,
-   "toasts": [
-    "변경된 값이 없습니다"
-   ],
-   "len": 66799
-  }
- },
- {
-  "verdict": "OK  ",
-  "tab": "wiki",
-  "button": "btn-w-save",
-  "why": "",
-  "state": {
-   "errs": [],
-   "fetches": 6,
-   "toasts": [
-    "저장됨"
-   ],
-   "len": 25187
+   "len": 12797
   }
  },
  {
@@ -1060,7 +188,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 3,
    "toasts": []
   }
  },
@@ -1071,7 +199,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 3,
+   "fetches": 5,
    "toasts": []
   }
  },
@@ -1082,9 +210,9 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 5,
+   "fetches": 3,
    "toasts": [
-    "복사 실패: NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied."
+    "클립보드에 자동으로 넣지 못했습니다 — 창에서 Ctrl+C"
    ]
   }
  },
@@ -1095,7 +223,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 3,
+   "fetches": 4,
    "toasts": []
   }
  },
@@ -1106,7 +234,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 5,
+   "fetches": 4,
    "toasts": []
   }
  },
@@ -1117,7 +245,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 6,
    "toasts": []
   }
  },
@@ -1216,7 +344,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 5,
    "toasts": []
   }
  }

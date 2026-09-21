@@ -33,7 +33,7 @@
     renderStageTable($('#req-table'), tr, other);
     $('#req-open-all').onclick = () => $$('#req-trace .tr-row').forEach((x) => x.classList.add('open'));
     $('#req-raw').onclick = () => { const p = $('#req-rawjson'); p.classList.toggle('hidden'); p.textContent = JSON.stringify(r, null, 1); };
-    $('#req-copy').onclick = () => { navigator.clipboard.writeText(JSON.stringify(tr, null, 1)).then(() => toast('복사됨')); };
+    $('#req-copy').onclick = () => LW.copyText(JSON.stringify(tr, null, 1), 'trace JSON');   // http 접속에서도 되는 3단 복사 (core.js copyText)
     $('#req-logs').onclick = () => { $('#log-request').value = r.id; $('#log-run').value = ''; switchTab('logs'); setTimeout(loadLogs, 200); };
     $('#req-fx').onclick = () => { $('#fx-req').value = r.id; switchGroup('quality'); switchTab('forensics'); setTimeout(() => $('#btn-fx-run').click(), 300); };
     const rr = $('#req-rerun'); if (rr) rr.onclick = () => { $('#q').value = r.result.query || r.summary; switchGroup('ask'); switchTab('query'); LW.runQuery(); };
@@ -58,57 +58,10 @@
   loaders.logs = loadLogs;
 
   // ---------------- ARCHITECTURE / FLOW ----------------
-  let ARCH = null, ARCH_SEL = null;
-  async function loadArch() { ARCH = await api('/api/architecture'); renderArch(); }
-  function lastStageInfo(flowKey, stageNames) {
-    if (!ARCH || !$('#arch-last').checked) return null;
-    const kind = flowKey === 'query' ? 'query' : flowKey === 'build' || flowKey === 'watch' ? 'build' : flowKey === 'evolve' ? 'eval' : null;
-    const last = kind && ARCH.last && ARCH.last[kind]; if (!last) return null;
-    const flat = flatten(last.trace); const nodes = flat.filter((n) => stageNames.includes(n.name));
-    if (!nodes.length) return { missing: true, total: last.trace.ms };
-    const enabled = nodes.filter((n) => n.enabled !== false);
-    const ms = enabled.reduce((a, n) => a + (n.ms || 0), 0);
-    return { ms, total: last.trace.ms || 1, skipped: !enabled.length, reason: !enabled.length ? ((nodes[0].meta || {}).reason || 'skipped') : null, error: nodes.some((n) => n.error), nodes, id: last.id };
-  }
-  function renderArch() {
-    if (!ARCH) return;
-    const live = $('#arch-live').checked; const tg = live ? Object.assign({}, ARCH.toggles, overrides()) : ARCH.toggles;
-    const sel = $('#arch-flow').value; const flows = Object.keys(ARCH.flows).filter((k) => sel === 'all' || k === sel);
-    $('#arch-flows').innerHTML = flows.map((fk) => {
-      const f = ARCH.flows[fk]; const kind = fk === 'query' ? 'query' : (fk === 'build' || fk === 'watch') ? 'build' : 'eval'; const last = ARCH.last && ARCH.last[kind];
-      return `<div class="flow"><h4>${esc(f.title)} <span class="pill">${fk}</span>${last && $('#arch-last').checked ? ` <span class="pill" title="${esc(last.summary)}">last: #${last.id} ${fmt(last.ms, 0)} ms</span>` : ''}</h4><div class="entry">진입: ${esc(f.entry)}</div><div class="fdesc">${esc(f.desc)}</div><div class="flow-chain">` +
-        f.stages.map((st, i) => {
-          const offT = st.toggles.filter((t) => tg[t] === false); const onT = st.toggles.filter((t) => tg[t] !== false);
-          const gate = st.toggles.length && offT.length === st.toggles.length; const li = lastStageInfo(fk, st.trace);
-          const cls = ['snode', gate || (li && li.skipped) ? 'off' : '', li && li.error ? 'err' : '', ARCH_SEL === fk + ':' + st.key ? 'sel' : ''].join(' ');
-          const msChip = li ? (li.missing ? '' : li.skipped ? `<span class="chip skip">${esc(li.reason).slice(0, 22)}</span>` : `<span class="chip ms">${fmt(li.ms, 0)} ms · ${fmt(100 * li.ms / li.total, 0)}%</span>`) : '';
-          const bar = li && !li.skipped && !li.missing ? `<div class="msbar" style="width:${Math.min(100, 100 * li.ms / li.total)}%"></div>` : '';
-          return `<div class="${cls}" data-flow="${fk}" data-stage="${st.key}" title="${esc(st.desc)}"><div class="st">${esc(st.title)}</div><div class="sk">${esc(st.key)}</div><div class="chips">${onT.map((t) => `<span class="chip on">${t}</span>`).join('')}${offT.map((t) => `<span class="chip off">${t}</span>`).join('')}${st.tunables.length ? `<span class="chip tune">tune ${st.tunables.length}</span>` : ''}${msChip}</div>${bar}</div>` + (i < f.stages.length - 1 ? '<div class="arrow">→</div>' : '');
-        }).join('') + '</div></div>';
-    }).join('');
-    $$('#arch-flows .snode').forEach((n) => n.onclick = () => { ARCH_SEL = n.dataset.flow + ':' + n.dataset.stage; renderArch(); renderArchDetail(n.dataset.flow, n.dataset.stage); });
-  }
-  function renderArchDetail(fk, key) {
-    const st = ARCH.flows[fk].stages.find((s) => s.key === key); if (!st) return;
-    const tg = $('#arch-live').checked ? Object.assign({}, ARCH.toggles, overrides()) : ARCH.toggles; const li = lastStageInfo(fk, st.trace);
-    const settingsVal = (k) => { const base = k.split('.')[0]; const v = ARCH.settings[base]; return v == null ? '' : (typeof v === 'object' ? JSON.stringify(k.includes('.') ? (v[k.split('.')[1]] || {}) : v) : String(v)); };
-    let html = `<div class="adetail"><h4>${esc(st.title)} <code>${esc(st.key)}</code></h4><div class="muted small">${esc(st.module || '')}${st.io ? ' · ' + esc(st.io) : ''}</div>` +
-      `<div class="sec"><b>동작</b>${esc(st.desc)}</div><div class="sec"><b>impact</b><div class="imp">${esc(st.impact)}</div></div>`;
-    if (st.toggles.length) html += `<div class="sec"><b>토글 (사이드바에서 즉시 변경)</b>${st.toggles.map((t) => `<div class="tg-row"><span><span class="chip ${tg[t] === false ? 'off' : 'on'}">${t}</span> ${tg[t] === false ? 'OFF' : 'ON'}${ARCH.toggles[t] !== tg[t] ? ' <small class="muted">(config: ' + (ARCH.toggles[t] ? 'on' : 'off') + ')</small>' : ''}</span><span class="muted">${esc(ARCH.toggle_help[t] || '')}</span></div>`).join('')}</div>`;
-    if (st.settings.length) html += `<div class="sec"><b>config.json 설정</b>${st.settings.map((k) => `<div class="tg-row"><span><code>${esc(k)}</code> = ${esc(settingsVal(k)).slice(0, 60)}</span><span class="muted">${esc(ARCH.setting_help[k] || '')}</span></div>`).join('')}</div>`;
-    if (st.tunables.length) html += `<div class="sec"><b>튜닝 파라미터 (${st.tunables.length}) <button class="mini secondary" id="arch-go-tuning">튜닝에서 편집</button></b><table><tr><th>키</th><th>현재</th><th>impact</th></tr>${st.tunables.map((t) => { const cur = t.source === 'config' ? ARCH.settings[t.key] : (ARCH.tuning[t.key] != null ? ARCH.tuning[t.key] : t.default); const ch = t.source !== 'config' && ARCH.tuning[t.key] != null; return `<tr><td><code>${esc(t.key)}</code>${t.rebuild ? ' <small class="muted">rebuild</small>' : ''}</td><td class="${ch ? 'ok' : ''}">${esc(String(cur))}${ch ? ' <small class="muted">(기본 ' + esc(String(t.default)) + ')</small>' : ''}</td><td class="muted">${esc(t.impact || t.desc)}</td></tr>`; }).join('')}</table></div>`;
-    if (st.cli.length) html += `<div class="sec"><b>CLI</b>${st.cli.map((c) => `<code>${esc(c)}</code>`).join(' ')}</div>`;
-    if (li && !li.missing) {
-      html += `<div class="sec"><b>마지막 실행 (request #${li.id})</b>` + (li.skipped ? `<span class="chip skip">skipped: ${esc(li.reason)}</span>` : `<span class="chip ms">${fmt(li.ms, 1)} ms · ${fmt(100 * li.ms / li.total, 1)}%</span>`) +
-        (li.nodes || []).map((n) => { const m = Object.assign({}, n.meta || {}); delete m.reason; const c = n.counters || {}; return `<div style="margin-top:6px"><code>${esc(n.name)}</code> ${n.enabled === false ? '<span class="muted">skipped</span>' : fmt(n.ms, 1) + ' ms'}${c.sql ? ' · sql ' + c.sql : ''}${c.llm_calls ? ' · llm ' + c.llm_calls + ' (' + fmtK((c.llm_input_tokens || 0) + (c.llm_output_tokens || 0)) + ' tok)' : ''}${n.error ? '<div class="errtxt">' + esc(n.error) + '</div>' : ''}<pre class="pre" style="max-height:160px">${esc(JSON.stringify(m, null, 1).slice(0, 1500))}</pre></div>`; }).join('') + `<button class="mini secondary" id="arch-go-req">요청 프로파일에서 전체 trace</button></div>`;
-    } else if ($('#arch-last').checked) html += `<div class="sec muted">이 흐름의 최근 실행 기록이 없거나 단계가 trace 에 없습니다.</div>`;
-    $('#arch-detail').innerHTML = html + '</div>';
-    const gt = $('#arch-go-tuning'); if (gt) gt.onclick = () => { switchGroup('settings'); switchTab('tuning'); setTimeout(() => { $('#tuning-stage').value = st.tuning_stage; LW.renderTuning(); }, 500); };
-    const gr = $('#arch-go-req'); if (gr) gr.onclick = () => { switchTab('requests'); setTimeout(() => openRequest(li.id), 300); };
-  }
-  $('#btn-arch-refresh').onclick = loadArch; $('#arch-flow').onchange = renderArch; $('#arch-last').onchange = renderArch; $('#arch-live').onchange = renderArch;
-  loaders._toggleChanged = () => { if (LW.tabVisible('arch')) renderArch(); };
-  loaders.arch = loadArch;
+  // 2026-09-19: 이 탭(구조·흐름)은 🧭 Pipeline 에 흡수됐다. 같은 레지스트리(/api/architecture)를 읽기 전용 지도와
+  // 편집 화면으로 나눠 그리던 것이 "보는 곳과 고치는 곳이 다르다" 를 만들었다. 지금은 pipeline.js 하나가
+  // 흐름 → 페이즈 → 단계 → trace 를 모두 그린다. 예전 주소는 core.js TAB_ALIAS 가 보낸다.
+  // 이 파일에는 더 이상 구조·흐름 코드가 없다. 단계 지도는 llmwiki/web/static/js/pipeline.js 하나가 그린다.
 
   // ---------------- SYSTEM ----------------
   async function loadSystem() {
@@ -136,6 +89,297 @@
   // purge_requests 는 서버 게이트가 파괴적 작업으로 분류 → 확인 문구(+비밀번호) 모달이 뜬다
   $$('#sys-maint button').forEach((b) => b.onclick = async () => { b.disabled = true; const r = await api('/api/maintenance', { action: b.dataset.m }); b.disabled = false; $('#sys-maint-out').textContent = r.cancelled ? '취소됨' : JSON.stringify(r); loadSystem(); loadStatus(); });
   $('#btn-perf-save').onclick = async () => { const st = {}; $$('[data-perf]').forEach((i) => { st[i.dataset.perf] = parseInt(i.value, 10); }); await api('/api/config', { settings: st }); toast('설정 저장됨'); loadStatus(); };
+
+  // ---------------- 운영 통계 (2026-09-20) ----------------
+  // 이 화면은 '규모'(문서·청크 수)만 보여 줬다. 운영자가 묻는 것은 다른 쪽이다 —
+  // 빌드가 왜 느린가 · 질의가 언제 몰리나 · 토큰을 어디에 쓰나 · 디스크가 어디서 커지나.
+  // 데이터는 이미 DB 에 있었고(요청 trace·질의 로그·임베딩 실행), 읽지 않고 있었을 뿐이다.
+  const MB = (b) => (Number(b || 0) / 1048576).toFixed(1) + ' MB';
+  function opsTable(head, rows) {
+    return '<div class="tbl-wrap"><table><tr>' + head.map((h) => `<th>${esc(h)}</th>`).join('') + '</tr>'
+      + rows.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') + '</table></div>';
+  }
+  // ---- 차트 (의존성 없이 inline SVG) --------------------------------------
+  // 외부 차트 라이브러리를 쓰지 않는 이유는 나머지와 같다 — 사내망에 폴더째 복사해서 돌아야 한다.
+  // 막대(개수)와 꺾은선(지연·토큰)이면 "나아지나 나빠지나" 에 답하기에 충분하다.
+  const SVGNS = 'http://www.w3.org/2000/svg';
+
+  /** 축 눈금용 짧은 수 (1.2k · 243k · 0.85). 자릿수가 길면 축이 본문을 밀어낸다. */
+  function nfmt(v, pct) {
+    if (v == null) return '-';
+    if (pct) return (v * 100).toFixed(v < 0.1 ? 1 : 0) + '%';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'k';
+    if (a >= 10) return String(Math.round(v));
+    if (a >= 1) return v.toFixed(1).replace(/\.0$/, '');
+    return v.toFixed(2);
+  }
+  /** 눈금이 1·2·5×10^n 으로 떨어지게 위쪽 한계를 올린다 (축 숫자가 7391 같으면 읽기 어렵다). */
+  function niceMax(v) {
+    if (!(v > 0)) return 1;
+    const e = Math.pow(10, Math.floor(Math.log10(v)));
+    const m = v / e;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e;
+  }
+  /** 구간 이름을 축에 맞게 줄인다 — `2026-09-20`→`09-20`, `2026-W38`→`W38`. */
+  function shortBucket(b) {
+    const s = String(b || '');
+    return s.length === 10 ? s.slice(5) : s.replace(/^\d{4}-/, '');
+  }
+
+  /**
+   * 구간 차트 — 막대(왼쪽 축) + 꺾은선(오른쪽 축).
+   *
+   * 예전 판은 `viewBox="0 0 100 30"` 을 `preserveAspectRatio="none"` 으로 늘였다. 그래서
+   * 가로가 15배, 세로가 4배 늘어나 **점이 타원이 되고 선이 뭉개졌고**, 축이 없어 값을 읽을 수 없었다.
+   * 게다가 `.ch-c0{fill:…}` 이 `.ch-line{fill:none}` 을 덮어써 꺾은선이 **면으로 칠해졌다**(주황 덩어리).
+   *
+   * 지금은 고정 좌표계에 비율을 유지해 그리고, **축을 둘로 나눈다** — 질의 수(364)와 빌드 횟수(15)를
+   * 한 눈금에 올리면 한쪽이 바닥에 깔려 아무것도 못 읽는다. 왼쪽은 막대, 오른쪽은 선의 눈금이다.
+   */
+  function chart(points, series, opt) {
+    opt = opt || {};
+    if (!points || !points.length) return '<div class="muted small">그릴 값이 없습니다.</div>';
+    const W = 780, H = 190, PL = 54, PR = 54, PT = 14, PB = 30;
+    const iw = W - PL - PR, ih = H - PT - PB;
+    const n = points.length, step = iw / n;
+
+    // 축별 최대값 (왼쪽 'l' · 오른쪽 'r'). 같은 축의 계열은 눈금을 공유한다(p50/p95 처럼).
+    const ax = {};
+    series.forEach((s) => {
+      const k = s.axis || 'l';
+      const a = ax[k] || (ax[k] = { max: 0, pct: !!s.pct, any: false });
+      points.forEach((p) => {
+        const v = p[s.key];
+        if (typeof v === 'number') { a.any = true; if (v > a.max) a.max = v; }
+      });
+      if (s.pct) a.pct = true;
+    });
+    Object.keys(ax).forEach((k) => { ax[k].top = niceMax(ax[k].max) || 1; });
+    const yOf = (v, k) => PT + ih - (v / ax[k].top) * ih;
+
+    // 가로 눈금선 + 좌우 축 숫자
+    const TICKS = 4;
+    let grid = '';
+    for (let t = 0; t <= TICKS; t++) {
+      const y = PT + ih - (ih * t) / TICKS;
+      grid += `<line class="ch-grid" x1="${PL}" y1="${y.toFixed(1)}" x2="${PL + iw}" y2="${y.toFixed(1)}"/>`;
+      if (ax.l && ax.l.any) grid += `<text class="ch-ylab ch-a-l" x="${PL - 6}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${esc(nfmt(ax.l.top * t / TICKS, ax.l.pct))}</text>`;
+      if (ax.r && ax.r.any) grid += `<text class="ch-ylab ch-a-r" x="${PL + iw + 6}" y="${(y + 3.5).toFixed(1)}">${esc(nfmt(ax.r.top * t / TICKS, ax.r.pct))}</text>`;
+    }
+
+    // 계열 그리기 — 같은 축의 막대는 나란히 놓는다
+    const bars = series.filter((s) => s.type === 'bar');
+    let body = '';
+    series.forEach((s, si) => {
+      const k = s.axis || 'l', cls = 'ch-s' + si;
+      const vals = points.map((p) => (typeof p[s.key] === 'number' ? p[s.key] : null));
+      if (!vals.some((v) => v != null)) return;
+      if (s.type === 'bar') {
+        const bi = bars.indexOf(s), bn = bars.length || 1;
+        const gw = step * 0.66, bw = gw / bn;
+        body += vals.map((v, i) => {
+          if (v == null) return '';
+          const x = PL + i * step + (step - gw) / 2 + bi * bw;
+          const y = yOf(v, k), h = Math.max(0.5, PT + ih - y);
+          return `<rect class="ch-bar ${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${h.toFixed(1)}" rx="1">`
+            + `<title>${esc(points[i].bucket)} · ${esc(s.label)} ${nfmt(v, s.pct)}</title></rect>`;
+        }).join('');
+      } else {
+        // 값이 없는 구간에서 **선을 잇지 않는다** — 이으면 없는 추세를 그린 것이 된다
+        let seg = [], segs = [];
+        vals.forEach((v, i) => {
+          if (v == null) { if (seg.length) segs.push(seg); seg = []; return; }
+          seg.push(`${(PL + i * step + step / 2).toFixed(1)},${yOf(v, k).toFixed(1)}`);
+        });
+        if (seg.length) segs.push(seg);
+        body += segs.map((sg) => sg.length === 1
+          ? ''
+          : `<polyline class="ch-line ${cls}" points="${sg.join(' ')}"/>`).join('');
+        body += vals.map((v, i) => v == null ? '' :
+          `<circle class="ch-dot ${cls}" cx="${(PL + i * step + step / 2).toFixed(1)}" cy="${yOf(v, k).toFixed(1)}" r="3">`
+          + `<title>${esc(points[i].bucket)} · ${esc(s.label)} ${nfmt(v, s.pct)}</title></circle>`).join('');
+      }
+    });
+
+    // x 축 — 칸이 좁으면 건너뛰며 적는다
+    const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 58))));
+    let xlab = '';
+    points.forEach((p, i) => {
+      if (i % every && i !== n - 1) return;
+      xlab += `<text class="ch-xlab" x="${(PL + i * step + step / 2).toFixed(1)}" y="${(PT + ih + 18).toFixed(1)}" text-anchor="middle">${esc(shortBucket(p.bucket))}</text>`;
+    });
+    const base = `<line class="ch-axisline" x1="${PL}" y1="${PT + ih}" x2="${PL + iw}" y2="${PT + ih}"/>`;
+    const legend = series.map((s, si) => `<span class="ch-leg ch-s${si}">${s.type === 'bar' ? '▮' : '━'} ${esc(s.label)}`
+      + `<span class="muted"> (${(s.axis || 'l') === 'l' ? '왼쪽' : '오른쪽'} 눈금)</span></span>`).join('');
+    return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" xmlns="${SVGNS}">${grid}${base}${body}${xlab}</svg>`
+      + `<div class="ch-legend">${legend}</div></div>`;
+  }
+
+  let OPS_BUCKET = 'day';
+  async function loadOps() {
+    const days = parseFloat(($('#ops-days') && $('#ops-days').value) || 7);
+    $('#ops-out').innerHTML = '<div class="muted small">집계 중…</div>';
+    const d = await api('/api/opstats?days=' + days + '&bucket=' + encodeURIComponent(OPS_BUCKET));
+    if (!d || d.error) { $('#ops-out').innerHTML = `<div class="bad">${esc((d && d.error) || '실패')}</div>`; return; }
+    const H = d.help || {};
+    const sec = (key, title, body) => `<details class="dbg-sec" open><summary><b>${esc(title)}</b> <span class="muted small">${esc(H[key] || '')}</span></summary>${body}</details>`;
+    let h = '';
+    // 추세를 맨 위에 둔다 — 한 시점의 p95 만으로는 "나아지나 나빠지나" 에 답할 수 없다.
+    if (d.trend) {
+      const tr = d.trend, pts = tr.points || [], dl = tr.delta_last || {};
+      const BL = { day: '일간', week: '주간', month: '월간' };
+      const arrow = (k, lower) => {
+        if (dl[k] == null) return '';
+        const good = lower ? dl[k] < 0 : dl[k] > 0;
+        return `<span class="${dl[k] === 0 ? 'muted' : (good ? 'oktxt' : 'warntxt')}">${dl[k] > 0 ? '▲' : dl[k] < 0 ? '▼' : '–'}${fmt(Math.abs(dl[k]), 2)}</span>`;
+      };
+      h += sec('trend', '추세',
+        '<div class="row fx-chips">' + ['day', 'week', 'month'].map((b) =>
+          `<button class="chip ${OPS_BUCKET === b ? 'on' : ''}" data-bucket="${b}">${BL[b]}</button>`).join('')
+        + `<span class="muted small">구간 ${pts.length}개 · 최근 ${fmt(tr.days, 0)}일 (묶음에 맞춰 자동)</span></div>`
+        + (tr.note ? `<div class="muted small">${esc(tr.note)}</div>` : '')
+        + '<div class="row">'
+        + `<div class="stat"><b>${(pts[pts.length - 1] || {}).queries != null ? pts[pts.length - 1].queries : '-'}</b>최근 구간 질의 ${arrow('queries', false)}</div>`
+        + `<div class="stat"><b>${fmt((pts[pts.length - 1] || {}).p95_ms, 0)}ms</b>p95 ${arrow('p95_ms', true)}</div>`
+        + `<div class="stat"><b>${fmt((pts[pts.length - 1] || {}).tokens_per_query, 0)}</b>토큰/질의 ${arrow('tokens_per_query', true)}</div>`
+        + `<div class="stat"><b>${fmt(100 * ((pts[pts.length - 1] || {}).insufficient_rate || 0), 1)}%</b>근거 부족 ${arrow('insufficient_rate', true)}</div>`
+        + '</div>'
+        + '<h4 class="ch-title">질의 수 · 빌드 횟수</h4>'
+        + chart(pts, [{ key: 'queries', label: '질의', type: 'bar', axis: 'l' },
+                      { key: 'builds', label: '빌드', type: 'line', axis: 'r' }])
+        + '<h4 class="ch-title">지연 <small class="muted">낮을수록 좋다 · 같은 눈금</small></h4>'
+        + chart(pts, [{ key: 'p50_ms', label: 'p50 ms', type: 'line', axis: 'l' },
+                      { key: 'p95_ms', label: 'p95 ms', type: 'line', axis: 'l' }])
+        + '<h4 class="ch-title">질의당 토큰 · 근거 부족률</h4>'
+        + chart(pts, [{ key: 'tokens_per_query', label: '토큰/질의', type: 'bar', axis: 'l' },
+                      { key: 'insufficient_rate', label: '근거 부족률', type: 'line', axis: 'r', pct: true }])
+        + opsTable(['구간', '질의', 'p50 ms', 'p95 ms', '토큰/질의', '빌드', '근거 부족', '👍/👎'],
+          pts.slice(-12).reverse().map((p) => [esc(p.bucket), p.queries, fmt(p.p50_ms, 0), fmt(p.p95_ms, 0),
+            fmt(p.tokens_per_query, 0), p.builds, p.insufficient, (p.up || 0) + '/' + (p.down || 0)])));
+    }
+    if (d.build) {
+      const b = d.build, last = b.last || {};
+      h += sec('build', '빌드',
+        `<div class="row"><div class="stat"><b>${b.n_builds || 0}</b>최근 ${days}일 빌드</div>`
+        + (b.last_ms ? `<div class="stat"><b>${fmt(b.last_ms / 1000, 1)}s</b>마지막 소요</div>` : '')
+        + (last.docs != null ? `<div class="stat"><b>${last.docs}</b>문서 (변경 ${last.changed})</div>` : '')
+        + '</div>'
+        + ((b.slowest_stages || []).length
+          ? opsTable(['느린 단계', 'ms'], b.slowest_stages.map((s) => [`<code>${esc(s.stage)}</code>`, fmt(s.ms, 0)])) : '')
+        + ((b.alerts || []).length ? `<div class="chk-warn">⚠ ${b.alerts.map((a) => esc(String(a.detail || a))).join(' · ')}</div>` : ''));
+    }
+    if (d.queries) {
+      const q = d.queries;
+      const mx = Math.max.apply(null, q.by_hour.concat([1]));
+      h += sec('queries', '질의량',
+        `<div class="row"><div class="stat"><b>${q.total}</b>건</div><div class="stat"><b>${q.per_day}</b>하루 평균</div>`
+        + (q.busiest_hour != null ? `<div class="stat"><b>${String(q.busiest_hour).padStart(2, '0')}시</b>가장 몰림</div>` : '')
+        + '</div>'
+        + '<div class="dbg-w">' + q.by_hour.map((n, i) => `<div class="dbg-wrow" title="${i}시 ${n}건"><span class="muted small" style="width:26px">${String(i).padStart(2, '0')}</span><i style="width:${Math.round(100 * n / mx)}%"></i><b>${n || ''}</b></div>`).join('') + '</div>'
+        + `<div class="muted small">창구: ${Object.keys(q.by_origin).map((k) => esc(k) + ' ' + q.by_origin[k]).join(' · ')}</div>`
+        + (q.capped ? '<div class="chk-warn">⚠ 표본 상한에 걸렸습니다 — 기간을 줄이면 정확해집니다</div>' : ''));
+    }
+    if (d.latency) {
+      const la = d.latency;
+      h += sec('latency', '지연',
+        `<div class="row"><div class="stat"><b>${fmt(la.p50_ms, 0)}</b>p50 ms</div><div class="stat"><b>${fmt(la.p95_ms, 0)}</b>p95 ms</div><div class="stat"><b>${fmt(la.max_ms, 0)}</b>최대 ms</div><div class="stat"><b>${la.n}</b>표본</div></div>`
+        + opsTable(['가장 느린 질의', 'ms', ''], (la.slowest || []).map((s) => [esc(s.summary), fmt(s.ms, 0), `<a href="#" data-opsreq="${s.request_id}">#${s.request_id}</a>`])));
+    }
+    if (d.tokens) {
+      const t = d.tokens;
+      h += sec('tokens', '토큰',
+        `<div class="row"><div class="stat"><b>${fmtK(t.total)}</b>총 토큰</div><div class="stat"><b>${fmt(t.per_query, 0)}</b>질의당</div><div class="stat"><b>${t.calls_per_query}</b>LLM 호출/질의</div></div>`
+        + opsTable(['가장 무거운 질의', '토큰', ''], (t.heaviest || []).map((s) => [esc(s.summary), fmtK(s.tokens), `<a href="#" data-opsreq="${s.request_id}">#${s.request_id}</a>`])));
+    }
+    if (d.quality) {
+      const qa = d.quality;
+      h += sec('quality', '품질 신호',
+        `<div class="row"><div class="stat" title="근거를 찾지 못해 답하지 못한 질의"><b>${fmt(100 * qa.insufficient_rate, 1)}%</b>근거 부족 (${qa.insufficient}/${qa.queries})</div>`
+        + `<div class="stat"><b>${qa.feedback_positive}/${qa.feedback_negative}</b>👍/👎</div>`
+        + `<div class="stat" title="Evolve 탭에서 승인·거절합니다"><b>${qa.proposals_pending}</b>대기 제안</div></div>`
+        + (Object.keys(qa.forensics || {}).length ? `<div class="muted small">포렌식: ${Object.keys(qa.forensics).map((k) => esc(k) + ' ' + qa.forensics[k]).join(' · ')}</div>` : ''));
+    }
+    if (d.users) {
+      h += sec('users', '사용자',
+        opsTable(['사용자', '질의'], (d.users.top || []).map((x) => [esc(x.user), x.queries])));
+    }
+    if (d.storage) {
+      const s = d.storage;
+      h += sec('storage', '디스크',
+        `<div class="row"><div class="stat"><b>${MB(s.db_bytes)}</b>DB</div><div class="stat"><b>${MB(s.logs_bytes)}</b>로그</div></div>`
+        + opsTable(['data/ 폴더', '크기', '파일'], (s.data_dirs || []).map((x) => [`<code>${esc(x.dir)}</code>`, MB(x.bytes), x.files]))
+        + (s.hints || []).map((x) => `<div class="chk-warn">⚠ ${esc(x)}</div>`).join(''));
+    }
+    if (d.embed) {
+      const e = d.embed;
+      h += sec('embed', '임베딩',
+        `<div class="row"><div class="stat" title="캐시가 맞으면 다시 임베딩하지 않습니다"><b>${fmt(100 * e.cache_hit_rate, 1)}%</b>캐시 적중</div><div class="stat"><b>${e.failed}</b>실패</div></div>`
+        + opsTable(['실행', '모델', 'done', '캐시', '초'], (e.runs || []).map((r) => [esc(String(r.run_id).slice(0, 10)), esc(String(r.model || '')), r.done, r.cache_hits, r.elapsed_s == null ? '-' : r.elapsed_s])));
+    }
+    $('#ops-out').innerHTML = h || '<div class="muted">집계할 것이 없습니다.</div>';
+    $$('#ops-out [data-opsreq]').forEach((a) => a.onclick = (e) => {
+      e.preventDefault();
+      switchTab('requests');
+      setTimeout(() => LW.openRequest && LW.openRequest(parseInt(a.dataset.opsreq, 10)), 250);
+    });
+    // 일/주/월 전환 — 누르면 그 묶음으로 다시 집계한다 (기간은 서버가 묶음에 맞춰 늘린다)
+    $$('#ops-out [data-bucket]').forEach((b) => b.onclick = () => { OPS_BUCKET = b.dataset.bucket; loadOps(); });
+  }
+  if ($('#btn-ops')) $('#btn-ops').onclick = loadOps;
+
+  // ---------------- 초기화 (관리자) ----------------
+  // 지우는 명령이 **먼저 보여 주고 나중에 지우게** 한다. 누르면 미리보기가 뜨고, 거기서 한 번 더 눌러야 실행된다.
+  // 실행은 서버가 파괴적 작업으로 분류하므로 확인 문구 + 비밀번호 모달이 뒤따른다 (2026-09-19).
+  const RESET_OPTS = {
+    data: [['clear_embed_cache', '임베딩 캐시도 지우기', '임베더를 바꿀 때만. 다음 빌드에서 전부 다시 임베딩합니다'],
+           ['purge_wiki_notes', '사람이 쓴 위키 노트까지', '정정·보강 메모가 사라집니다'],
+           ['no_snapshot', '스냅샷 만들지 않기', '되돌릴 수 없게 됩니다 — 권장하지 않습니다']],
+    settings: [['include_security', 'security.json · docacl.json 도', '계정·권한이 초기화됩니다. 원격이면 다시 로그인하지 못할 수 있습니다'],
+               ['include_env', '.env 도 삭제', 'API 키·PAT 가 사라집니다 (복구 불가)']],
+    logs: [['include_proposals', '자가진화 제안도', '사람이 검토할 후보가 사라집니다'],
+           ['include_sessions', '로그인 세션도', '모든 사용자가 다시 로그인해야 합니다']],
+  };
+  function resetOpts(scope) {
+    const o = {};
+    (RESET_OPTS[scope] || []).forEach(([k]) => { const el = $('#rs-opt-' + k); if (el && el.checked) o[k] = true; });
+    if (o.no_snapshot) { o.snapshot = false; delete o.no_snapshot; }
+    return o;
+  }
+  async function resetPreview(scope) {
+    const o = resetOpts(scope);
+    const qs = Object.keys(o).map((k) => k + '=' + (o[k] === false ? '0' : '1')).join('&');
+    const pl = await api('/api/reset?scope=' + scope + (qs ? '&' + qs : ''));
+    if (pl.error) { toast('실패: ' + pl.error); return; }
+    const mb = (b) => (b / 1048576).toFixed(1) + ' MB';
+    $('#sys-reset-out').innerHTML =
+      `<div class="panel-intro"><b>${esc(scope)}</b> — ${esc(pl.description)}</div>`
+      + `<div class="row"><div class="stat"><b>${pl.total_rows}</b>행</div><div class="stat"><b>${pl.total_files}</b>파일</div><div class="stat"><b>${mb(pl.total_bytes)}</b></div></div>`
+      + '<div class="tbl-wrap"><table><tr><th>대상</th><th>양</th><th>설명</th></tr>'
+      + pl.items.map((i) => `<tr class="${i.level === 'warn' ? 'chk-warn' : ''}"><td><code>${esc(i.target)}</code></td>`
+        + `<td>${i.kind === 'table' ? i.count + '행' : i.count + '개 · ' + mb(i.bytes)}</td><td>${esc(i.detail)}</td></tr>`).join('')
+      + '</table></div>'
+      + '<div class="prop-checks">' + (pl.kept || []).map((k) => `<div class="chk-info">유지 · ${esc(k)}</div>`).join('') + '</div>'
+      + '<div class="row">' + (RESET_OPTS[scope] || []).map(([k, label, why]) =>
+        `<label title="${esc(why)}"><input type="checkbox" id="rs-opt-${esc(k)}"${resetOpts(scope)[k] || (k === 'no_snapshot' && pl.options.snapshot === false) ? ' checked' : ''}> ${esc(label)}</label>`).join(' ')
+      + `<button class="secondary" data-reset-refresh="${esc(scope)}">옵션 반영해 다시 보기</button>`
+      + `<button class="danger" data-reset-go="${esc(scope)}">지금 초기화 (되돌릴 수 없습니다)</button></div>`;
+    $$('#sys-reset-out [data-reset-refresh]').forEach((b) => b.onclick = () => resetPreview(b.dataset.resetRefresh));
+    $$('#sys-reset-out [data-reset-go]').forEach((b) => b.onclick = async () => {
+      b.disabled = true; b.textContent = '초기화 중…';
+      const r = await api('/api/reset', Object.assign({ scope: b.dataset.resetGo }, resetOpts(b.dataset.resetGo)));
+      b.disabled = false; b.textContent = '지금 초기화 (되돌릴 수 없습니다)';
+      if (r && r.cancelled) { toast('취소됨'); return; }
+      if (r && r.error) { toast('실패: ' + r.error); return; }
+      $('#sys-reset-out').innerHTML = `<div class="panel-intro"><b>초기화 완료</b> — ${esc(b.dataset.resetGo)} (${fmt(r.ms, 0)}ms)</div>`
+        + '<div class="prop-checks">' + (r.next || []).map((x, i) => `<div class="chk-info">${i + 1}. ${esc(x)}</div>`).join('') + '</div>'
+        + `<details><summary>지운 내역</summary><pre class="log">${esc(JSON.stringify(r.done, null, 1))}</pre></details>`;
+      toast('초기화 완료: ' + b.dataset.resetGo);
+      loadSystem(); loadStatus();
+    });
+  }
+  $$('#sys-reset button').forEach((b) => b.onclick = () => resetPreview(b.dataset.reset));
   loaders.system = loadSystem;
 
   // ---------------- ACTIVITY (진행 중 작업 — viewer 도 조회 가능) ----------------
@@ -401,13 +645,13 @@
     'concurrency.queue_max': '슬롯을 기다리는 요청 상한 (초과 → 503).',
     'concurrency.queue_timeout_s': '대기 최대 시간 (초과 → 503).',
     'concurrency.reads_during_build': 'never | incremental | always — 빌드 중 질의 허용 범위.',
-    'concurrency.write_wait_timeout_s': '쓰기 작업이 진행 중인 읽기를 기다리는 최대 시간.',
-    'concurrency.read_wait_timeout_s': '읽기가 배타 작업(전체 빌드)을 기다리는 최대 시간.',
+    'concurrency.write_wait_timeout_s': '빌드(쓰기)가 진행 중인 질의가 끝나길 기다리는 최대 시간. 기본 172800초(48시간) — 짧으면 긴 빌드가 시작도 못 하고 503.',
+    'concurrency.read_wait_timeout_s': '읽기가 배타 작업(전체 빌드)을 기다리는 최대 시간. 이 값은 빌드가 아니라 질의의 수명이라 일부러 짧다(900). 빌드 중 질의를 받으려면 reads_during_build.',
     'rate_limit.per_user_per_min': '사용자별 분당 요청 수 (0 = 무제한).',
     'rate_limit.per_ip_per_min': 'IP 별 분당 요청 수.',
     'rate_limit.query_per_user_per_min': '사용자별 분당 질의 수 (LLM 비용 보호).',
     'timeouts.query_s': '질의 1건의 시간 제한(초). 넘으면 자동 중지. 0 = 없음.',
-    'timeouts.job_s': '빌드/평가 등 백그라운드 작업의 시간 제한(초). 0 = 없음.',
+    'timeouts.job_s': '빌드/평가/스냅샷 등 백그라운드 작업의 시간 제한(초). 기본 172800(48시간). Web 콘솔의 build 도 cli_s 가 아니라 이 값을 따른다. 0 = 없음.',
     'timeouts.mcp_s': 'MCP 도구 호출 시간 제한(초).',
     'sessions.enforce': '켜면 서버가 세션을 기억하고 강제 로그아웃·동시 세션 수 제한이 동작합니다.',
     'sessions.max_per_user': '사용자당 동시 로그인 세션 수 (초과 시 가장 오래된 세션 만료).',
@@ -493,9 +737,47 @@
   loaders.server = () => { loadServer(); srvAuto(); };
 
   // ---------------- QUERY LOG ----------------
+  // 사용자 칸: id 는 짧게, 나머지 상세(역할·창구·로그인 방법·IP·에이전트)는 툴팁으로.
+  // 30명이 쓰는 서버에서 "이 질문 누가 했지" 와 "저 사람 질문이 왜 자꾸 실패하지" 를 이 표에서 끝내기 위한 것이다.
+  function actorCell(x, me) {
+    const who = x.user || '';
+    if (!who) return '<span class="muted small" title="사용자 정보가 없는 예전 행이거나 로그인 없이 실행된 질의입니다">—</span>';
+    const tip = ['사용자: ' + who, x.role ? '역할: ' + x.role : '', x.origin ? '창구: ' + x.origin : '',
+      x.via ? '로그인: ' + x.via : '', x.ip ? 'IP: ' + x.ip : '', x.agent ? '에이전트: ' + x.agent : '',
+      x.request_id ? '요청 #' + x.request_id : '', '클릭: 이 사용자만 보기'].filter(Boolean).join('\n');
+    return `<span class="qlog-who${who === me ? ' me' : ''}" data-quser="${esc(who)}" title="${esc(tip)}">${esc(who)}` +
+      (x.role ? `<span class="pill">${esc(x.role)}</span>` : '') +
+      (x.origin && x.origin !== 'web' ? `<span class="pill">${esc(x.origin)}</span>` : '') + '</span>';
+  }
+  function qlogParams() {
+    const p = ['limit=' + (parseInt(($('#qlog-limit') || {}).value, 10) || 60)];
+    const mine = $('#qlog-mine') && $('#qlog-mine').checked;
+    const u = mine ? ((STATE.auth && STATE.auth.user && STATE.auth.user.name) || '') : (($('#qlog-user') || {}).value || '').trim();
+    if (u) p.push('user=' + encodeURIComponent(u));
+    const o = (($('#qlog-origin') || {}).value || '').trim(); if (o) p.push('origin=' + encodeURIComponent(o));
+    const q = (($('#qlog-q') || {}).value || '').trim(); if (q) p.push('q=' + encodeURIComponent(q));
+    return p.join('&');
+  }
   async function loadQLog() {
-    const q = await api('/api/queries?limit=60');
-    $('#logs').innerHTML = '<table><tr><th>id</th><th>time</th><th>query</th><th>fb</th><th>판정</th><th>g</th><th>answer</th><th></th></tr>' + q.map((x) => { const sc = JSON.parse(x.scores || '{}'); return `<tr><td>${x.id}</td><td>${ts(x.ts)}</td><td>${esc(x.query)}</td><td>${x.feedback == null ? '' : x.feedback > 0 ? '👍' : '👎'}</td><td class="small">${esc(sc.verdict || '')}</td><td class="num">${sc.groundedness == null ? '' : fmt(sc.groundedness, 2)}</td><td class="muted small">${esc((x.answer || '').slice(0, 80))}</td><td><button class="secondary mini" data-tr="${x.id}">trace</button></td></tr>`; }).join('') + '</table>';
+    const j = await api('/api/queries?' + qlogParams());
+    // 예전 형식(배열)과 새 형식({rows, me, admin, show_user}) 을 모두 받는다
+    const q = Array.isArray(j) ? j : ((j && j.rows) || []);
+    const me = (j && j.me) || '';
+    if ($('#qlog-msg')) {
+      $('#qlog-msg').textContent = q.length + '건' + (j && j.show_user === false ? ' · 사용자 id 비공개 (server.json monitor.show_user_to_viewer)' : '')
+        + (j && j.admin === false ? ' · IP·에이전트는 admin 만' : '');
+    }
+    $('#logs').innerHTML = '<table><tr><th>id</th><th>time</th><th title="이 질의를 낸 사용자 — 마우스를 올리면 역할·창구·IP">사용자</th><th>query</th><th>fb</th><th>판정</th><th>g</th><th>answer</th><th></th></tr>' + q.map((x) => { const sc = JSON.parse(x.scores || '{}'); return `<tr><td>${x.id}</td><td>${ts(x.ts)}</td><td>${actorCell(x, me)}</td><td>${esc(x.query)}</td><td>${x.feedback == null ? '' : x.feedback > 0 ? '👍' : '👎'}</td><td class="small">${esc(sc.verdict || '')}</td><td class="num">${sc.groundedness == null ? '' : fmt(sc.groundedness, 2)}</td><td class="muted small">${esc((x.answer || '').slice(0, 80))}</td><td><button class="secondary mini" data-tr="${x.id}">trace</button>${x.request_id ? `<button class="secondary mini" data-qreq="${x.request_id}" title="요청 프로파일에서 이 실행의 전체 trace">#${x.request_id}</button>` : ''}</td></tr>`; }).join('') + '</table>';
+    // 사용자 이름을 누르면 그 사람 질의만
+    $$('#logs [data-quser]').forEach((s) => s.onclick = () => {
+      if ($('#qlog-mine')) $('#qlog-mine').checked = false;
+      if ($('#qlog-user')) $('#qlog-user').value = s.dataset.quser;
+      loadQLog();
+    });
+    $$('#logs [data-qreq]').forEach((b) => b.onclick = () => {
+      LW.switchTab('requests');
+      setTimeout(() => { if (LW.openRequest) LW.openRequest(parseInt(b.dataset.qreq, 10)); }, 250);
+    });
     // trace 결과는 60행짜리 표 아래에 그려져 화면 밖에 있기 쉽다 → 그린 뒤 그 자리로 스크롤한다
     // (누르면 아무 일도 안 일어나는 것처럼 보이던 문제)
     $$('#logs [data-tr]').forEach((b) => b.onclick = async () => {
@@ -507,6 +789,23 @@
     });
   }
   $('#btn-logs').onclick = loadQLog;
+  ['#qlog-user', '#qlog-q'].forEach((sel) => { const e = $(sel); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') loadQLog(); }; });
+  ['#qlog-mine', '#qlog-origin', '#qlog-limit'].forEach((sel) => { const e = $(sel); if (e) e.onchange = loadQLog; });
+  // 사용자별 집계 (admin 전용) — 누가 얼마나 묻고 있고, 👎 가 몰리는 사람이 있는지.
+  const btnQU = $('#btn-qlog-users');
+  if (btnQU) btnQU.onclick = async () => {
+    const box = $('#qlog-users'); if (!box) return;
+    if (box.innerHTML) { box.innerHTML = ''; return; }
+    const j = await api('/api/query_users?limit=50');
+    if (!j || j.error) { box.innerHTML = `<div class="muted small">${esc((j && (j.detail || j.error)) || '집계를 읽지 못했습니다')}</div>`; return; }
+    box.innerHTML = '<table><tr><th>사용자</th><th>질의 수</th><th>👍</th><th>👎</th><th>마지막</th><th></th></tr>' +
+      j.map((r) => `<tr><td>${esc(r.user)}</td><td class="num">${r.n}</td><td class="num">${r.up || 0}</td><td class="num">${r.down || 0}</td><td class="small">${ts(r.last_ts)}</td><td><button class="secondary mini" data-quonly="${esc(r.user)}">이 사용자만</button></td></tr>`).join('') + '</table>';
+    $$('#qlog-users [data-quonly]').forEach((b) => b.onclick = () => {
+      if ($('#qlog-mine')) $('#qlog-mine').checked = false;
+      if ($('#qlog-user')) $('#qlog-user').value = b.dataset.quonly;
+      loadQLog();
+    });
+  };
   loaders.qlog = loadQLog;
 
   // ---------------- CONSOLE ----------------

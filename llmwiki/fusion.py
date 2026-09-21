@@ -40,23 +40,66 @@ def _norm_lists(lst: List[Tuple[str, float]], method: str) -> Dict[str, float]:
     return {}
 
 
+BASE_CHANNELS = ("fts", "vector", "graph", "doc_vector", "external")
+
+
+def base_channel(name: str) -> str:
+    """리스트 이름 → 기본 채널. ext_<src> → external, doc_vector → doc_vector, 그 밖은 '_' 앞부분 (fts_alt1 → fts, vector_alt2 → vector)."""
+    if name.startswith("ext_"):
+        return "external"
+    if name == "doc_vector" or name.startswith("doc_vector_"):
+        return "doc_vector"
+    return name.split("_")[0]
+
+
+def topk_map(T: Any) -> Dict[str, Tuple[int, float, float]]:
+    """tuning 의 <채널>_topk_n / _topk_w / _tail_w 를 fuse(topk=) 형태로. n=0 인 채널은 뺀다 (= 구간 가중 끔)."""
+    out: Dict[str, Tuple[int, float, float]] = {}
+    for ch in BASE_CHANNELS:
+        n = int(T.get("%s_topk_n" % ch) or 0)
+        if n > 0:
+            out[ch] = (n, float(T.get("%s_topk_w" % ch)), float(T.get("%s_tail_w" % ch)))
+    return out
+
+
 def fuse(lists: Dict[str, List[Tuple[str, float]]], weights: Dict[str, float], k: int, method: str = "rrf",
-         multi_bonus: float = 0.0) -> Tuple[List[Hit], Dict[str, Any]]:
-    """채널 리스트 융합 → Hit[] (fused 내림차순) + 메타(overlap 등)."""
+         multi_bonus: float = 0.0, topk: Optional[Dict[str, Tuple[int, float, float]]] = None) -> Tuple[List[Hit], Dict[str, Any]]:
+    """채널 리스트 융합 → Hit[] (fused 내림차순) + 메타(overlap 등).
+
+    topk: {기본채널: (n, topk_w, tail_w)} — 그 채널(보조 리스트 포함)의 순위 r 에 r ≤ n 이면 topk_w, 아니면 tail_w 를 곱한다.
+    tail_w == 0 이면 top-k 밖 항목은 그 리스트에서 아예 참여하지 않는다. 적용 배율은 Hit.boosts["topk_<채널>"] 에 남긴다 (채널당 한 번).
+    """
     hits: Dict[str, Hit] = {}
+    topk = topk or {}
+    topk_in = topk_out = topk_dropped = 0
     for name, lst in lists.items():
         w = weights.get(name, weights.get(name.split("_")[0], 1.0))
         norm = _norm_lists(lst, method)
+        seg = topk.get(base_channel(name)) if topk else None
         for rank, (cid, score) in enumerate(lst):
+            factor = 1.0
+            if seg and seg[0] > 0:
+                inside = (rank + 1) <= seg[0]
+                factor = seg[1] if inside else seg[2]
+                if inside:
+                    topk_in += 1
+                elif factor == 0:
+                    topk_dropped += 1
+                    continue
+                else:
+                    topk_out += 1
             h = hits.setdefault(cid, Hit(cid))
             h.scores[name] = round(score, 4)
             h.ranks[name] = rank + 1
+            if factor != 1.0:
+                h.boosts.setdefault("topk_" + base_channel(name), round(factor, 3))
+            wf = w * factor
             if method in ("weighted", "minmax", "zscore", "dbsf"):
-                h.fused += w * norm.get(cid, 0.0) / 50.0
+                h.fused += wf * norm.get(cid, 0.0) / 50.0
             elif method == "rrf_boost":
-                h.fused += w * (1.0 / (k + rank + 1) + 0.3 * norm.get(cid, 0.0) / 50.0)
+                h.fused += wf * (1.0 / (k + rank + 1) + 0.3 * norm.get(cid, 0.0) / 50.0)
             else:
-                h.fused += w * 1.0 / (k + rank + 1)
+                h.fused += wf * 1.0 / (k + rank + 1)
     if multi_bonus:
         for h in hits.values():
             if len(h.ranks) > 1:
@@ -71,7 +114,11 @@ def fuse(lists: Dict[str, List[Tuple[str, float]]], weights: Dict[str, float], k
             a = {c for c, _ in lists[names[i]]}
             b = {c for c, _ in lists[names[j]]}
             overlap["%s∩%s" % (names[i], names[j])] = len(a & b)
-    return out, {"candidates": len(out), "multi_source": sum(1 for h in out if len(h.ranks) > 1), "overlap": overlap, "method": method}
+    meta = {"candidates": len(out), "multi_source": sum(1 for h in out if len(h.ranks) > 1), "overlap": overlap, "method": method}
+    if topk:
+        meta.update(topk={ch: {"n": v[0], "topk_w": v[1], "tail_w": v[2]} for ch, v in topk.items()},
+                    topk_in=topk_in, topk_out=topk_out, topk_dropped=topk_dropped)
+    return out, meta
 
 
 def apply_boosts(hits: List[Hit], chunks: Dict[str, Any], doc_meta: Dict[str, Dict[str, Any]], *, time_scope: Optional[Dict[str, Any]] = None,
@@ -144,7 +191,7 @@ def apply_boosts(hits: List[Hit], chunks: Dict[str, Any], doc_meta: Dict[str, Di
             boosts["feedback"] = round(1.0 + feedback_w * fb, 3)
             mult *= 1.0 + feedback_w * fb
         if boosts:
-            h.boosts = boosts
+            h.boosts.update(boosts)     # 덮지 않고 합친다 — fuse() 의 topk_<채널> 배율이 남아 있어야 근거 표에서 보인다
             h.fused *= mult
             for k_ in boosts:
                 stats[k_] += 1
@@ -152,6 +199,38 @@ def apply_boosts(hits: List[Hit], chunks: Dict[str, Any], doc_meta: Dict[str, Di
     filtered.sort(key=lambda h: -h.fused)
     hits[:] = filtered
     return dict(stats)
+
+
+def parse_inject_map(s: Any) -> Dict[str, int]:
+    """channel_inject 'fts:2,vector:2,graph:1' → {fts:2, vector:2, graph:1}. 모르는 채널·0 이하는 버린다."""
+    out: Dict[str, int] = {}
+    for ch, v in parse_weight_map(s, 0.0).items():
+        n = int(v)
+        if ch in BASE_CHANNELS and n > 0:
+            out[ch] = n
+    return out
+
+
+def inject_channels(hits: List[Hit], lists: Dict[str, List[Tuple[str, float]]], inject: Dict[str, int], win: int) -> Dict[str, List[str]]:
+    """채널별 주 리스트 상위 n개를 리랭크 후보 창(win) 안으로 올린다 — external_rag_inject 와 같은 방식(창 끝 요소 바로 위의 fused).
+    주 리스트: fts/vector/graph/doc_vector 는 같은 이름, external 은 모든 ext_<src>. 옮긴 뒤 hits 를 다시 정렬한다. 반환 {채널: 옮긴 id}."""
+    moved: Dict[str, List[str]] = {}
+    if not inject or win <= 0 or win > len(hits):
+        return moved
+    pos = {h.chunk_id: i for i, h in enumerate(hits)}
+    for ch, n in inject.items():
+        names = [k for k in lists if k.startswith("ext_")] if ch == "external" else ([ch] if ch in lists else [])
+        for name in names:
+            for cid, _sc in lists[name][:n]:
+                i = pos.get(cid)
+                if i is None or i < win:
+                    continue
+                hits[i].fused = hits[win - 1].fused + 1e-6
+                hits[i].why.append("inject:" + ch)
+                moved.setdefault(ch, []).append(cid)
+    if moved:
+        hits.sort(key=lambda h: -h.fused)
+    return moved
 
 
 def compare_methods(pipe, questions: List[Dict[str, Any]], methods: Optional[List[str]] = None, k: int = 5) -> List[Dict[str, Any]]:

@@ -46,6 +46,25 @@ class Hit:
 _REL_WORDS = ("관계", "영향", "왜", "원인", "누가", "담당", "연결", "관련", "비교", "차이", "어떻게", "흐름", "결정", "이유", "배경",
               "who", "why", "relation", "impact", "compare", "between")
 
+#: 라우터가 고를 수 있는 질의 유형 — **한 곳에만** 둔다 (화면·CLI·MCP 설명이 같은 글을 쓴다).
+#: 이 유형이 하는 일은 "어느 채널에 얼마나 무게를 둘지" 하나뿐이다. 채널을 끄거나 켜지는 않는다.
+ROUTER_KINDS: Dict[str, Dict[str, str]] = {
+    "keyword": {"label": "키워드형",
+                "desc": "짧고 관계를 묻지 않는 질의 (예: 'CL-55302'). 정확한 용어·번호가 중요하므로 FTS 에 무게를 싣고 의미 검색은 줄인다."},
+    "semantic": {"label": "의미형",
+                 "desc": "길고 관계를 묻지 않는 질의 (예: 'RX DMA underrun 이 생기는 상황 설명'). 표현이 달라도 뜻이 가까운 문단을 찾도록 벡터에 무게를 더한다."},
+    "relational": {"label": "관계형",
+                   "desc": "'왜·원인·누가·영향·관련' 처럼 **이어진 것**을 묻거나, 아는 엔티티가 둘 이상 잡힌 질의. "
+                           "문서 하나에 답이 없고 여러 문서를 이어야 하므로 **그래프 채널에 무게를 크게** 싣는다."},
+    "hybrid": {"label": "혼합형",
+               "desc": "특별한 신호가 없어 세 채널을 고르게 쓴다 (기본값)."},
+}
+
+
+def describe_router_kinds() -> List[Dict[str, str]]:
+    """유형 표 — Web 디버그 화면·CLI `inspect`·MCP `wiki_inspect` 가 같은 설명을 쓴다."""
+    return [{"kind": k, "label": v["label"], "desc": v["desc"]} for k, v in ROUTER_KINDS.items()]
+
 
 def route(query: str, store: Store) -> Dict[str, Any]:
     """질의 특성에 따라 FTS/Vector/Graph 가중치를 결정하는 적응형 라우터(휴리스틱). 임계값/가중치는 tuning(router_*)."""
@@ -67,7 +86,28 @@ def route(query: str, store: Store) -> Dict[str, Any]:
         w["fts"] += T.get("router_num_fts_bonus")
     if len(kws) >= T.get("router_long_kw") and not relational:
         w["vector"] += T.get("router_sem_vector_bonus"); kind = "semantic"
-    return {"kind": kind, "weights": w, "keywords": kws, "entities": [(e, round(s, 2)) for e, s in ent_hits[:6]],
+    # 왜 이 유형으로 정해졌는지를 **사람 말로** 함께 돌려준다 (2026-09-20).
+    # 예전에는 `kind: "relational"` 이라는 낱말만 화면에 떠서, 그게 무엇을 뜻하고 무엇 때문에 그렇게
+    # 정해졌는지 알 수 없었다. 판정에 쓰인 신호가 그대로 있으므로 설명은 여기서 만드는 것이 맞다.
+    hit_rel = [x for x in _REL_WORDS if x in query]
+    why = []
+    if relational:
+        why.append("관계를 묻는 말이 있음: %s" % ", ".join(hit_rel[:4]))
+    if n_ent >= 2:
+        why.append("아는 엔티티가 %d개 잡힘" % n_ent)
+    if strong:
+        why.append("확실한 시드 %d개" % strong)
+    if short and not relational:
+        why.append("키워드가 %d개로 짧음 (≤%s)" % (len(kws), T.get("router_short_kw")))
+    if has_number:
+        why.append("숫자가 있어 FTS 가중 +%s" % T.get("router_num_fts_bonus"))
+    if len(kws) >= T.get("router_long_kw") and not relational:
+        why.append("키워드가 %d개로 길어 의미 검색 가중 +%s" % (len(kws), T.get("router_sem_vector_bonus")))
+    return {"kind": kind, "kind_label": ROUTER_KINDS.get(kind, {}).get("label", kind),
+            "kind_desc": ROUTER_KINDS.get(kind, {}).get("desc", ""),
+            "why": why or ["특별한 신호가 없어 기본(hybrid) 가중치"],
+            "weights": w, "keywords": kws, "entities": [(e, round(s, 2)) for e, s in ent_hits[:6]],
+            "matched_rel_words": hit_rel[:6],
             "signals": {"n_keywords": len(kws), "n_entities": n_ent, "strong_seeds": strong, "relational": relational, "has_number": has_number}}
 
 
@@ -190,7 +230,41 @@ def matmul_sims(mat: np.ndarray, qv: np.ndarray, block: int = 16384) -> np.ndarr
     return out
 
 
-def vector_search(store: Store, embedder: BaseEmbedder, query: str, k: int, prof: Profiler) -> List[Tuple[str, float]]:
+def embed_query(store: Store, embedder: BaseEmbedder, query: str, cache: bool = True) -> Tuple[Any, bool]:
+    """질의 벡터 — **내용 주소 캐시**를 먼저 본다. 반환 (vector, 캐시 적중 여부).
+
+    2026-09-19: 예전에는 질의를 매번 처음부터 임베딩했다. 청크는 빌드 때 `embedding_cache` 에 넣으면서
+    질의는 넣지 않았기 때문이다. 원격 임베더(ollama·voyage)에서는 이 한 번이 **2초**가 넘는데,
+    한 질의가 규칙 대체 질의까지 4번 임베딩하므로 검색만 해도 9초가 걸렸다.
+    회귀 평가·trial 은 **같은 질문 25개를 매번 다시** 임베딩했다 — 튜닝을 반복할수록 비용이 쌓인다.
+
+    캐시는 `sha1(text)` 로 잡히므로 청크 캐시와 자연스럽게 공유된다(같은 글 = 같은 벡터).
+    hash 임베더는 IDF 에 의존해 결과가 빌드마다 달라질 수 있으므로 캐시하지 않는다(어차피 로컬·즉시).
+    끄려면 토글 `embed_query_cache`.
+    """
+    import hashlib
+    name = getattr(embedder, "name", "") or ""
+    model = str(getattr(embedder, "model", "") or "")
+    if not cache or name in ("hash", "none", ""):
+        return embedder.embed([query])[0], False
+    sha = hashlib.sha1(query.encode("utf-8")).hexdigest()
+    try:
+        hit = store.cache_get(name, model, [sha])
+        if sha in hit:
+            return hit[sha], True
+    except Exception:
+        pass
+    v = embedder.embed([query])[0]
+    try:
+        store.cache_put(name, model, [(sha, v)])
+    except Exception:
+        pass      # 캐시에 못 넣어도 검색은 계속된다
+    return v, False
+
+
+def vector_search(store: Store, embedder: BaseEmbedder, query: str, k: int, prof: Profiler,
+                  cache_query: bool = True) -> List[Tuple[str, float]]:
+    """`cache_query` 는 토글 `embed_query_cache` — 질의 벡터를 내용으로 캐시할지 (§embed_query)."""
     with prof.stage("vector_search", k=k, provider=embedder.name) as st:
         cached = store.vector_cache_info().get("loaded", False)
         t0 = time.perf_counter()
@@ -201,7 +275,7 @@ def vector_search(store: Store, embedder: BaseEmbedder, query: str, k: int, prof
             st.note(hits=0, reason="no embeddings for provider %s (run build)" % embedder.name)
             return []
         t1 = time.perf_counter()
-        qv = embedder.embed([query])[0]
+        qv, q_cached = embed_query(store, embedder, query, cache_query)
         embed_ms = (time.perf_counter() - t1) * 1000
         if qv.shape[0] != mat.shape[1]:
             st.note(hits=0, reason="dim mismatch %s vs %s" % (qv.shape[0], mat.shape[1]))
@@ -211,6 +285,7 @@ def vector_search(store: Store, embedder: BaseEmbedder, query: str, k: int, prof
         top = np.argsort(-sims)[:k]
         min_sim = _T().get("vector_min_sim")
         out = [(ids[i], float(sims[i])) for i in top if sims[i] > max(0.0, min_sim)]
+        st.note(query_embed_cache="hit" if q_cached else "miss")
         st.note(hits=len(out), top=[(c, round(s, 3)) for c, s in out[:5]], dim=int(mat.shape[1]),
                 embed_ms=round(embed_ms, 1), matmul_ms=round((time.perf_counter() - t2) * 1000, 1),
                 matrix_mb=round(mat.nbytes / 1e6, 1))
@@ -324,6 +399,192 @@ def graph_search(store: Store, query: str, k: int, hops: int, prof: Profiler,
                  top_entities=[(e["name"], e["score"]) for e in ents_out[:10]], doc_ref_chunks=doc_ref_added[:10])
         return {"chunks": chunks, "entities": ents_out, "relations": rels_out,
                 "seeds": [(_name(store, e), round(s, 2)) for e, s in seeds], "provenance": dict(prov_used)}
+
+
+CHANNELS: Tuple[str, ...] = ("fts", "vector", "graph")
+CHANNEL_MODES: Tuple[str, ...] = ("or", "and", "rrf")
+
+
+def parse_channels(value: Any) -> List[str]:
+    """'fts,vector' · ['fts','graph'] · 'all' → 정규화된 채널 목록 (순서는 CHANNELS 기준, 중복 제거)."""
+    if value is None or value == "":
+        return ["fts"]
+    if isinstance(value, str):
+        parts = [x.strip().lower() for x in value.replace("+", ",").split(",") if x.strip()]
+    else:
+        parts = [str(x).strip().lower() for x in value if str(x).strip()]
+    if "all" in parts or "*" in parts:
+        return list(CHANNELS)
+    return [c for c in CHANNELS if c in parts] or ["fts"]
+
+
+def channel_search(store: Store, embedder: BaseEmbedder, settings: Settings, query: str,
+                   channels: Any = "fts", mode: str = "or", k: int = 8,
+                   prof: Optional[Profiler] = None,
+                   require: Any = None, exclude: Any = None, acl: Any = None,
+                   doc_types: Any = None) -> Dict[str, Any]:
+    """**여러 채널을 한 번에 돌려 조합한다** — 채널 검색 디버그의 공용 엔진 (2026-09-19).
+
+    예전에는 CLI·Web·MCP 모두 채널을 **하나만** 볼 수 있었다. 그래서 "이 청크는 FTS 는 찾았는데
+    벡터는 못 찾았나?" 처럼 정작 알고 싶은 것을 보려면 세 번 돌려 눈으로 맞춰야 했다.
+
+    조합 방식(mode)
+      - `or`  합집합. 고른 채널 중 **하나라도** 찾은 청크. 커버리지(recall)를 본다.
+      - `and` 교집합. 고른 채널이 **모두** 찾은 청크. 채널 합의가 강한 근거를 본다.
+      - `rrf` 실제 질의 경로와 **같은 가중 RRF 융합**. 라우터 가중치를 그대로 쓴다.
+
+    or/and 의 정렬은 "채널 수 많은 순 → 채널별 최고 순위가 앞선 순" 이라 설명 가능하다.
+    rrf 는 fusion 단계의 점수를 그대로 쓴다.
+
+    `doc_types` 는 **거르는** 조건이다 (2026-09-19). 질의 경로의 `doc_types` 가 *가중치를 올리는* 것과
+    다르다 — 여기서는 "이슈 문서만 보고 싶다" 가 목적이라 나머지를 빼는 것이 맞다. 채널별 원본 목록에서
+    먼저 빼므로 `per_channel` 의 발췌로도 새어 나가지 않는다 (문서 접근 제어와 같은 자리).
+
+    반환: {query, channels, mode, k, per_channel{ch:{n,ms,rows}}, rows[], graph?, counts, weights, doc_types}
+    """
+    prof = prof or Profiler("search")
+    req = parse_channels(require) if require else []
+    exc = parse_channels(exclude) if exclude else []
+    any_ = parse_channels(channels) if channels else []
+    # 복합 조건: 필수(AND) · 포함(OR) · 제외(NOT) 를 섞을 수 있다.
+    #   (포함 중 하나라도) 그리고 (필수 전부) 그리고 (제외에 없음)
+    # 예: require=[graph], any=[fts,vector] → "(FTS 또는 Vector) 그리고 Graph"
+    # 제외 채널도 결과를 알아야 뺄 수 있으므로 실제로 돌린다.
+    chans = [c for c in CHANNELS if c in set(any_) | set(req) | set(exc)] or ["fts"]
+    mode = str(mode or "or").lower()
+    if mode not in CHANNEL_MODES:
+        mode = "or"
+    composite = bool(req or exc)
+    k = max(1, int(k or 8))
+
+    per: Dict[str, Dict[str, Any]] = {}
+    lists: Dict[str, List[Tuple[str, float]]] = {}
+    snippets: Dict[str, str] = {}
+    graph_out: Optional[Dict[str, Any]] = None
+
+    if "fts" in chans:
+        t0 = time.perf_counter()
+        rows = fts_search(store, query, k, store.synonyms(), prof)
+        for cid, sc, sn in rows:
+            snippets.setdefault(cid, sn or "")
+        lists["fts"] = [(cid, sc) for cid, sc, _ in rows]
+        per["fts"] = {"n": len(rows), "ms": round((time.perf_counter() - t0) * 1000, 1),
+                      "rows": [{"chunk_id": cid, "score": round(float(sc), 4), "rank": i + 1, "snippet": (sn or "")[:200]}
+                               for i, (cid, sc, sn) in enumerate(rows)]}
+    if "vector" in chans:
+        t0 = time.perf_counter()
+        rows_v = vector_search(store, embedder, query, k, prof,
+                               bool(getattr(getattr(settings, "toggles", None), "embed_query_cache", True)))
+        lists["vector"] = list(rows_v)
+        per["vector"] = {"n": len(rows_v), "ms": round((time.perf_counter() - t0) * 1000, 1),
+                         "provider": embedder.name,
+                         "rows": [{"chunk_id": cid, "score": round(float(sc), 4), "rank": i + 1}
+                                  for i, (cid, sc) in enumerate(rows_v)]}
+    if "graph" in chans:
+        t0 = time.perf_counter()
+        g = graph_search(store, query, k, int(getattr(settings, "graph_hops", 2) or 2), prof)
+        lists["graph"] = [(cid, sc) for cid, sc in (g.get("chunks") or [])]
+        graph_out = {"seeds": g.get("seeds"), "entities": (g.get("entities") or [])[:10],
+                     "relations": (g.get("relations") or [])[:10], "provenance": g.get("provenance")}
+        per["graph"] = {"n": len(lists["graph"]), "ms": round((time.perf_counter() - t0) * 1000, 1),
+                        "rows": [{"chunk_id": cid, "score": round(float(sc), 4), "rank": i + 1}
+                                 for i, (cid, sc) in enumerate(lists["graph"])]}
+
+    # 문서 유형 필터 — 접근 제어와 같은 자리에서 **채널별 원본 목록부터** 뺀다.
+    # 나중에 최종 행에서만 빼면 per_channel 의 건수·발췌가 실제와 달라 보인다.
+    want_types = [str(t).strip() for t in (doc_types if isinstance(doc_types, (list, tuple, set))
+                                           else str(doc_types or "").split(",")) if str(t).strip()]
+    type_removed = 0
+    if want_types:
+        meta = store.doc_meta_map()
+        allow = set(want_types)
+
+        def _type_ok(cid: str) -> bool:
+            did = str(cid or "").rsplit("#", 1)[0]
+            m = meta.get(did) or {}
+            return str((m or {}).get("doc_type") or "") in allow
+        for ch in list(lists):
+            keep_rows = [(cid, sc) for cid, sc in lists[ch] if _type_ok(cid)]
+            type_removed += len(lists[ch]) - len(keep_rows)
+            lists[ch] = keep_rows
+            if ch in per:
+                per[ch]["rows"] = [r for r in per[ch]["rows"] if _type_ok(r.get("chunk_id") or "")]
+                per[ch]["n"] = len(per[ch]["rows"])
+                per[ch]["doc_type_filtered"] = True
+
+    # 문서 단위 접근 제어 — 채널별 원본 목록에서 먼저 뺀다 (llmwiki/docacl.py).
+    # 여기서 빼지 않으면 per_channel 의 snippet 으로 본문이 그대로 새어 나간다.
+    acl_removed = 0
+    if acl is not None and getattr(acl, "enabled", False):
+        for ch in list(lists):
+            keep_rows = [(cid, sc) for cid, sc in lists[ch] if acl.chunk_ok(cid)]
+            acl_removed += len(lists[ch]) - len(keep_rows)
+            lists[ch] = keep_rows
+            if ch in per:
+                per[ch]["rows"] = [r for r in per[ch]["rows"] if acl.chunk_ok(r.get("chunk_id") or "")]
+                per[ch]["n"] = len(per[ch]["rows"])
+                per[ch]["acl_blocked"] = True
+
+    rank_of: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for ch, rows_c in lists.items():
+        for i, (cid, sc) in enumerate(rows_c):
+            rank_of.setdefault(cid, {})[ch] = {"rank": i + 1, "score": round(float(sc), 4)}
+
+    def keep(cid: str) -> bool:
+        chm = rank_of.get(cid) or {}
+        if any(c in chm for c in exc):          # 제외 채널이 찾은 것은 뺀다
+            return False
+        if not all(c in chm for c in req):      # 필수 채널은 모두 찾아야 한다
+            return False
+        if any_:                                # 포함 채널이 있으면 그중 하나는 찾아야 한다
+            return any(c in chm for c in any_)
+        return bool(req)                        # 포함이 없으면 필수만으로 판단
+
+    weights: Dict[str, float] = {}
+    if mode == "rrf" and not composite:
+        r = route(query, store)
+        weights = {ch: float((r.get("weights") or {}).get(ch, 1.0)) for ch in lists}
+        fused = rrf_fuse({ch: rows_c for ch, rows_c in lists.items()}, weights, k, prof)
+        order = [(h.chunk_id, float(h.fused)) for h in fused]
+    elif composite:
+        cand = [cid for cid in rank_of if keep(cid)]
+        cand.sort(key=lambda cid: (-len(rank_of[cid]), min(v["rank"] for v in rank_of[cid].values()), cid))
+        order = [(cid, round(1.0 / min(v["rank"] for v in rank_of[cid].values()), 4)) for cid in cand]
+    else:
+        need = len(chans) if mode == "and" else 1
+        cand = [cid for cid, chm in rank_of.items() if len(chm) >= need]
+        cand.sort(key=lambda cid: (-len(rank_of[cid]), min(v["rank"] for v in rank_of[cid].values()), cid))
+        order = [(cid, round(1.0 / min(v["rank"] for v in rank_of[cid].values()), 4)) for cid in cand]
+
+    rows_out: List[Dict[str, Any]] = []
+    for cid, score in order[:k if mode != "or" else max(k, len(order))]:
+        c = dict(store.get_chunk(cid) or {})      # sqlite3.Row → dict (Row 는 .get 이 없다)
+        # 이중 방어: 위에서 이미 걸렀지만 doc_id 가 chunk_id 와 다른 경우를 대비해 한 번 더 본다.
+        if acl is not None and getattr(acl, "enabled", False) and not acl.chunk_ok(cid, c.get("doc_id") or ""):
+            acl_removed += 1
+            continue
+        rows_out.append({"chunk_id": cid, "score": score, "channels": rank_of.get(cid, {}),
+                         "n_channels": len(rank_of.get(cid, {})),
+                         "doc_id": c.get("doc_id"), "heading": c.get("heading"),
+                         "snippet": snippets.get(cid) or (str(c.get("text") or "")[:200])})
+    inter = sum(1 for chm in rank_of.values() if len(chm) == len(chans))
+    if composite:
+        expr = " 그리고 ".join(filter(None, [
+            ("(" + " 또는 ".join(any_) + ")") if any_ else "",
+            " 그리고 ".join(req) if req else "",
+            ("(제외: " + ", ".join(exc) + ")") if exc else ""]))
+    else:
+        expr = (" 또는 " if mode == "or" else " 그리고 " if mode == "and" else " + ").join(chans) + \
+               (" [가중 RRF]" if mode == "rrf" else "")
+    if want_types:
+        expr += " · 문서유형 %s" % ",".join(want_types)
+    return {"query": query, "channels": chans, "mode": ("composite" if composite else mode), "k": k,
+            "require": req, "any": any_, "exclude": exc, "expr": expr, "doc_types": want_types,
+            "per_channel": per, "rows": rows_out, "graph": graph_out, "weights": weights,
+            "acl": (dict(acl.summary(), removed=acl_removed)
+                    if acl is not None and getattr(acl, "enabled", False) else {"enabled": False}),
+            "counts": {"union": len(rank_of), "intersection": inter, "returned": len(rows_out),
+                       "acl_blocked": acl_removed, "doc_type_filtered": type_removed}}
 
 
 def parse_weight_map(s: Any, default: float = 1.0) -> Dict[str, float]:

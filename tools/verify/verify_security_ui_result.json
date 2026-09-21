@@ -30,7 +30,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 11,
    "toasts": [
     "security.json 다시 읽음 (mode off)"
    ],
@@ -58,7 +58,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 3,
+   "fetches": 5,
    "toasts": [
     "비밀번호는 8자 이상이어야 합니다 (비우면 SSO 전용 계정)"
    ],
@@ -72,7 +72,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 11,
    "toasts": [
     "추가됨: verify.user"
    ],
@@ -93,7 +93,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 5,
+   "fetches": 3,
    "toasts": [],
    "stepups": 0
   }
@@ -105,7 +105,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 11,
    "toasts": [
     "역할 변경: verify.user → class1"
    ],
@@ -119,7 +119,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 5,
    "toasts": [
     "비밀번호 변경됨"
    ],
@@ -147,7 +147,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 11,
    "toasts": [
     "API 키 발급: verify-key"
    ],
@@ -161,7 +161,7 @@
   "why": "토큰 표시는 그대로 남아야 한다 (한 번만 볼 수 있으므로)",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 3,
    "toasts": [],
    "stepups": 0
   }
@@ -180,7 +180,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 9,
+   "fetches": 10,
    "toasts": [],
    "stepups": 0
   }
@@ -192,7 +192,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 13,
    "toasts": [],
    "stepups": 0
   }
@@ -204,7 +204,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 13,
+   "fetches": 14,
    "toasts": [
     "권한 저장됨"
    ],
@@ -225,10 +225,76 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 12,
+   "fetches": 11,
    "toasts": [],
    "stepups": 0
   }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "문서 접근 제어 패널이 그려짐",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "규칙 추가 → 저장",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "문서 접근 제어 저장됨 (규칙 1개)"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "규칙이 docacl.json 에 저장됨",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "영향 확인 버튼이 역할별 표를 그림",
+  "why": "저장 전에 '몇 건이 가려지나' 를 볼 수 있어야 규칙을 안심하고 넣는다",
+  "state": {
+   "errs": [],
+   "fetches": 10,
+   "toasts": [],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "규칙 삭제 → 저장 (뒷정리)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 11,
+   "toasts": [
+    "문서 접근 제어 저장됨 (규칙 0개)"
+   ],
+   "stepups": 0
+  }
+ },
+ {
+  "mode": "auto",
+  "verdict": "OK  ",
+  "check": "빈 접두사 규칙은 삭제로 처리됨",
+  "why": "",
+  "state": {}
  },
  {
   "mode": "auto",
@@ -251,7 +317,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 10,
+   "fetches": 11,
    "toasts": [
     "삭제됨"
    ],
@@ -277,7 +343,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 9,
+   "fetches": 10,
    "toasts": [],
    "stepups": 0
   }
@@ -289,7 +355,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]",
     "security.json 다시 읽음 (mode on)"
@@ -332,7 +398,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]",
     "추가됨: verify.user"
@@ -366,7 +432,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]",
     "역할 변경: verify.user → class1"
@@ -410,7 +476,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]",
     "API 키 발급: verify-key"
@@ -444,7 +510,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 9,
+   "fetches": 10,
    "toasts": [],
    "stepups": 5
   }
@@ -456,7 +522,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]"
    ],
@@ -470,7 +536,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 18,
+   "fetches": 19,
    "toasts": [
     "[단계확인 모달 통과]",
     "[단계확인 모달 통과]",
@@ -493,12 +559,86 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]"
    ],
    "stepups": 10
   }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "문서 접근 제어 패널이 그려짐",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 3,
+   "toasts": [],
+   "stepups": 10
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "규칙 추가 → 저장",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 18,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "문서 접근 제어 저장됨 (규칙 1개)",
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 17
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "규칙이 docacl.json 에 저장됨",
+  "why": "",
+  "state": {}
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "영향 확인 버튼이 역할별 표를 그림",
+  "why": "저장 전에 '몇 건이 가려지나' 를 볼 수 있어야 규칙을 안심하고 넣는다",
+  "state": {
+   "errs": [],
+   "fetches": 16,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "[단계확인 모달 통과]",
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 23
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "규칙 삭제 → 저장 (뒷정리)",
+  "why": "",
+  "state": {
+   "errs": [],
+   "fetches": 18,
+   "toasts": [
+    "[단계확인 모달 통과]",
+    "문서 접근 제어 저장됨 (규칙 0개)",
+    "[단계확인 모달 통과]"
+   ],
+   "stepups": 30
+  }
+ },
+ {
+  "mode": "on",
+  "verdict": "OK  ",
+  "check": "빈 접두사 규칙은 삭제로 처리됨",
+  "why": "",
+  "state": {}
  },
  {
   "mode": "on",
@@ -511,7 +651,7 @@
    "toasts": [
     "비밀번호 변경됨"
    ],
-   "stepups": 10
+   "stepups": 30
   }
  },
  {
@@ -521,12 +661,12 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 11,
+   "fetches": 12,
    "toasts": [
     "[단계확인 모달 통과]",
     "삭제됨"
    ],
-   "stepups": 11
+   "stepups": 31
   }
  },
  {
@@ -536,7 +676,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 4,
+   "fetches": 3,
    "toasts": [],
    "stepups": 0
   }

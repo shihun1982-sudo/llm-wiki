@@ -202,7 +202,7 @@ def main(argv=None) -> int:
     prof = os.path.join(tempfile.gettempdir(), "llmwiki_click_profile")
     shutil.rmtree(prof, ignore_errors=True)
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    srv = subprocess.Popen([sys.executable, "-m", "llmwiki", "serve", "--port", str(ns.port)],
+    srv = subprocess.Popen([sys.executable, "-m", "llmwiki", "serve", "--host", "127.0.0.1", "--port", str(ns.port)],
                            cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     br = None
     bad = 0

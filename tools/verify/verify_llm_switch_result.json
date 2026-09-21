@@ -1,0 +1,96 @@
+{
+ "rows": [
+  {
+   "name": "초기 빌드",
+   "ok": true,
+   "detail": "ALERTS: [{\"level\": \"warn\", \"check\": \"schema_lint\", \"detail\": \"6 docs with schema errors (corpus lint 로 확인)\"}]"
+  },
+  {
+   "name": "A) LLM API · CLI query",
+   "ok": true,
+   "detail": "answer provider=mock"
+  },
+  {
+   "name": "A) LLM API · CLI provider 일치",
+   "ok": true,
+   "detail": "mock ⊂ 'mock'"
+  },
+  {
+   "name": "A) LLM API · Web /api/query",
+   "ok": true,
+   "detail": "provider=mock"
+  },
+  {
+   "name": "A) LLM API · Web provider 일치",
+   "ok": true,
+   "detail": "mock ⊂ mock"
+  },
+  {
+   "name": "A) LLM API · MCP wiki_query",
+   "ok": true,
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1]  판정: sufficient · grounded"
+  },
+  {
+   "name": "A) LLM API · MCP provider 일치",
+   "ok": true,
+   "detail": "headless 없음 · \"name\": \"mock\",, \"model\": \"mock\", \"name\": \"mock\",, \"model\": \"mock\",, \"provider\":"
+  },
+  {
+   "name": "전환: config.json 만 수정했다",
+   "ok": true,
+   "detail": "llm_provider · llm_model 두 키"
+  },
+  {
+   "name": "다른 설정 파일이 바뀌지 않았다",
+   "ok": true,
+   "detail": "없음"
+  },
+  {
+   "name": "코드(llmwiki/*.py)가 바뀌지 않았다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "B) headless · CLI query",
+   "ok": true,
+   "detail": "answer provider=headless:mock"
+  },
+  {
+   "name": "B) headless · CLI provider 일치",
+   "ok": true,
+   "detail": "headless ⊂ 'headless:mock'"
+  },
+  {
+   "name": "B) headless · Web /api/query",
+   "ok": true,
+   "detail": "provider=headless:mock"
+  },
+  {
+   "name": "B) headless · Web provider 일치",
+   "ok": true,
+   "detail": "headless ⊂ headless:mock"
+  },
+  {
+   "name": "B) headless · MCP wiki_query",
+   "ok": true,
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C1]  판정: sufficient "
+  },
+  {
+   "name": "B) headless · MCP provider 일치",
+   "ok": true,
+   "detail": "\"name\": \"headless:mock\",, \"name\": \"headless:mock\",, \"provider\": \"headless:mock\","
+  },
+  {
+   "name": "C) 역할별 전환: answer 만 headless",
+   "ok": true,
+   "detail": "answer='headless:mock' rerank='mock'"
+  },
+  {
+   "name": "D) 되돌리기: 다시 API 모드",
+   "ok": true,
+   "detail": "answer='mock'"
+  }
+ ],
+ "ok": 18,
+ "n": 18
+}

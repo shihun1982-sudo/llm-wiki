@@ -14,6 +14,60 @@ window.LW = (function () {
   const loaders = {};
 
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2800); }
+  // ---------------- 클립보드 복사 — 3단 대체 경로 (2026-09-18, 요청 16) ----------------
+  // 사내 배포는 `http://호스트:포트` 접속이 기본이라 **보안 컨텍스트가 아니다** → navigator.clipboard 자체가 undefined.
+  // 그래서 ① clipboard API(https/localhost 에서만) → ② 숨은 textarea + execCommand('copy') (http 에서도 사용자 클릭이면 동작)
+  // → ③ 둘 다 안 되면 본문이 선택된 창을 띄워 Ctrl+C 로 복사하게 한다. 어느 경로든 예외를 밖으로 던지지 않는다.
+  // 반환: 'api' | 'exec' | 'modal' (모두 truthy — "복사 시도가 끝났다"). 성공/실패는 toast 로 알린다.
+  async function copyText(text, label) {
+    text = String(text == null ? '' : text); label = label || '';
+    const okMsg = (label ? label + ' ' : '') + '복사됨' + (text.length > 200 ? ' (' + fmtK(text.length) + '자)' : '');
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+      try { await navigator.clipboard.writeText(text); toast(okMsg); return 'api'; } catch (e) { /* 권한 거부 등 → 아래 경로 */ }
+    }
+    let ok = false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.setAttribute('aria-hidden', 'true');
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;padding:0;border:0;opacity:0;pointer-events:none;z-index:-1';
+      document.body.appendChild(ta);
+      const active = document.activeElement;
+      ta.focus(); ta.select();
+      try { ta.setSelectionRange(0, text.length); } catch (e) { /* ignore */ }
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      if (active && active.focus) { try { active.focus(); } catch (e) { /* ignore */ } }
+    } catch (e) { ok = false; }
+    if (ok) { toast(okMsg); return 'exec'; }
+    copyModal(text, label);
+    toast('클립보드에 자동으로 넣지 못했습니다 — 창에서 Ctrl+C');
+    return 'modal';
+  }
+  // ③ 마지막 수단: 본문을 선택해 둔 창. Ctrl+C 를 누르면 닫힌다.
+  function copyModal(text, label) {
+    let ov = $('#copy-modal'); if (ov) ov.remove();
+    ov = document.createElement('div'); ov.id = 'copy-modal'; ov.className = 'modal-bg';
+    ov.innerHTML = `<div class="modal">
+      <h3>⧉ ${esc(label || '복사')}</h3>
+      <p class="modal-msg">브라우저가 클립보드 접근을 막았습니다 — 보통 <code>http://</code> 로 연 화면입니다 (보안 컨텍스트가 아니면 <code>navigator.clipboard</code> 가 없고, 자동 복사도 거부될 수 있습니다).
+        아래 내용이 <b>선택된 상태</b>입니다. <b>Ctrl+C</b> (Mac ⌘C) 를 누르면 복사되고 창이 닫힙니다.</p>
+      <textarea id="copy-modal-text" readonly spellcheck="false" style="min-height:220px"></textarea>
+      <div class="modal-actions"><button class="secondary" id="copy-modal-select">다시 선택</button><button id="copy-modal-close">닫기</button></div>
+      <div class="muted small">${fmtK(text.length)}자 · 항상 복사되게 하려면 https 또는 localhost 로 접속하거나, 브라우저 정책에서 이 주소를 "안전한 출처" 로 등록하세요 (docs/BRINGUP_GUIDE 참고).</div>
+    </div>`;
+    document.body.appendChild(ov);
+    const ta = $('#copy-modal-text'); ta.value = text;
+    const sel = () => { ta.focus(); ta.select(); try { ta.setSelectionRange(0, ta.value.length); } catch (e) { /* ignore */ } };
+    const close = () => ov.remove();
+    $('#copy-modal-select').onclick = sel;
+    $('#copy-modal-close').onclick = close;
+    ov.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+      else if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'c') setTimeout(() => { toast('복사됨 (Ctrl+C)'); close(); }, 120);
+    });
+    ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+    sel();
+  }
   // ---------------- 권한 단계 확인(step-up) 모달 ----------------
   // 서버가 428 + need{confirm|phrase|password} 를 돌려주면 여기서 사용자에게 묻고 같은 요청을 다시 보낸다.
   // need.level: warn(변경) · admin(관리자 설정) · destructive(색인/DB 삭제 — 확인 문구 + 로컬 계정이면 비밀번호)
@@ -82,7 +136,13 @@ window.LW = (function () {
     if (j && j.error && !j.result && !Array.isArray(j)) { toast('오류: ' + j.error); console.error(path, j); }
     return j;
   }
-  function switchTab(name) { const b = $$('.tabs button').find((x) => x.dataset.tab === name); if (b) b.click(); }
+  // 없어진 탭 → 대신 열 곳 ('그룹/탭' 또는 '탭' 으로 찾는다). 화면을 합칠 때 예전 링크를 살려 두기 위한 표.
+  const TAB_ALIAS = { 'observability/arch': ['pipeline', 'pipeline'], arch: ['pipeline', 'pipeline'] };
+  function switchTab(name) {
+    const a = TAB_ALIAS[name];
+    if (a) { switchGroup(a[0]); name = a[1]; }
+    const b = $$('.tabs button').find((x) => x.dataset.tab === name); if (b) b.click();
+  }
   function switchGroup(name) { const b = $$('.groups button').find((x) => x.dataset.group === name); if (b) b.click(); }
 
   // ---------------- sidebar: toggles (auto from server), presets, overrides ----------------
@@ -105,13 +165,21 @@ window.LW = (function () {
     const parts = ['q', 's', 't'].filter((k) => e[k]).map((k) => (AXIS_LABEL[k] + (e[k] > 0 ? ' 좋아짐' : ' 나빠짐')));
     return parts.length ? '\n\n[켜면] ' + parts.join(' · ') : '\n\n[켜도] 품질·속도·토큰에 뚜렷한 영향 없음';
   }
-  // 배지는 **이름 앞**에 온다. 눈이 왼쪽에서 오른쪽으로 읽으므로, 이름을 읽기 전에
-  // "켜면 무엇이 좋아지고 무엇을 내주나" 가 먼저 들어온다. 폭을 고정해 이름이 세로로 정렬된다.
+  // 배지는 **이름 뒤**, 줄의 오른쪽 끝에 온다 (2026-09-18, 요청 13). 예전에는 이름 앞에 두어 "켜면 무엇이 좋아지나" 를
+  // 먼저 읽게 했는데, 체크박스와 이름 사이에 배지가 끼어 이름이 들쭉날쭉해지고 "이 줄이 무엇인지" 를 찾는 눈이 더 느렸다.
+  // 지금은 [체크] 이름 …… 품↑ 속↓ 토↓ — 이름이 왼쪽에 정렬되고 세 축은 오른쪽 한 열에 고정된다 (CSS .fxs margin-left:auto).
+  // 툴팁(label title) 은 그대로: 설명 + effectText.
   function toggleRow(t, help) {
     return `<label data-t="${esc(t)}" title="${esc((help || '') + effectText(t))}">` +
       `<input type="checkbox" data-toggle="${t}">` +
-      `<span class="fxs">${effectBadges(t)}</span>` +
-      `<span class="tname">${esc(t)}</span></label>`;
+      `<span class="tname">${esc(t)}</span>` +
+      `<span class="fxs">${effectBadges(t)}</span></label>`;
+  }
+  // 토글 묶음 하나 = 사이드바 블록(.sb-block) 하나. 제목(.tg-title.sb-head) 클릭으로 접히고, 상태 키는 "tg:<묶음 키>".
+  function toggleGroupHtml(key, title, stage, hint, count, rowsHtml, perf) {
+    return `<div class="toggle-group sb-block ${perf ? 'perf' : ''}" data-g="${esc(key)}" data-sb="tg:${esc(key)}">` +
+      `<div class="tg-title sb-head" title="클릭: 접기/펼치기">${stage}${esc(title)} <small>(${count})</small></div>` +
+      `<div class="sb-body">${hint}${rowsHtml}</div></div>`;
   }
   function buildSidebar(j) {
     const box = $('#toggle-groups');
@@ -122,14 +190,13 @@ window.LW = (function () {
       g.toggles.forEach((t) => known.add(t));
       const stage = g.stage ? `<span class="tg-stage">${esc(g.stage)}</span>` : '';
       const hint = g.hint ? `<div class="tg-hint">${esc(g.hint)}</div>` : '';
-      return `<div class="toggle-group ${g.perf ? 'perf' : ''}" data-g="${g.key}">` +
-        `<div class="tg-title" title="클릭: 접기/펼치기">${stage}${esc(g.title)} <small>(${g.toggles.length})</small></div>${hint}` +
-        g.toggles.filter((t) => j.toggle_names.includes(t)).map((t) => toggleRow(t, j.toggle_help[t])).join('') + '</div>';
+      return toggleGroupHtml(g.key, g.title, stage, hint, g.toggles.length,
+        g.toggles.filter((t) => j.toggle_names.includes(t)).map((t) => toggleRow(t, j.toggle_help[t])).join(''), g.perf);
     }).join('');
     const rest = j.toggle_names.filter((t) => !known.has(t));
-    if (rest.length) box.innerHTML += `<div class="toggle-group" data-g="rest"><div class="tg-title">기타 <small>(${rest.length})</small></div>` +
-      rest.map((t) => toggleRow(t, j.toggle_help[t])).join('') + '</div>';
-    $$('#toggle-groups .tg-title').forEach((h) => h.onclick = () => h.parentElement.classList.toggle('collapsed'));
+    if (rest.length) box.innerHTML += toggleGroupHtml('rest', '기타', '', '', rest.length, rest.map((t) => toggleRow(t, j.toggle_help[t])).join(''), false);
+    // 접기/펴기는 #sidebar 위임 핸들러(initSidebar)가 처리한다 — 여기서는 저장된 접힘 상태만 다시 입힌다
+    applySidebarState();
     applyFxFilter();
     $$('[data-toggle]').forEach((cb) => cb.addEventListener('change', () => {
       // 사용자가 손으로 바꾼 값은 기억해 두고(프리셋을 껐다 켜도 유지), 프리셋이 정한 값과 다르면 프리셋 표시를 지운다
@@ -203,11 +270,108 @@ window.LW = (function () {
     const s = $('#fx-search');
     if (s) s.oninput = () => { FX.q = s.value; applyFxFilter(); };
   }
+  // ---------------- 사이드바 블록 접기/펴기 (2026-09-18, 요청 13) ----------------
+  // 모든 블록이 .sb-block[data-sb=키] > .sb-head + .sb-body 구조다 (정적 블록은 index.html, 토글 묶음은 buildSidebar).
+  // 상태 = { <키>: true|false, _default: true|false } — 키가 없는 블록은 _default 를 따른다.
+  // 저장: localStorage llmwiki.sidebar(즉시) + 프로파일 sidebar_collapsed('내 설정 저장' 시, 로그인 계정).
+  // 900px 이하(사이드바가 본문 위로 올라오는 폭 — CSS @media 와 같은 값)에서는 저장된 상태가 없으면 기본 접힘:
+  // 폰/좁은 창에서 토글 60여 개가 본문을 화면 밖으로 밀어내지 않게.
+  const SIDEBAR_NARROW_PX = 900;
+  const SIDEBAR = { collapsed: {}, loaded: false, toggles: '' };
+  // ---------------- 사이드바 '기능 토글' 블록: 간단히(compact) / 전체(full) (2026-09-18, §2.6 토글 이관) ----------------
+  // compact(기본): 토글 묶음(#toggle-groups)·배지 범례·축 필터를 숨기고 "이번 요청 오버라이드: 토글 n · 튜닝 m" 요약 +
+  //   '🧭 Pipeline 에서 편집' 버튼만 남긴다. 토글의 본 자리는 Pipeline 페이지(단계별 상세)다.
+  // full: 예전 배치. 체크박스([data-toggle])는 두 모드 모두 DOM 에 그대로 있으므로(숨김만) overrides()·프리셋·프로파일·CLI 동등 명령은
+  //   어느 쪽에서 바꿔도 같은 상태를 본다 — 상태는 하나다.
+  // 저장: localStorage llmwiki.sidebar_toggles(즉시) + 프로파일 sidebar_toggles('내 설정 저장', profiles.py ALLOWED · 기본 compact).
+  const SIDEBAR_TOGGLES_DEFAULT = 'compact';
+  function sidebarToggles() { return SIDEBAR.toggles === 'full' ? 'full' : SIDEBAR_TOGGLES_DEFAULT; }
+  function setSidebarToggles(mode, persist) {
+    SIDEBAR.toggles = mode === 'full' ? 'full' : 'compact';
+    applySidebarToggles();
+    if (persist !== false) { try { localStorage.setItem('llmwiki.sidebar_toggles', SIDEBAR.toggles); } catch (e) { /* ignore */ } }
+  }
+  function applySidebarToggles() {
+    const blk = $('#sidebar .sb-block[data-sb="toggles"]'); if (!blk) return;
+    const compact = sidebarToggles() === 'compact';
+    blk.classList.toggle('compact', compact);
+    const sw = $('#sb-toggles-mode');
+    if (sw) {
+      sw.textContent = compact ? '전체 보기' : '간단히';
+      sw.title = compact ? '토글 묶음 전체를 사이드바에 펼칩니다 (예전 배치 · 프로파일 sidebar_toggles=full). 상태는 이 브라우저에 남고 "내 설정 저장" 으로 계정에도 저장됩니다'
+        : '토글 묶음을 접고 "이번 요청 오버라이드" 요약만 남깁니다 (기본 · sidebar_toggles=compact). 토글 편집은 🧭 Pipeline 페이지에서';
+    }
+    refreshSidebarSummary();
+  }
+  // "이번 요청 오버라이드: 토글 n · 튜닝 m" — n = config 값과 다르게 체크된 토글 수, m = 요청 단위 튜닝/config 값 수 (Pipeline '이번 요청에만')
+  function refreshSidebarSummary() {
+    const txt = $('#sb-summary-text'); if (!txt) return;
+    const base = (STATE.settings && STATE.settings.toggles) || {};
+    const changed = $$('[data-toggle]').filter((cb) => cb.checked !== !!base[cb.dataset.toggle]).map((cb) => cb.dataset.toggle + '=' + (cb.checked ? 'on' : 'off'));
+    const tk = Object.keys(TUNING_OV).map((k) => k + '=' + TUNING_OV[k]).concat(Object.keys(SETTING_OV).map((k) => k + '=' + SETTING_OV[k]));
+    txt.textContent = '이번 요청 오버라이드: 토글 ' + changed.length + ' · 튜닝 ' + tk.length;
+    txt.title = (changed.length ? '토글 (config 값과 다른 것): ' + changed.join(', ') : '토글: config 값 그대로') + '\n' +
+      (tk.length ? '튜닝·설정 (이번 요청에만): ' + tk.join(', ') : '튜닝: tuning.json / config.json 값 그대로') +
+      '\n\n이 값들은 Ask 질의·⟲ 재실행·평가에 함께 실립니다. 편집: 🧭 Pipeline › 단계 상세';
+    txt.classList.toggle('has-ov', changed.length + tk.length > 0);
+  }
+  function sidebarState() { return Object.assign({}, SIDEBAR.collapsed); }
+  function setSidebarState(obj, persist) {
+    if (!obj || typeof obj !== 'object') return;
+    SIDEBAR.collapsed = {};
+    Object.keys(obj).forEach((k) => { SIDEBAR.collapsed[k] = !!obj[k]; });
+    SIDEBAR.loaded = true;
+    applySidebarState();
+    if (persist !== false) saveSidebarLocal();
+  }
+  function saveSidebarLocal() { try { localStorage.setItem('llmwiki.sidebar', JSON.stringify(SIDEBAR.collapsed)); } catch (e) { /* ignore */ } }
+  function loadSidebarLocal() {
+    if (SIDEBAR.loaded) return;
+    let saved = null; try { saved = JSON.parse(localStorage.getItem('llmwiki.sidebar') || 'null'); } catch (e) { saved = null; }
+    if (saved && typeof saved === 'object') { SIDEBAR.collapsed = {}; Object.keys(saved).forEach((k) => { SIDEBAR.collapsed[k] = !!saved[k]; }); }
+    else if (window.innerWidth < SIDEBAR_NARROW_PX) SIDEBAR.collapsed = { _default: true };
+    let tg = ''; try { tg = localStorage.getItem('llmwiki.sidebar_toggles') || ''; } catch (e) { tg = ''; }
+    SIDEBAR.toggles = tg === 'full' ? 'full' : SIDEBAR_TOGGLES_DEFAULT;
+    SIDEBAR.loaded = true;
+  }
+  function applySidebarState() {
+    const c = SIDEBAR.collapsed, def = !!c._default;
+    $$('#sidebar .sb-block').forEach((b) => {
+      const k = b.dataset.sb || '';
+      b.classList.toggle('collapsed', (k in c) ? !!c[k] : def);
+    });
+  }
+  function setSidebarAll(collapsed) {
+    SIDEBAR.collapsed = { _default: !!collapsed };
+    $$('#sidebar .sb-block').forEach((b) => { if (b.dataset.sb) SIDEBAR.collapsed[b.dataset.sb] = !!collapsed; });
+    applySidebarState(); saveSidebarLocal();
+  }
+  function initSidebar() {
+    const sb = $('#sidebar'); if (!sb) return;
+    loadSidebarLocal();
+    // 위임: 토글 묶음은 서버 목록이 바뀔 때마다 다시 만들어지므로 요소마다 핸들러를 달지 않는다
+    sb.addEventListener('click', (e) => {
+      const h = e.target.closest('.sb-head'); if (!h || !sb.contains(h)) return;
+      if (e.target.closest('button, input, select, a')) return;      // 제목 안의 조작 요소는 그대로
+      const b = h.closest('.sb-block'); if (!b) return;
+      const k = b.dataset.sb || ''; const now = !b.classList.contains('collapsed');
+      b.classList.toggle('collapsed', now);
+      if (k) { SIDEBAR.collapsed[k] = now; saveSidebarLocal(); }
+    });
+    const ca = $('#btn-sb-collapse-all'); if (ca) ca.onclick = () => setSidebarAll(true);
+    const ea = $('#btn-sb-expand-all'); if (ea) ea.onclick = () => setSidebarAll(false);
+    // 토글 블록 간단히/전체 스위치 + 'Pipeline 에서 편집' (compact 모드의 유일한 조작)
+    const sw = $('#sb-toggles-mode'); if (sw) sw.onclick = (e) => { e.stopPropagation(); setSidebarToggles(sidebarToggles() === 'compact' ? 'full' : 'compact'); };
+    const gp = $('#btn-sb-goto-pipeline'); if (gp) gp.onclick = () => switchGroup('pipeline');
+    applySidebarState();
+    applySidebarToggles();
+  }
   function markPresetToggles() {
     $$('[data-toggle]').forEach((cb) => {
       const t = cb.dataset.toggle, lab = cb.parentElement, by = t in PRESET.set;
       lab.classList.toggle('by-preset', by);
-      let s = lab.querySelector('.src'); if (by) { if (!s) { s = document.createElement('span'); s.className = 'src'; lab.appendChild(s); } s.textContent = '← ' + PRESET.src[t]; } else if (s) s.remove();
+      // 프리셋 출처(← name)는 이름과 배지 사이에 — 배지는 항상 줄의 오른쪽 끝이어야 한다
+      let s = lab.querySelector('.src'); if (by) { if (!s) { s = document.createElement('span'); s.className = 'src'; lab.insertBefore(s, lab.querySelector('.fxs')); } s.textContent = '← ' + PRESET.src[t]; } else if (s) s.remove();
       lab.title = (STATE.toggleHelp[t] || '') + effectText(t) + (by ? '\n\n[프리셋 ' + PRESET.src[t] + ' 이(가) ' + (PRESET.set[t] ? 'ON' : 'OFF') + ' 으로 정함 — 손으로 바꾸면 프리셋보다 우선하지 않고 서버에서 프리셋 값이 다시 적용됩니다. 다른 값을 쓰려면 프리셋 체크를 해제하세요]' : '');
     });
   }
@@ -234,11 +398,31 @@ window.LW = (function () {
   // 요청 단위 오버라이드. 프로바이더·모델은 여기서 다루지 않는다 (2026-09-17) —
   // Settings › 모델 · 프로바이더 가 유일한 자리다. 두 곳에서 같은 값을 받으면 어느 쪽이 적용됐는지
   // 알 수 없고, 사이드바 값은 저장되지 않아 "바꿨는데 왜 안 남지?" 가 된다.
+  // ---------------- 요청 단위 튜닝·config 값 오버라이드 (2026-09-18, IMPLEMENTATION_PLAN_0918_2 §2.6 Pipeline 페이지 '이번 요청에만') ----------------
+  // TUNING_OV: tuning.json 항목(source=tuning) → overrides.tuning = {키: 값}. 서버 request_scope 가 T.set 으로 검증·적용하고 파일에는 남지 않는다.
+  // SETTING_OV: config.json 항목(source=config, top_k_final·rrf_k 등) → 평면 overrides[키] (server.py OVERRIDE_SAFE_KEYS 가 허용하는 것만 통과).
+  // 둘 다 '이번 요청에만' 이므로 프로파일에는 저장하지 않는다. 토글 체크박스처럼 상태는 하나 — Ask/재실행/평가가 overrides() 로 함께 보낸다.
+  const TUNING_OV = {}, SETTING_OV = {};
+  function tuningOverrides() { return { tuning: Object.assign({}, TUNING_OV), settings: Object.assign({}, SETTING_OV) }; }
+  function setTuningOverride(key, value, source) {
+    if (!key) return;
+    const box = source === 'config' ? SETTING_OV : TUNING_OV;
+    if (value === undefined || value === null || value === '') delete box[key]; else box[key] = value;
+    updateCli(); if (loaders._toggleChanged) loaders._toggleChanged();
+  }
+  function clearTuningOverrides() {
+    Object.keys(TUNING_OV).forEach((k) => delete TUNING_OV[k]); Object.keys(SETTING_OV).forEach((k) => delete SETTING_OV[k]);
+    updateCli(); if (loaders._toggleChanged) loaders._toggleChanged();
+  }
   function overrides() {
     const ov = {};
     $$('[data-toggle]').forEach((cb) => { ov[cb.dataset.toggle] = cb.checked; });
     const dEl = $('#ov-debug'), dbg = dEl ? dEl.value : '';
     if (dbg !== '') ov.debug_level = parseInt(dbg, 10);
+    // Ask 의 출력 드롭다운 (#ov-output): 비어 있으면 config.json output_mode(answer) 를 따른다
+    const oEl = $('#ov-output'); if (oEl && oEl.value) ov.output_mode = oEl.value;
+    Object.keys(SETTING_OV).forEach((k) => { ov[k] = SETTING_OV[k]; });
+    if (Object.keys(TUNING_OV).length) ov.tuning = Object.assign({}, TUNING_OV);
     return ov;
   }
   function cliEquiv(cmd, q) {
@@ -252,6 +436,8 @@ window.LW = (function () {
       else if (k === 'embed_provider') parts.push('--embed-provider ' + ov[k]);
       else if (k === 'top_k_final') parts.push('--k ' + ov[k]);
       else if (k === 'debug_level') parts.push('--debug ' + ov[k]);
+      else if (k === 'output_mode') parts.push('--output ' + ov[k]);
+      else if (k === 'tuning') parts.push('--tuning ' + Object.keys(ov[k]).map((a) => a + '=' + ov[k][a]).join(','));   // 요청 단위 튜닝 오버레이 (server._cli_equiv 와 같은 표기)
       else parts.push('--' + k.replace(/_/g, '-') + ' ' + ov[k]);
     }
     const pn = presetNames(); if (pn.length) parts.push('--preset ' + pn.join(','));
@@ -262,10 +448,26 @@ window.LW = (function () {
     const ab = $('.tabs button.active'); const tab = ab ? ab.dataset.tab : 'query';
     const cmd = tab === 'build' ? 'build' : tab === 'eval' ? 'eval' : tab === 'trials' ? 'trial run' : 'query';
     $('#cli-equiv').textContent = cliEquiv(cmd, cmd === 'query' ? (($('#q') && $('#q').value) || '<질문>') : '');
+    refreshSidebarSummary();    // 토글·튜닝 오버라이드가 바뀌는 모든 길이 여기를 지난다 → 사이드바 요약도 같이
   }
   function setTogglesFrom(t) { PRESET.manual = {}; $$('[data-toggle]').forEach((cb) => { cb.checked = !!t[cb.dataset.toggle]; }); if (presetNames().length || modePreset()) applyPresets(); else { markPresetToggles(); updateCli(); } }
 
   // ---------------- status ----------------
+  // ---------------- 서버 설정이 바뀌었다는 한 줄 방송 (2026-09-19) ----------------
+  // Settings(모델·프로바이더 / config / 튜닝 / 프리셋) 와 🧭 Pipeline 은 **같은 서버 값**을 다른 화면으로 보여 준다.
+  // 한쪽에서 저장하면 다른 쪽이 캐시(PL.arch · TUN.rows · MODELS)를 들고 있다가 옛 값을 계속 보여 주던 문제가 있었다.
+  // 저장·초기화·재로드 뒤에 이 함수를 부르면 (1) STATE.settings 를 서버에서 다시 읽고 (2) 각 화면이 등록한
+  // 무효화 훅을 부르고 (3) 지금 보고 있는 탭을 다시 그린다. 화면끼리 서로를 직접 알 필요가 없다.
+  const RELOADERS = [];
+  function onSettingsChanged(fn) { RELOADERS.push(fn); }
+  async function settingsChanged(what) {
+    try { await loadStatus(); } catch (e) { console.error('settingsChanged/status', e); }
+    RELOADERS.forEach((fn) => { try { fn(what || ''); } catch (e) { console.error('settingsChanged', e); } });
+    // 지금 열려 있는 탭만 다시 그린다 (숨은 탭은 열릴 때 loader 가 돈다)
+    const ab = document.querySelector('.tabs:not(.hidden) button.active') || document.querySelector('.tabs button.active');
+    const key = ab && ab.dataset.tab;
+    if (key && loaders[key]) { try { loaders[key](); } catch (e) { console.error('settingsChanged/loader', key, e); } }
+  }
   async function loadStatus() {
     const j = await api('/api/status');
     // 401(로그인 이동)·네트워크 오류·점검 모드에서는 여기서 멈춘다. 예전에는 오류 객체로 계속 렌더하다 TypeError 가 나서
@@ -329,9 +531,43 @@ window.LW = (function () {
   }
 
   // ---------------- trace renderer ----------------
+  /** 앙상블 상세 — **멤버 하나하나와 취합 LLM 을 표로**.
+   *
+   * 예전에는 `model` 이 `llama3.1+llama3.1+llama3.1` 처럼 `+` 로 이어 붙은 것을 보고 사람이
+   * 유추해야 했다. "앙상블로 돌았나 · 몇이 성공했나 · 누가 느렸나 · 취합에 얼마나 더 썼나" 는
+   * meta JSON 을 펼쳐 읽어야만 알 수 있었다 (2026-09-20).
+   *
+   * 멤버는 **병렬**로 도므로 합이 단계 시간이 아니다 — 그래서 막대를 '가장 느린 멤버' 기준으로 그리고
+   * 그 사실을 적어 둔다. 순차로 보이면 "3배 걸렸다" 로 잘못 읽는다.
+   */
+  function ensembleBlock(e) {
+    if (!e || !e.members || !e.members.length) return '';
+    const base = Math.max(1, e.member_ms_max || 0, (e.aggregator || {}).ms || 0);
+    const row = (label, model, prov, ms, itok, otok, ok, err, kind) =>
+      `<tr class="${ok === false ? 'ens-bad' : ''}">`
+      + `<td class="small">${esc(label)}</td>`
+      + `<td class="small mono">${esc(model || '-')}${prov ? `<span class="muted"> · ${esc(prov)}</span>` : ''}</td>`
+      + `<td class="ens-barcell"><i class="ens-bar ${kind}" style="width:${Math.max(2, Math.round(100 * (ms || 0) / base))}%"></i></td>`
+      + `<td class="num small">${fmt(ms || 0)} ms</td>`
+      + `<td class="num small muted">${fmtK((itok || 0) + (otok || 0))} tok</td>`
+      + `<td class="small">${ok === false ? `<span class="errtxt" title="${esc(err || '')}">실패</span>` : ''}</td></tr>`;
+    let h = `<div class="mb ens"><b>앙상블</b>${e.role ? ` <span class="muted">역할 ${esc(e.role)}</span>` : ''} `
+      + `<span class="pill ${e.n_ok === e.n_members ? 'ok' : 'warn'}">멤버 ${e.n_ok}/${e.n_members} 성공</span> `
+      + (e.aggregated ? '<span class="pill">취합 1회</span>' : '<span class="pill warn" title="성공 멤버가 1개뿐이면 취합 없이 그 답을 그대로 씁니다">취합 없음</span>')
+      + (e.policy && e.policy.wait ? ` <span class="muted small">대기 ${esc(e.policy.wait)}</span>` : '')
+      + '<div class="tbl-wrap"><table class="ens-tbl"><tr><th></th><th>모델</th>'
+      + '<th title="멤버는 병렬로 돕니다 — 막대는 가장 느린 것 기준입니다">시간</th><th>ms</th><th>토큰</th><th></th></tr>';
+    e.members.forEach((m, i) => { h += row('멤버 ' + (i + 1), m.model, m.provider, m.ms, m.input_tokens, m.output_tokens, m.ok, m.error, 'mem'); });
+    if (e.aggregator) h += row('취합', e.aggregator.model, e.aggregator.provider, e.aggregator.ms, e.aggregator.input_tokens, e.aggregator.output_tokens, true, '', 'agg');
+    h += '</table></div><div class="muted small">멤버는 <b>동시에</b> 실행됩니다 — 단계 시간 ≈ 가장 느린 멤버 + 취합.</div></div>';
+    return h;
+  }
+
   function metaBlock(n) {
     const parts = [];
     const meta = Object.assign({}, n.meta || {}); delete meta.reason;
+    const ens = meta.ensemble; delete meta.ensemble;      // 표로 따로 그린다 (JSON 으로 두면 안 읽힌다)
+    if (ens) parts.push(ensembleBlock(ens));
     if (Object.keys(meta).length) parts.push(`<div class="mb"><b>meta</b><pre>${esc(JSON.stringify(meta, null, 1))}</pre></div>`);
     if (n.counters && Object.keys(n.counters).length) parts.push(`<div class="mb"><b>counters</b> ${esc(JSON.stringify(n.counters))}</div>`);
     if (n.debug && Object.keys(n.debug).length) parts.push(`<div class="mb dbg"><b>debug</b><pre>${esc(JSON.stringify(n.debug, null, 1))}</pre></div>`);
@@ -351,9 +587,30 @@ window.LW = (function () {
     el.insertBefore(bar, el.firstChild);
     $('[data-tr="open"]', bar).onclick = () => $$('.tr-row', el).forEach((r) => r.classList.add('open'));
     $('[data-tr="close"]', bar).onclick = () => $$('.tr-row', el).forEach((r) => r.classList.remove('open'));
-    $('[data-tr="copy"]', bar).onclick = async () => {
-      try { await navigator.clipboard.writeText(JSON.stringify(trace, null, 1)); toast('trace 를 클립보드에 복사했습니다'); } catch (e) { toast('복사 실패: ' + e); }
-    };
+    $('[data-tr="copy"]', bar).onclick = () => copyText(JSON.stringify(trace, null, 1), 'trace JSON');
+  }
+  // 단계 하나를 복사용 JSON 으로 — 이름·시간·meta·counters·debug·samples·logs·error 만 (children 은 뺀다: 그 줄 하나가 대상이다)
+  function stageJson(n) {
+    const o = {};
+    ['name', 'ms', 'self_ms', 'offset_ms', 'enabled', 'replayed', 'error'].forEach((k) => { if (n[k] !== undefined && n[k] !== null) o[k] = n[k]; });
+    ['meta', 'counters', 'debug', 'samples'].forEach((k) => { if (n[k] && Object.keys(n[k]).length) o[k] = n[k]; });
+    if (n.logs && n.logs.length) o.logs = n.logs;
+    return JSON.stringify(o, null, 1);
+  }
+  // 단계 요약을 마크다운 표로 — Ask '전체 복사' 와 리포트 붙여넣기용
+  function traceMarkdown(trace) {
+    if (!trace || !trace.ms) return '(단계 기록 없음)';
+    const md = (s) => String(s == null ? '' : s).replace(/\|/g, '\\|').replace(/\s+/g, ' ');
+    const total = trace.ms || 1, sm = trace.summary;
+    const L = [];
+    if (sm) L.push(`총 ${fmt(sm.total_ms)} ms · LLM 호출 ${sm.llm.calls} · 토큰 ${fmtK(sm.llm.total_tokens)} (in ${fmtK(sm.llm.input_tokens)} / out ${fmtK(sm.llm.output_tokens)}) · SQL ${sm.sql_statements} · debug ${trace.debug_level} · run ${trace.run_id || '-'}`, '');
+    L.push('| 단계 | ms | % | LLM | tokens in/out | 요약 |', '|---|---:|---:|---:|---|---|');
+    flatten(trace).filter((n) => n.depth > 0).forEach((n) => {
+      const c = n.counters || {}, skip = n.enabled === false;
+      const meta = Object.assign({}, n.meta || {}); delete meta.reason; const ms = JSON.stringify(meta);
+      L.push(`| ${'　'.repeat(Math.max(0, n.depth - 1))}${md(n.name)}${skip ? ' (' + md((n.meta || {}).reason || 'off') + ')' : ''}${n.replayed ? ' (재생)' : ''} | ${skip ? '—' : fmt(n.ms)} | ${skip ? '' : fmt(100 * n.ms / total, 1)} | ${c.llm_calls || ''} | ${c.llm_calls ? fmtK(c.llm_input_tokens || 0) + '/' + fmtK(c.llm_output_tokens || 0) : ''} | ${md(ms.slice(0, 160))}${ms.length > 160 ? '…' : ''} |`);
+    });
+    return L.join('\n');
   }
   // ---------------- 단계 재실행 (docs/RERUN.md) ----------------
   // 재시작점 표는 서버가 준다 (`GET /api/rerun`). 화면에 박아 두면 파이프라인이 바뀔 때 어긋난다.
@@ -366,6 +623,42 @@ window.LW = (function () {
     return RERUN;
   }
   function rerunLabel(id) { return ((RERUN.points || []).find((p) => p.id === id) || {}).label || id; }
+  // ---------------- 단계별 시간 제한 (llmwiki/architecture.py stage_limits) ----------------
+  // 실측 ms 만 보면 그게 여유 있는 값인지 제한에 거의 닿은 값인지 알 수 없다. 그래서 trace 의 ms 옆과
+  // 🧭 Pipeline 단계 카드에 **그 단계를 끊을 수 있는 제한**을 괄호로 같이 보여 준다. 정의는 서버 한 곳뿐이다.
+  const LIMITS = { trace: {}, stages: {}, flows: {}, roles: {}, loaded: false };
+  async function loadLimits() {
+    if (LIMITS.loaded) return LIMITS;
+    const j = await api('/api/limits');
+    if (j && !j.error) Object.assign(LIMITS, j);
+    LIMITS.loaded = true;
+    return LIMITS;
+  }
+  // 초 → 사람이 읽는 값. 0 이하는 '제한 없음'.
+  function fmtLimit(s) {
+    const v = Number(s) || 0;
+    if (v <= 0) return '∞';
+    if (v >= 86400) return (v / 86400 === Math.round(v / 86400) ? (v / 86400) : (v / 86400).toFixed(1)) + 'd';
+    if (v >= 3600) return (v / 3600 === Math.round(v / 3600) ? (v / 3600) : (v / 3600).toFixed(1)) + 'h';
+    if (v >= 60) return (v / 60 === Math.round(v / 60) ? (v / 60) : (v / 60).toFixed(1)) + 'm';
+    return v + 's';
+  }
+  // 단계 이름 → 대표 제한(첫 번째)과 전체 목록. trace 노드 이름이 그대로 키다.
+  function limitFor(name) { const rows = (LIMITS.trace || {})[name]; return rows && rows.length ? rows : null; }
+  function limitTitle(rows) {
+    return rows.map((x) => '· ' + x.label + ': ' + fmtLimit(x.s) + '  [' + x.file + ' ' + x.key + ']' + (x.note ? '\n    ' + x.note : '')).join('\n');
+  }
+  // 실측 ms 가 제한의 몇 %인가 — 80% 넘으면 경고색, 넘겼으면 위험색.
+  function limitPct(ms, s) { const v = Number(s) || 0; return v > 0 ? (Number(ms) || 0) / (v * 1000) : 0; }
+  // trace 한 줄의 ms 밑에 붙는 '(≤ 제한)' 칸. 제한을 모르면 아무것도 붙이지 않는다.
+  function limCell(n, skip) {
+    if (skip) return '';
+    const rows = limitFor(n.name);
+    if (!rows) return '';
+    const top = rows[0], p = limitPct(n.ms, top.s);
+    const cls = p >= 1 ? ' over' : p >= 0.8 ? ' near' : '';
+    return `<small class="tr-lim${cls}" title="이 단계를 끊을 수 있는 시간 제한\n${esc(limitTitle(rows))}">≤ ${esc(fmtLimit(top.s))}</small>`;
+  }
   // 실제 실행. 설정을 따로 주지 않으면 **왼쪽 사이드바의 지금 설정**(토글·오버라이드·프리셋)으로 돈다 —
   // 보통 질의와 같은 길이라 "사이드바에서 값을 바꾸고 ⟲ 를 누른다" 가 그대로 통한다.
   async function runRerun(requestId, point, extra, onDone) {
@@ -421,30 +714,44 @@ window.LW = (function () {
     if (!trace) { el.innerHTML = ''; return; }
     const rerunId = opts.rerun || null;      // 원 요청 id. 주면 각 단계에 ⟲ 가 붙는다
     if (rerunId && !RERUN.loaded) loadRerunPoints().then(() => renderTrace(el, trace, opts));
+    // 제한 표가 아직 없으면 한 번 받아 오고 다시 그린다 (없어도 실측은 그대로 보인다).
+    if (!LIMITS.loaded) loadLimits().then(() => renderTrace(el, trace, opts));
     const total = trace.ms || 1;
     const rows = [];
     (function walk(n, depth) { rows.push({ n, depth }); (n.children || []).forEach((c) => walk(c, depth + 1)); })(trace, 0);
     const sm = trace.summary;
     let head = '';
     if (sm) head = `<div class="tr-summary">총 <b>${fmt(sm.total_ms)} ms</b> · LLM 호출 <b>${sm.llm.calls}</b> · 토큰 <b>${fmtK(sm.llm.total_tokens)}</b> (in ${fmtK(sm.llm.input_tokens)} / out ${fmtK(sm.llm.output_tokens)}) · SQL <b>${sm.sql_statements}</b> · debug ${trace.debug_level} · run ${esc(trace.run_id || '-')} · 느린 단계: ${sm.slowest.slice(0, 3).map((x) => esc(x.name) + ' ' + x.pct + '%').join(', ')}${sm.errors.length ? ' · <span class="errtxt">오류 ' + sm.errors.length + '</span>' : ''}</div>`;
-    el.innerHTML = head + '<div class="trace">' + rows.map((r) => {
+    el.innerHTML = head + '<div class="trace">' + rows.map((r, i) => {
       const n = r.n, skip = n.enabled === false;
       const off = n.offset_ms || 0;
       const left = Math.min(100, (off / total) * 100), w = Math.max(0.4, (n.ms / total) * 100);
       const color = STAGE_COLOR[n.name] || (r.depth === 0 ? '#898781' : '#2a78d6');
       const pct = r.depth === 1 && !skip ? ` <small class="muted">${fmt(100 * n.ms / total, 0)}%</small>` : '';
       const c = n.counters || {};
-      const badges = (c.llm_calls ? `<span class="cnt llm" title="LLM 호출/토큰">llm ${c.llm_calls} · ${fmtK((c.llm_input_tokens || 0) + (c.llm_output_tokens || 0))} tok</span>` : '') + (c.sql ? `<span class="cnt" title="SQL 문 수">sql ${c.sql}</span>` : '');
+      // 앙상블 표시는 **글씨만** 둔다 (2026-09-20 요청). 테두리·배경이 있는 알약이면 막대와 같은 줄에서
+      // 타임라인 위의 조각처럼 읽혀 "단계가 이어지지 않는다" 로 보였다. 정보는 그대로 두고 모양만 뺀다.
+      const em = (n.meta || {}).ensemble;
+      const ensB = em ? `<span class="ens-txt ${em.n_ok === em.n_members ? '' : 'warn'}" title="앙상블${em.role ? ' (역할 ' + esc(em.role) + ')' : ''}: 멤버 ${em.n_members}개를 동시에 부르고${em.aggregated ? ' 취합 LLM 이 1회 더 합칩니다' : ' (성공이 1개뿐이라 취합 없이 그대로 씁니다)'}. 펼치면 멤버별 모델·시간·토큰이 보입니다">앙상블 ${em.n_ok}/${em.n_members}${em.aggregated ? '+취합' : ''}</span>` : '';
+      // 배지는 **한 덩어리로 묶어서** 오른쪽에 붙인다 (2026-09-20).
+      //   예전에는 배지마다 `margin-left:auto` 가 걸려 있었는데, flex 에서 auto 여백이 여러 개면
+      //   남는 공간이 그 사이에 **나눠진다**. 그래서 배지가 2개인 줄만 첫 배지가 timeline 과 아무 상관 없는
+      //   가운데 자리로 밀려났고, 파란 앙상블 배지가 막대처럼 보여 "단계가 안 이어진다" 로 읽혔다.
+      const badgeItems = ensB + (c.llm_calls ? `<span class="cnt llm" title="LLM 호출/토큰">llm ${c.llm_calls} · ${fmtK((c.llm_input_tokens || 0) + (c.llm_output_tokens || 0))} tok</span>` : '') + (c.sql ? `<span class="cnt" title="SQL 문 수">sql ${c.sql}</span>` : '');
+      const badges = badgeItems ? `<span class="tr-badges">${badgeItems}</span>` : '';
       // 단계 재실행(⟲): 이 단계부터 저장된 중간 결과로 다시 돌린다 (docs/RERUN.md).
       // 재시작점이 없는 단계(sync_index 처럼 되돌릴 의미가 없는 것)에는 달지 않는다.
       const pt = rerunId ? (RERUN.stage_point || {})[n.name] : null;
       const rr = pt ? `<button class="tr-rerun" data-rerun="${esc(pt)}" data-stage="${esc(n.name)}" title="이 단계부터 다시 실행 — 지금 사이드바 설정으로 바로 실행합니다 (앞 단계는 저장된 결과를 재생).&#10;Shift 또는 Alt 를 누른 채 클릭하면 이번 실행에만 쓸 설정을 직접 적을 수 있습니다.">⟲</button>` : '';
       const rep = n.replayed ? ' <span class="pill replay" title="계산하지 않고 저장된 결과를 그대로 썼습니다">재생</span>' : '';
-      return `<div class="tr-row ${n.error ? 'has-err' : ''}${n.replayed ? ' replayed' : ''}"><div class="tr-name ${skip ? 'skip' : ''}" style="padding-left:${r.depth * 14}px" title="클릭: 상세">${rr}${esc(n.name)}${skip ? ' <small>(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}${rep}${pct}</div>` +
+      // 단계 복사(⧉): 이 줄의 이름·ms·meta·debug 를 JSON 으로 (요청 16). ⟲ 와 같은 자리, 같은 흐림 규칙.
+      const cp = `<button class="tr-copy" data-i="${i}" title="이 단계 복사 — 이름·ms·meta·counters·debug 를 JSON 으로 클립보드에">⧉</button>`;
+      return `<div class="tr-row ${n.error ? 'has-err' : ''}${n.replayed ? ' replayed' : ''}"><div class="tr-name ${skip ? 'skip' : ''}" style="padding-left:${r.depth * 14}px" title="클릭: 상세">${rr}${cp}${esc(n.name)}${skip ? ' <small>(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}${rep}${pct}</div>` +
         `<div class="tr-bar">${skip ? '' : `<i class="${n.error ? 'err' : ''}" style="left:${left}%;width:${w}%;background:${n.error ? '' : color}"></i>`}${badges}</div>` +
-        `<div class="tr-ms">${skip ? '—' : fmt(n.ms) + ' ms'}</div><div class="tr-meta">${metaBlock(n)}</div></div>`;
+        `<div class="tr-ms">${skip ? '—' : fmt(n.ms) + ' ms'}${limCell(n, skip)}</div><div class="tr-meta">${metaBlock(n)}</div></div>`;
     }).join('') + '</div>';
     $$('.tr-name', el).forEach((d) => d.onclick = () => d.parentElement.classList.toggle('open'));
+    $$('.tr-copy', el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); const r = rows[parseInt(b.dataset.i, 10)]; if (r) copyText(stageJson(r.n), '단계 ' + r.n.name); });
     // 그냥 클릭 = 지금 설정으로 **바로 실행**. Shift/Alt + 클릭 = 이번만 쓸 설정을 적는 창.
     // (창을 항상 띄우면 "값 하나 바꾸고 눌러 본다" 는 흐름이 매번 한 단계 늘어난다.)
     $$('.tr-rerun', el).forEach((b) => b.onclick = (e) => {
@@ -459,12 +766,15 @@ window.LW = (function () {
   function renderStageTable(el, trace, other) {
     const total = trace.ms || 1, flat = flatten(trace);
     const om = {}; if (other) flatten(other).forEach((n) => { om[n.name + '@' + n.depth] = n; });
-    el.innerHTML = '<table class="stage-table"><tr><th>단계</th><th>ms</th><th>self</th><th>%</th><th>offset</th><th>SQL</th><th>LLM</th><th>tokens in/out</th>' + (other ? '<th>비교 ms</th><th>Δ</th>' : '') + '<th>요약</th></tr>' +
+    if (!LIMITS.loaded) loadLimits().then(() => renderStageTable(el, trace, other));
+    el.innerHTML = '<table class="stage-table"><tr><th>단계</th><th>ms</th><th title="이 단계를 끊을 수 있는 시간 제한 (config.json llm_roles / server.json timeouts)">제한</th><th>self</th><th>%</th><th>offset</th><th>SQL</th><th>LLM</th><th>tokens in/out</th>' + (other ? '<th>비교 ms</th><th>Δ</th>' : '') + '<th>요약</th></tr>' +
       flat.filter((n) => n.depth > 0).map((n) => {
         const c = n.counters || {}, skip = n.enabled === false; const o = om[n.name + '@' + n.depth];
         const meta = Object.assign({}, n.meta || {}); delete meta.reason; const ms = JSON.stringify(meta);
         const d = o && !skip ? n.ms - (o.ms || 0) : null;
-        return `<tr class="${skip ? 'skip' : ''}"><td style="padding-left:${8 + n.depth * 12}px">${esc(n.name)}${skip ? ' <small class="muted">(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}</td><td class="num">${skip ? '—' : fmt(n.ms)}</td><td class="num">${skip ? '' : fmt(n.self_ms)}</td><td class="num">${skip ? '' : fmt(100 * n.ms / total, 1)}</td><td class="num">${skip ? '' : fmt(n.offset_ms, 0)}</td><td class="num">${c.sql || ''}</td><td class="num">${c.llm_calls || ''}</td><td class="num">${c.llm_calls ? fmtK(c.llm_input_tokens || 0) + '/' + fmtK(c.llm_output_tokens || 0) : ''}</td>` +
+        const lrows = limitFor(n.name), lp = lrows ? limitPct(n.ms, lrows[0].s) : 0;
+        const lcell = (!lrows || skip) ? '' : `<span class="tr-lim${lp >= 1 ? ' over' : lp >= 0.8 ? ' near' : ''}" title="${esc(limitTitle(lrows))}">${esc(fmtLimit(lrows[0].s))}</span>`;
+        return `<tr class="${skip ? 'skip' : ''}"><td style="padding-left:${8 + n.depth * 12}px">${esc(n.name)}${skip ? ' <small class="muted">(' + esc((n.meta || {}).reason || 'off') + ')</small>' : ''}</td><td class="num">${skip ? '—' : fmt(n.ms)}</td><td class="num">${lcell}</td><td class="num">${skip ? '' : fmt(n.self_ms)}</td><td class="num">${skip ? '' : fmt(100 * n.ms / total, 1)}</td><td class="num">${skip ? '' : fmt(n.offset_ms, 0)}</td><td class="num">${c.sql || ''}</td><td class="num">${c.llm_calls || ''}</td><td class="num">${c.llm_calls ? fmtK(c.llm_input_tokens || 0) + '/' + fmtK(c.llm_output_tokens || 0) : ''}</td>` +
           (other ? `<td class="num">${o ? fmt(o.ms) : '-'}</td><td class="num ${d > 0 ? 'worse' : d < 0 ? 'better' : ''}">${d == null ? '' : (d > 0 ? '+' : '') + fmt(d)}</td>` : '') + `<td class="muted small mono">${esc(ms.slice(0, 160))}${ms.length > 160 ? '…' : ''}</td></tr>`;
       }).join('') + '</table>';
   }
@@ -519,10 +829,7 @@ window.LW = (function () {
     const cb = $('.live-cancel', el);
     if (cb) cb.onclick = async () => { cb.disabled = true; cb.textContent = '중지 중…'; await cancelToken(token, 'web'); };
     const cp = $('.live-copy', el);
-    if (cp) cp.onclick = async () => {
-      const txt = (live.label ? live.label + '\n' : '') + (el._log || []).join('\n');
-      try { await navigator.clipboard.writeText(txt); toast('로그 %d줄을 복사했습니다'.replace('%d', (el._log || []).length)); } catch (e) { toast('복사 실패: ' + e); }
-    };
+    if (cp) cp.onclick = () => copyText((live.label ? live.label + '\n' : '') + (el._log || []).join('\n'), '진행 로그 ' + (el._log || []).length + '줄');
     const cl = $('.live-close', el);
     if (cl) cl.onclick = () => { el.classList.add('hidden'); el.innerHTML = ''; };
     const lg = $('.live-log', el);
@@ -601,7 +908,11 @@ window.LW = (function () {
   }
   function applyHash() {
     const parts = (location.hash || '').replace(/^#/, '').split('/');
-    const g = parts[0] || '', t = parts[1] || '';
+    let g = parts[0] || '', t = parts[1] || '';
+    // 없어진 탭의 예전 주소를 새 자리로 보낸다 (북마크·문서 링크가 빈 화면으로 끝나지 않게).
+    // observability/arch(구조·흐름)는 2026-09-19 에 🧭 Pipeline 으로 흡수됐다.
+    const alias = TAB_ALIAS[g + '/' + t] || TAB_ALIAS[t];
+    if (alias) { g = alias[0]; t = alias[1]; }
     const gb = $$('.groups button').find((x) => x.dataset.group === g);
     if (gb) { selectGroup(gb, t); return true; }
     if (t || g) { const tb = $$('.tabs button').find((x) => x.dataset.tab === (t || g)); if (tb) { const grp = $$('.groups button').find((x) => x.dataset.group === tb.parentElement.dataset.group); if (grp) { selectGroup(grp, tb.dataset.tab); return true; } } }
@@ -759,13 +1070,15 @@ window.LW = (function () {
     $$('[data-toggle]').forEach((cb) => { tg[cb.dataset.toggle] = cb.checked; });
     const ov = {};
     // 예전 프로파일에 남아 있는 ov-llm 등은 그냥 무시된다 (아래 복원도 있는 요소에만 값을 넣는다)
-    ['ov-debug'].forEach((id) => { const e = $('#' + id); if (e) ov[id] = e.value; });
+    ['ov-debug', 'ov-output'].forEach((id) => { const e = $('#' + id); if (e) ov[id] = e.value; });
     let theme = 'light'; try { theme = localStorage.getItem('llmwiki.theme') || 'light'; } catch (e) { /* ignore */ }
     const s = navState();
     return { theme: theme, toggles: tg, presets: presetNames(), overrides: ov, pins: PINS.slice(),
              pinview: { cols: PINVIEW.cols, height: PINVIEW.height,
                         wide: Object.assign({}, PINVIEW.wide), collapsed: Object.assign({}, PINVIEW.collapsed) },
              split: PINVIEW.cols === '2',          // 이전 버전과의 호환용
+             sidebar_collapsed: sidebarState(),    // 사이드바 블록 접힘 상태 (요청 13) — 서버 profiles.ALLOWED 에도 있어야 저장된다
+             sidebar_toggles: sidebarToggles(),    // 토글 블록 배치 compact|full (§2.6) — profiles.ALLOWED · 기본 compact
              mode: ($('#q-mode') || {}).value || '', group: s.group, tab: s.tab };
   }
   function applyProfile(p) {
@@ -779,6 +1092,8 @@ window.LW = (function () {
     if (p.mode && $('#q-mode')) $('#q-mode').value = p.mode;
     if (p.pinview) setPinView(p.pinview);
     else if (typeof p.split === 'boolean') PINVIEW.cols = p.split ? '2' : 'auto';   // 이전 버전 프로파일
+    if (p.sidebar_collapsed && typeof p.sidebar_collapsed === 'object') setSidebarState(p.sidebar_collapsed);
+    if (p.sidebar_toggles === 'full' || p.sidebar_toggles === 'compact') setSidebarToggles(p.sidebar_toggles);
     (p.pins || []).filter((k) => $('#tab-' + k) && !isPinned(k)).forEach(togglePin);
     applyPinView();
     if (p.presets && p.presets.length) applyPresets(); else { markPresetToggles(); updateCli(); }
@@ -830,7 +1145,8 @@ window.LW = (function () {
     initNav();
     initTheme();
     initFxFilter();
-    ['#ov-debug'].forEach((s) => { const e = $(s); if (e) e.addEventListener('change', updateCli); });
+    initSidebar();
+    ['#ov-debug', '#ov-output'].forEach((s) => { const e = $(s); if (e) e.addEventListener('change', updateCli); });
     // 값이 있는 입력칸을 × 로 비운다 (datalist 입력은 값이 남아 있으면 목록이 그 값으로 걸러진다)
     $$('[data-clear]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.clear); if (!i) return; i.value = ''; i.dispatchEvent(new Event('change', { bubbles: true })); i.focus(); });
     $('#btn-reset-toggles').onclick = () => setTogglesFrom(STATE.settings.toggles);
@@ -944,5 +1260,9 @@ window.LW = (function () {
   }
   return { $, $$, esc, fmt, fmtK, ts, dt, PALETTE, STAGE_COLOR, STATE, loaders, toast, api, switchTab, switchGroup, overrides, presetNames, applyPresets, cliEquiv, updateCli, setTogglesFrom, loadStatus, metaBlock, renderTrace, flatten, renderStageTable, pollJob, renderLive, watchProgress, fmtS, stepUp, cancelToken, gotoLogin, applyHash, togglePin, tabVisible, myJobs: MY_JOBS, saveProfile, loadProfile, boot, fmtDur,
            openRerun, runRerun, loadRerunPoints,
+           LIMITS, loadLimits, fmtLimit, limitFor, limitTitle, limitPct,
+           settingsChanged, onSettingsChanged,
+           copyText, copyModal, stageJson, traceMarkdown, sidebarState, setSidebarState, setSidebarAll,
+           sidebarToggles, setSidebarToggles, refreshSidebarSummary, tuningOverrides, setTuningOverride, clearTuningOverrides,
            onActivity, refreshActivity: () => activityTick(true), onReady: [] };
 })();

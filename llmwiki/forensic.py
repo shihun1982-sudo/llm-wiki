@@ -68,8 +68,13 @@ def diagnose(trace: Dict[str, Any], result: Dict[str, Any], settings: Any = None
         reason = gr["meta"].get("reason", "")
         add("graph_search", "그래프 0건 — %s" % (reason or "시드 엔티티 없음"), gr["meta"])
         if "no entity" in reason:
+            # 2026-09-19: 예전에는 `alias` 종류로 {"alias": k} 만 올렸다. 그런데 alias 적용은 payload["entity"]
+            # (별칭을 붙일 **대상 엔티티**) 를 반드시 쓰므로, 이 제안들은 승인해도 전부 KeyError 로 failed 가 됐다
+            # (실제 DB 에 그런 제안이 24건 쌓여 있었다). 여기는 애초에 "질의에 맞는 엔티티가 하나도 없다" 는 상황이라
+            # 붙일 대상 자체가 없다 — 그러므로 올바른 종류는 **새 엔티티 등록**(entity) 이다.
             for k in kws[:2]:
-                suggest("alias", "'%s' 를 엔티티/별칭으로 등록 (data/rules.json)" % k, 0.45, {"alias": k})
+                suggest("entity", "'%s' 를 새 엔티티로 등록 (data/rules.json) — 질의에 맞는 엔티티가 하나도 없음" % k,
+                        0.45, {"name": k, "type": "concept", "aliases": []})
     # ---- 확장 ----
     qr = _stage(flat, "query_rules")
     if qr and qr["enabled"] and not (qr["meta"].get("fired") or 0):
@@ -148,9 +153,42 @@ def record(store, request_id: Optional[int], run_id: str, query: str, verdict: s
     return int(cur.lastrowid)
 
 
-def list_forensics(store, limit: int = 50) -> List[Dict[str, Any]]:
+#: "문제" 로 볼 판정 — 포렌식 화면의 **기본 보기**다.
+#:
+#: 왜 기본을 좁히나 (2026-09-20): 이 저장소의 실제 기록 1,122건 중 **1,025건이 `sufficient`**,
+#: 즉 잘 된 질의였다. 최근 60건을 그냥 보여 주면 화면이 정상 건으로 덮여 "왜 답이 부실했나" 를
+#: 보러 온 사람이 찾는 것을 하나도 못 본다. 목록은 **볼 이유가 있는 것**부터 보여 준다.
+PROBLEM_VERDICTS = ("insufficient", "weak", "expectation", "error", "?")
+
+
+def list_forensics(store, limit: int = 50, verdict: Any = None, q: str = "",
+                   only_problems: bool = False) -> List[Dict[str, Any]]:
+    """포렌식 기록 목록.
+
+    verdict        : 판정 필터 — 문자열("weak") 또는 목록(["weak","insufficient"]). 빈 값이면 전부.
+    only_problems  : True 면 PROBLEM_VERDICTS 만 (verdict 가 있으면 그쪽이 우선).
+    q              : 질의문 부분 일치 (대소문자 무시).
+    """
+    want = None
+    if verdict:
+        want = [str(v).strip() for v in (verdict if isinstance(verdict, (list, tuple, set)) else str(verdict).split(",")) if str(v).strip()]
+    elif only_problems:
+        want = list(PROBLEM_VERDICTS)
+    sql = "SELECT * FROM forensics"
+    args: List[Any] = []
+    where = []
+    if want:
+        where.append("verdict IN (%s)" % ",".join("?" * len(want)))
+        args += want
+    if q:
+        where.append("LOWER(query) LIKE ?")
+        args.append("%" + str(q).lower() + "%")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(int(limit))
     out = []
-    for r in store.conn.execute("SELECT * FROM forensics ORDER BY id DESC LIMIT ?", (limit,)):
+    for r in store.conn.execute(sql, tuple(args)):
         d = dict(r)
         for k in ("findings", "suggestions", "topics"):
             try:
@@ -158,6 +196,21 @@ def list_forensics(store, limit: int = 50) -> List[Dict[str, Any]]:
             except Exception:
                 d[k] = []
         out.append(d)
+    return out
+
+
+def verdict_counts(store) -> Dict[str, int]:
+    """판정별 **전체** 건수 (목록 상한과 무관) — 화면의 필터 칩에 숫자를 붙이기 위한 것.
+
+    예전에는 최근 N건만 세어서 "weak 2건" 처럼 보였다. 실제로는 76건이었고, 그 차이 때문에
+    문제가 적은 줄 알고 넘어가게 된다.
+    """
+    out: Dict[str, int] = {}
+    try:
+        for v, n in store.conn.execute("SELECT COALESCE(verdict,'?'), COUNT(*) FROM forensics GROUP BY 1"):
+            out[str(v)] = int(n)
+    except Exception:
+        pass
     return out
 
 
@@ -181,7 +234,15 @@ def summary(store, limit: int = 500) -> Dict[str, Any]:
         for f in r["findings"]:
             if f.get("severity") in ("warn", "error"):
                 stages[f.get("stage", "?")] = stages.get(f.get("stage", "?"), 0) + 1
-    return {"n": len(rows), "by_verdict": by_verdict, "top_topics": sorted(topics.items(), key=lambda kv: -kv[1])[:20],
+    # 판정 건수는 **전체**를 센다 (위 rows 는 최근 limit 건뿐이라 "weak 2건" 처럼 축소돼 보였다).
+    all_counts = verdict_counts(store) or by_verdict
+    n_all = sum(all_counts.values())
+    n_prob = sum(v for k, v in all_counts.items() if k in PROBLEM_VERDICTS)
+    return {"n": n_all, "n_scanned": len(rows), "by_verdict": all_counts,
+            "problem_verdicts": list(PROBLEM_VERDICTS),
+            "n_problems": n_prob,
+            "problem_rate": round(n_prob / n_all, 3) if n_all else 0.0,
+            "top_topics": sorted(topics.items(), key=lambda kv: -kv[1])[:20],
             "suggestion_kinds": kinds, "problem_stages": sorted(stages.items(), key=lambda kv: -kv[1])}
 
 
@@ -620,7 +681,7 @@ def trace_expectation(pipe, request_id: int, docs: Optional[List[str]] = None, t
     if propose:
         ids = []
         for sg in suggestions:
-            if sg["kind"] in ("pin", "query_rule", "corpus_gap", "tuning", "alias"):
+            if sg["kind"] in ("pin", "query_rule", "corpus_gap", "tuning", "alias", "entity"):
                 ids.append(store.add_proposal(sg["kind"], dict(sg["payload"]), "forensic expect #%s: %s" % (request_id, sg["detail"][:120]), float(sg["confidence"]), "expectation"))
         report["proposals"] = ids
     return report

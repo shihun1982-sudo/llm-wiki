@@ -1,0 +1,244 @@
+{
+ "rows": [
+  {
+   "name": "관리자 계정 준비",
+   "ok": true,
+   "detail": "['added loadadmin role=admin']"
+  },
+  {
+   "name": "초기 빌드",
+   "ok": true,
+   "detail": "['ALERTS: [{\"level\": \"warn\", \"check\": \"schema_lint\", \"detail\": \"80 docs with schema errors (corpus lint 로 확인)\"}]']"
+  },
+  {
+   "name": "서버 기동",
+   "ok": true,
+   "detail": "http://127.0.0.1:8975"
+  },
+  {
+   "name": "관리자 로그인",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "확인 없이 채널 리빌드 → 막힘",
+   "ok": true,
+   "detail": "HTTP 428 리빌드 작업 확인이 필요합니다: build channel fts"
+  },
+  {
+   "name": "증분 빌드 · 빌드 성공",
+   "ok": true,
+   "detail": "0.3s"
+  },
+  {
+   "name": "증분 빌드 · 질의 실패 0건",
+   "ok": true,
+   "detail": "성공 940 · 거절 0 · 실패 0 "
+  },
+  {
+   "name": "증분 빌드 · 질의 거절 0건",
+   "ok": true,
+   "detail": "거절 0/940 (0.0%)"
+  },
+  {
+   "name": "증분 빌드 · 빌드 뒤 질의 정상",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "채널 빌드 fts · 빌드 성공",
+   "ok": true,
+   "detail": "0.3s"
+  },
+  {
+   "name": "채널 빌드 fts · 질의 실패 0건",
+   "ok": true,
+   "detail": "성공 860 · 거절 0 · 실패 0 "
+  },
+  {
+   "name": "채널 빌드 fts · 질의 거절 0건",
+   "ok": true,
+   "detail": "거절 0/860 (0.0%)"
+  },
+  {
+   "name": "채널 빌드 fts · 빌드 뒤 질의 정상",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "채널 빌드 vector · 빌드 성공",
+   "ok": true,
+   "detail": "2.2s"
+  },
+  {
+   "name": "채널 빌드 vector · 질의 실패 0건",
+   "ok": true,
+   "detail": "성공 1548 · 거절 0 · 실패 0 "
+  },
+  {
+   "name": "채널 빌드 vector · 질의 거절 0건",
+   "ok": true,
+   "detail": "거절 0/1548 (0.0%)"
+  },
+  {
+   "name": "채널 빌드 vector · 빌드 뒤 질의 정상",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "채널 빌드 graph · 빌드 성공",
+   "ok": true,
+   "detail": "0.3s"
+  },
+  {
+   "name": "채널 빌드 graph · 질의 실패 0건",
+   "ok": true,
+   "detail": "성공 815 · 거절 0 · 실패 0 "
+  },
+  {
+   "name": "채널 빌드 graph · 질의 거절 0건",
+   "ok": true,
+   "detail": "거절 0/815 (0.0%)"
+  },
+  {
+   "name": "채널 빌드 graph · 빌드 뒤 질의 정상",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "전체 리빌드 · 빌드 성공",
+   "ok": true,
+   "detail": "0.7s"
+  },
+  {
+   "name": "전체 리빌드 · 질의 실패 0건",
+   "ok": true,
+   "detail": "성공 823 · 거절 0 · 실패 0 "
+  },
+  {
+   "name": "전체 리빌드 · 질의 거절 0건",
+   "ok": true,
+   "detail": "거절 0/823 (0.0%)"
+  },
+  {
+   "name": "전체 리빌드 · 빌드 뒤 질의 정상",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "빌드 뒤 색인 무결성",
+   "ok": true,
+   "detail": "문제 없음"
+  }
+ ],
+ "summary": {
+  "증분 빌드": {
+   "ok": 940,
+   "rejected": 0,
+   "failed": 0,
+   "errors": {},
+   "n": 940,
+   "p50_ms": 21.0,
+   "p95_ms": 98.9,
+   "max_ms": 1192.8,
+   "build_s": 0.3,
+   "build_error": "",
+   "during": {
+    "n": 106,
+    "ok": 106,
+    "rejected": 0,
+    "failed": 0,
+    "p50_ms": 15.4,
+    "p95_ms": 43.6,
+    "max_ms": 143.2
+   }
+  },
+  "채널 빌드 fts": {
+   "ok": 860,
+   "rejected": 0,
+   "failed": 0,
+   "errors": {},
+   "n": 860,
+   "p50_ms": 20.3,
+   "p95_ms": 167.3,
+   "max_ms": 1291.9,
+   "build_s": 0.3,
+   "build_error": "",
+   "during": {
+    "n": 90,
+    "ok": 90,
+    "rejected": 0,
+    "failed": 0,
+    "p50_ms": 20.9,
+    "p95_ms": 70.6,
+    "max_ms": 126.3
+   }
+  },
+  "채널 빌드 vector": {
+   "ok": 1548,
+   "rejected": 0,
+   "failed": 0,
+   "errors": {},
+   "n": 1548,
+   "p50_ms": 22.2,
+   "p95_ms": 95.2,
+   "max_ms": 4870.3,
+   "build_s": 2.2,
+   "build_error": "",
+   "during": {
+    "n": 766,
+    "ok": 766,
+    "rejected": 0,
+    "failed": 0,
+    "p50_ms": 21.6,
+    "p95_ms": 80.2,
+    "max_ms": 1321.2
+   }
+  },
+  "채널 빌드 graph": {
+   "ok": 815,
+   "rejected": 0,
+   "failed": 0,
+   "errors": {},
+   "n": 815,
+   "p50_ms": 22.1,
+   "p95_ms": 197.2,
+   "max_ms": 1520.8,
+   "build_s": 0.3,
+   "build_error": "",
+   "during": {
+    "n": 71,
+    "ok": 71,
+    "rejected": 0,
+    "failed": 0,
+    "p50_ms": 38.8,
+    "p95_ms": 120.5,
+    "max_ms": 138.8
+   }
+  },
+  "전체 리빌드": {
+   "ok": 823,
+   "rejected": 0,
+   "failed": 0,
+   "errors": {},
+   "n": 823,
+   "p50_ms": 23.2,
+   "p95_ms": 530.3,
+   "max_ms": 2159.6,
+   "build_s": 0.7,
+   "build_error": "",
+   "during": {
+    "n": 27,
+    "ok": 27,
+    "rejected": 0,
+    "failed": 0,
+    "p50_ms": 555.7,
+    "p95_ms": 601.6,
+    "max_ms": 613.7
+   }
+  }
+ },
+ "users": 30,
+ "ok": 26,
+ "n": 26
+}

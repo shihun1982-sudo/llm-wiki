@@ -57,7 +57,10 @@ CREATE TABLE IF NOT EXISTS communities (
 );
 CREATE TABLE IF NOT EXISTS query_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, query TEXT, config TEXT, top_chunks TEXT,
-  answer TEXT, scores TEXT, trace TEXT, feedback INTEGER, note TEXT
+  answer TEXT, scores TEXT, trace TEXT, feedback INTEGER, note TEXT,
+  -- 2026-09-19: 누가 물었나. requests 와 같은 필드 이름을 쓴다 (Observability 질의·로그의 '사용자' 열).
+  user TEXT DEFAULT '', role TEXT DEFAULT '', origin TEXT DEFAULT '', via TEXT DEFAULT '',
+  ip TEXT DEFAULT '', agent TEXT DEFAULT '', request_id INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, payload TEXT, reason TEXT,
@@ -127,6 +130,18 @@ MIGRATIONS = [
     ("proposals", "strength", "REAL DEFAULT 1.0"),   # memory decay
     ("proposals", "last_reinforced", "REAL DEFAULT 0"),
     ("proposals", "hits", "INTEGER DEFAULT 1"),
+    # 2026-09-19: 질의 로그에도 '누가' 를 남긴다. 예전에는 requests 에만 있어서 Observability 질의·로그에서
+    # 어떤 사용자가 무엇을 물었는지 볼 수 없었고, 피드백(👍/👎)이 누구 것인지도 추적할 수 없었다.
+    ("query_log", "user", "TEXT DEFAULT ''"),
+    ("query_log", "role", "TEXT DEFAULT ''"),
+    ("query_log", "origin", "TEXT DEFAULT ''"),    # web | api | cli | mcp | schedule | watch
+    ("query_log", "via", "TEXT DEFAULT ''"),       # 로그인 방법: local | oidc | header | apikey | anon
+    ("query_log", "ip", "TEXT DEFAULT ''"),
+    ("query_log", "agent", "TEXT DEFAULT ''"),     # User-Agent 앞 100자
+    ("query_log", "request_id", "INTEGER DEFAULT 0"),   # requests 테이블의 같은 실행
+    # 2026-09-19: 문서 스스로 매긴 접근 등급 (front matter `acl:`). extra JSON 에 두지 않고 컬럼으로 뽑는 이유는
+    # doc_meta_map() 이 문서 수천 개의 값을 매 질의마다 읽기 때문이다 — JSON 을 전부 파싱하면 접근 제어가 비싸진다.
+    ("doc_meta", "acl", "TEXT DEFAULT ''"),
 ]
 
 
@@ -140,13 +155,24 @@ class Store:
     - 벡터 행렬·엔티티 인덱스·doc_meta 캐시는 인스턴스 하나에 공유되며(읽기 전용 numpy), 적재는 락으로 한 번만 한다.
     """
 
-    def __init__(self, path: str, busy_timeout_s: float = 30.0, pool_size: int = 16):
+    def __init__(self, path: str, busy_timeout_s: float = 30.0, pool_size: int = 16,
+                 max_live: int = 64, wait_timeout_s: float = 2.0):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.path = path
         self.busy_timeout_s = float(busy_timeout_s or 30.0)
         self.pool_size = max(1, int(pool_size or 16))
+        # 2026-09-19: pool_size 는 **놀고 있는** 연결만 제한했다. 빌려 간 연결 수에는 상한이 없어서,
+        # 세션을 닫지 않는 코드가 하나라도 생기면 연결이 무한히 늘어나도 아무도 몰랐다(메모리·fd).
+        # max_live 는 **부드러운** 상한이다 — 넘으면 반납을 잠깐 기다리고, 그래도 없으면 새로 만들되
+        # overflow 로 센다. 질의를 실패시키지는 않는다(가용성 우선). 0 = 상한 없음(예전 동작).
+        self.max_live = max(0, int(max_live or 0))
+        self.wait_timeout_s = max(0.0, float(wait_timeout_s or 0.0))
         self._pool: List[sqlite3.Connection] = []
-        self._pool_lock = threading.Lock()
+        self._pool_lock = threading.Condition(threading.Lock())
+        self._live = 0            # 지금 빌려 나가 있는 연결 수
+        self._peak_live = 0       # 최고 기록 (누수 진단의 핵심 — 부하가 끝나도 0 으로 안 돌아오면 샌 것이다)
+        self._created = 0         # 새로 만든 연결 수 (풀 적중률)
+        self._overflow = 0        # 상한을 넘겨서 만든 횟수
         self._tl = threading.local()
         self._cache_lock = threading.RLock()
         self.generation = 0      # reopen() 마다 증가 — 이전 세대의 빌린 연결은 풀에 돌려보내지 않고 닫는다
@@ -186,9 +212,21 @@ class Store:
         if getattr(self._tl, "conn", None) is not None or self.closed:
             yield self
             return
+        deadline = time.time() + self.wait_timeout_s
         with self._pool_lock:
-            c = self._pool.pop() if self._pool else None
             gen = self.generation
+            c = self._pool.pop() if self._pool else None
+            # 상한을 넘었으면 누가 반납하기를 잠깐 기다린다 (버스트를 평평하게 만든다).
+            while (c is None and self.max_live and self._live >= self.max_live
+                   and not self.closed and time.time() < deadline):
+                self._pool_lock.wait(min(0.05, max(0.0, deadline - time.time())))
+                c = self._pool.pop() if self._pool else None
+            if c is None and self.max_live and self._live >= self.max_live:
+                self._overflow += 1      # 기다려도 안 나왔다 — 만들어서라도 진행한다 (요청을 죽이지 않는다)
+            self._live += 1
+            self._peak_live = max(self._peak_live, self._live)
+            if c is None:
+                self._created += 1
         if c is None:
             c = self._connect()
         self._tl.conn = c
@@ -203,9 +241,11 @@ class Store:
             except Exception:
                 pass
             with self._pool_lock:
+                self._live = max(0, self._live - 1)
                 if not self.closed and self.generation == gen and len(self._pool) < self.pool_size:
                     self._pool.append(c)
                     c = None
+                self._pool_lock.notify()
             if c is not None:
                 try:
                     c.close()
@@ -213,8 +253,11 @@ class Store:
                     pass
 
     def pool_info(self) -> Dict[str, Any]:
+        """연결 풀 상태. `live` 가 부하가 끝난 뒤에도 0 으로 안 떨어지면 세션을 닫지 않는 코드가 있는 것이다."""
         with self._pool_lock:
-            return {"idle": len(self._pool), "max": self.pool_size, "busy_timeout_s": self.busy_timeout_s}
+            return {"idle": len(self._pool), "max": self.pool_size, "busy_timeout_s": self.busy_timeout_s,
+                    "live": self._live, "peak_live": self._peak_live, "max_live": self.max_live,
+                    "created": self._created, "overflow": self._overflow}
 
     def _on_sql(self, _stmt: str) -> None:
         self.sql_count += 1
@@ -232,6 +275,7 @@ class Store:
             self.conn.execute("UPDATE requests SET user = TRIM(SUBSTR(origin, INSTR(origin, ' ') + 1)) "
                               "WHERE (user IS NULL OR user='') AND origin LIKE '% %'")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user, id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_query_log_user ON query_log(user, id)")
         if ("relations", "provenance") in added or self.conn.execute("SELECT 1 FROM relations WHERE provenance='' LIMIT 1").fetchone():
             # 구버전 관계에 provenance 백필: source 기준
             self.conn.execute("UPDATE relations SET provenance = CASE WHEN rel IN ('co_occurs','mentions','mentions_date','mentions_amount') THEN 'cooccur' "
@@ -248,6 +292,7 @@ class Store:
         with self._pool_lock:
             self.generation += 1
             pool, self._pool = self._pool, []
+            self._pool_lock.notify_all()     # 닫히는 중에 연결을 기다리던 스레드를 깨운다 (닫힘이면 바로 진행한다)
         for c in pool:
             try:
                 c.close()
@@ -485,13 +530,16 @@ class Store:
         lint = lint or []
         self.conn.execute(
             "INSERT OR REPLACE INTO doc_meta(doc_id,doc_type,ext_id,date,ts,date_source,author,status,tags,modules,hw_chip,hw_rev,related,"
-            "period_from,period_to,summary,schema_version,inferred,lint_errors,lint_warnings,lint,extra) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "period_from,period_to,summary,schema_version,inferred,lint_errors,lint_warnings,lint,extra,acl) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (nm["doc_id"], nm.get("doc_type", ""), nm.get("ext_id", ""), nm.get("date", ""), float(nm.get("ts") or 0), nm.get("date_source", ""),
              nm.get("author", ""), nm.get("status", ""), json.dumps(nm.get("tags", []), ensure_ascii=False), json.dumps(nm.get("modules", []), ensure_ascii=False),
              nm.get("hw_chip", ""), nm.get("hw_rev", ""), json.dumps(nm.get("related", {}), ensure_ascii=False), nm.get("period_from", ""), nm.get("period_to", ""),
              nm.get("summary", ""), int(nm.get("schema_version") or 0), 1 if nm.get("inferred") else 0,
              sum(1 for x in lint if x["level"] == "error"), sum(1 for x in lint if x["level"] == "warn"),
-             json.dumps(lint, ensure_ascii=False), json.dumps(nm.get("extra", {}), ensure_ascii=False, default=str)))
+             json.dumps(lint, ensure_ascii=False), json.dumps(nm.get("extra", {}), ensure_ascii=False, default=str),
+             # front matter `acl:` — 문자열/목록 모두 쉼표 구분 문자열로 저장한다 (llmwiki/docacl.py 가 그대로 읽는다)
+             (",".join(str(x).strip() for x in nm["acl"] if str(x).strip())
+              if isinstance(nm.get("acl"), (list, tuple)) else str(nm.get("acl") or "").strip())))
 
     def get_doc_meta(self, doc_id: str) -> Optional[Dict[str, Any]]:
         r = self.conn.execute("SELECT * FROM doc_meta WHERE doc_id=?", (doc_id,)).fetchone()
@@ -518,8 +566,8 @@ class Store:
             if cache and cache[0] == v:
                 return cache[1]
             out = {r["doc_id"]: {"doc_type": r["doc_type"], "ext_id": r["ext_id"], "date": r["date"], "ts": r["ts"] or 0.0, "status": r["status"],
-                                 "hw_rev": r["hw_rev"], "inferred": r["inferred"]}
-                   for r in self.conn.execute("SELECT doc_id, doc_type, ext_id, date, ts, status, hw_rev, inferred FROM doc_meta")}
+                                 "hw_rev": r["hw_rev"], "inferred": r["inferred"], "acl": r["acl"] or ""}
+                   for r in self.conn.execute("SELECT doc_id, doc_type, ext_id, date, ts, status, hw_rev, inferred, acl FROM doc_meta")}
             self._meta_cache = (v, out)
         return out
 
@@ -1192,25 +1240,85 @@ class Store:
             "SELECT id, ts, ms, llm_calls, input_tokens, output_tokens, summary FROM requests WHERE kind=? ORDER BY id DESC LIMIT ?", (kind, limit))][::-1]
 
     # ---------- query log / proposals ----------
-    def log_query(self, query: str, config: Dict[str, Any], top_chunks: List[str], answer: str,
-                  scores: Dict[str, Any], trace: Dict[str, Any]) -> int:
-        """질의 로그(자가진화 입력). 쓰기 잠금이면 건너뛴다 — 답변은 이미 만들어졌으므로 기록 실패로 질의를 실패시키지 않는다."""
+    def current_actor(self) -> Dict[str, str]:
+        """지금 요청을 낸 사람 (진행 레지스트리의 client). 없으면 빈 값.
+
+        Web·MCP·CLI·스케줄러 모두 `reqmgr.ticket(client=…)` 으로 같은 모양의 dict 를 남기므로
+        여기 한 곳에서 읽으면 어느 창구로 들어온 질의든 '누가' 를 알 수 있다.
+        """
         try:
-            cur = self.conn.execute("INSERT INTO query_log(ts,query,config,top_chunks,answer,scores,trace,feedback,note) VALUES(?,?,?,?,?,?,?,?,?)",
-                                    (time.time(), query, json.dumps(config, ensure_ascii=False), json.dumps(top_chunks), answer,
-                                     json.dumps(scores, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), None, ""))
+            from . import progress as _pg
+            cl = (_pg.get(_pg.current_token() or "") or {}).get("client") or {}
+        except Exception:
+            cl = {}
+        return {"user": str(cl.get("user") or "")[:80], "role": str(cl.get("role") or "")[:40],
+                "origin": str(cl.get("origin") or "")[:20], "via": str(cl.get("via") or "")[:20],
+                "ip": str(cl.get("ip") or "")[:64], "agent": str(cl.get("agent") or "")[:100]}
+
+    def log_query(self, query: str, config: Dict[str, Any], top_chunks: List[str], answer: str,
+                  scores: Dict[str, Any], trace: Dict[str, Any], actor: Optional[Dict[str, Any]] = None,
+                  request_id: int = 0) -> int:
+        """질의 로그(자가진화 입력). 쓰기 잠금이면 건너뛴다 — 답변은 이미 만들어졌으므로 기록 실패로 질의를 실패시키지 않는다.
+
+        actor 를 주지 않으면 진행 레지스트리에서 지금 요청의 클라이언트를 읽어 '누가 물었나' 를 함께 남긴다.
+        """
+        a = dict(actor or self.current_actor())
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO query_log(ts,query,config,top_chunks,answer,scores,trace,feedback,note,"
+                "user,role,origin,via,ip,agent,request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), query, json.dumps(config, ensure_ascii=False), json.dumps(top_chunks), answer,
+                 json.dumps(scores, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), None, "",
+                 str(a.get("user") or ""), str(a.get("role") or ""), str(a.get("origin") or ""),
+                 str(a.get("via") or ""), str(a.get("ip") or ""), str(a.get("agent") or ""), int(request_id or 0)))
             self.conn.commit()
             return int(cur.lastrowid)
         except (sqlite3.OperationalError, UnicodeEncodeError) as e:
             self._warn_locked("질의 로그", e)
             return 0
 
+    def set_query_request_id(self, qid: int, request_id: int) -> None:
+        """질의 로그 행을 requests 행과 연결한다 (질의 로그가 먼저 쓰이므로 뒤에 채운다)."""
+        if not qid or not request_id:
+            return
+        try:
+            self.conn.execute("UPDATE query_log SET request_id=? WHERE id=?", (int(request_id), int(qid)))
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            self._warn_locked("질의 로그 request_id", e)
+
     def set_feedback(self, qid: int, feedback: int, note: str = "") -> None:
         self.conn.execute("UPDATE query_log SET feedback=?, note=? WHERE id=?", (feedback, note, qid))
         self.conn.commit()
 
-    def queries(self, limit: int = 50) -> List[Dict[str, Any]]:
-        rows = self.conn.execute("SELECT id,ts,query,config,top_chunks,answer,scores,feedback,note FROM query_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    def queries(self, limit: int = 50, user: Optional[str] = None, q: Optional[str] = None,
+                origin: Optional[str] = None) -> List[Dict[str, Any]]:
+        """질의 로그. user/q/origin 으로 거를 수 있다 ('누가 무엇을 물었나' 를 찾는 창구)."""
+        sql = ("SELECT id,ts,query,config,top_chunks,answer,scores,feedback,note,"
+               "user,role,origin,via,ip,agent,request_id FROM query_log")
+        where, args = [], []
+        if user:
+            where.append("user=?")
+            args.append(user)
+        if origin:
+            where.append("origin=?")
+            args.append(origin)
+        if q:
+            where.append("query LIKE ?")
+            args.append("%" + q + "%")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+
+    def query_users(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """질의 로그에 남은 사용자별 집계 (누가 얼마나 물었고 최근은 언제인가)."""
+        rows = self.conn.execute(
+            "SELECT COALESCE(NULLIF(user,''),'(기록 없음)') AS user, COUNT(*) AS n, MAX(ts) AS last_ts, "
+            "SUM(CASE WHEN feedback > 0 THEN 1 ELSE 0 END) AS up, "
+            "SUM(CASE WHEN feedback < 0 THEN 1 ELSE 0 END) AS down "
+            "FROM query_log GROUP BY 1 ORDER BY n DESC LIMIT ?", (int(limit),)).fetchall()
         return [dict(r) for r in rows]
 
     def get_query(self, qid: int) -> Optional[Dict[str, Any]]:

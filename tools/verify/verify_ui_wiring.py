@@ -68,4 +68,53 @@ for fn in sorted(os.listdir(os.path.join(S, "js"))):
     if miss_lw:
         lw_missing[fn] = miss_lw
 print("LW 헬퍼 구조분해 누락:", (", ".join("%s → %s" % (k, "/".join(v)) for k, v in lw_missing.items()) if lw_missing else "-"))
-print("RESULT", "OK" if not any(missing.values()) and not unknown and not (tabs - sections) and not lw_missing else "PROBLEMS")
+
+# ---- 탭에 매인 CSS 를 JS 가 다른 탭에 렌더하면 조용히 깨진다 (2026-09-20) ----
+# 실제로 그랬다: 앙상블 편집기가 Settings › 모델 에서 Pipeline › 앙상블 로 옮겨졌는데 CSS 는 `#tab-models`
+# 스코프에 남아, **편집기 전체가 무스타일**이 됐다. 칸들이 한 줄 글자로 뭉개져 보였지만
+# 버튼·API 검사는 모두 통과했다 — 눈으로 보기 전에는 아무도 몰랐다.
+# 규칙: 어떤 클래스의 CSS 가 `#tab-X` 아래에만 있고 그 클래스를 **JS 가 만들어 내면** 경고한다.
+#       JS 는 어느 탭에든 렌더할 수 있으므로, 탭에 매는 것은 그 탭 전용 마크업일 때만 안전하다.
+CSS_TAB_SCOPED_OK = {
+    # 모델 탭의 표 전용 — 그 탭 안에서만 렌더된다 (loadModels → #models-*)
+    "cat", "ell", "ell2", "in-use",
+}
+css = re.sub(r"/\*.*?\*/", " ", open(os.path.join(S, "style.css"), encoding="utf-8").read(), flags=re.S)
+scoped, unscoped = {}, set()
+for sel in re.findall(r"([^{}]+)\{[^{}]*\}", css):
+    for one in (x.strip() for x in sel.split(",")):
+        if not one:
+            continue
+        m = re.match(r"#tab-([A-Za-z0-9_-]+)\b", one)
+        for c in re.findall(r"\.([A-Za-z0-9_-]+)", one):
+            (scoped.setdefault(c, set()).add(m.group(1))) if m else unscoped.add(c)
+_js_all = "".join(open(os.path.join(S, "js", f), encoding="utf-8").read()
+                  for f in sorted(os.listdir(os.path.join(S, "js"))) if f.endswith(".js"))
+css_risky = sorted((c, sorted(t)) for c, t in scoped.items()
+                   if c not in unscoped and c not in CSS_TAB_SCOPED_OK
+                   and re.search(r"[\"'\s>]%s[\"'\s<]" % re.escape(c), _js_all))
+print("탭에 매인 CSS 인데 JS 가 렌더:", (", ".join(".%s(#tab-%s)" % (c, "/".join(t)) for c, t in css_risky) if css_risky else "-"))
+
+# ---- 정의가 없는 CSS 변수 (2026-09-20) ----
+# 왜: `var(--없는이름)` 은 오류가 아니라 **그 선언 전체가 무효**가 된다. `background:var(--accent)` 는
+# 투명이 되고 SVG `fill` 은 검정으로 떨어진다. 화면은 멀쩡히 뜨는데 막대·칩만 조용히 사라진다.
+# 실제로 그랬다: 앙상블 멤버 막대와 추세 차트가 `--accent`(한 번도 정의된 적 없음)를 14곳에서 썼다.
+# 폴백이 있는 `var(--x, 기본)` 은 의도된 것이므로 뺀다 (JS 가 인라인으로 넣는 --f 등).
+_theme_dir = os.path.join(S, "themes")
+_css_files = [os.path.join(S, "style.css")] + \
+    [os.path.join(_theme_dir, f) for f in sorted(os.listdir(_theme_dir))
+     if f.endswith(".css")] if os.path.isdir(_theme_dir) else [os.path.join(S, "style.css")]
+_base = open(os.path.join(S, "style.css"), encoding="utf-8").read()
+_defined = set(re.findall(r"--([A-Za-z0-9_-]+)\s*:", _base))
+for _f in _css_files:                       # 테마가 더 정의할 수 있으니 합집합으로 본다
+    _defined |= set(re.findall(r"--([A-Za-z0-9_-]+)\s*:", open(_f, encoding="utf-8").read()))
+css_undef = {}
+for _f in _css_files:
+    _t = open(_f, encoding="utf-8").read()
+    for v in set(re.findall(r"var\(\s*--([A-Za-z0-9_-]+)\s*\)", _t)):     # 폴백 없는 것만
+        if v not in _defined:
+            css_undef.setdefault(os.path.basename(_f), []).append(v)
+print("정의 없는 CSS 변수:", (", ".join("%s → %s" % (k, "/".join(sorted(v))) for k, v in css_undef.items()) if css_undef else "-"))
+
+print("RESULT", "OK" if not any(missing.values()) and not unknown and not (tabs - sections)
+      and not lw_missing and not css_risky and not css_undef else "PROBLEMS")

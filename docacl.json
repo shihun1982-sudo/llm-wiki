@@ -1,0 +1,7 @@
+{
+  "_comment": "문서 단위 접근 제어. 어떤 역할이 어떤 문서를 '근거로' 볼 수 있는지 정합니다. 설명: docs/SECURITY.md · 원본 setup/docacl.example.json. 규칙을 비워 두면 아무도 막지 않습니다(예전 동작).",
+  "enabled": true,
+  "default_min_role": "viewer",
+  "rules": [],
+  "deny_message": "권한이 없는 문서입니다"
+}

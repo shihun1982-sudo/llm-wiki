@@ -29,6 +29,27 @@ import shutil
 import time
 from typing import Any, Dict, List, Optional
 
+#: 적용할 수 있는 제안 종류 — **여기가 단 하나의 목록**이다 (2026-09-19).
+#: 예전에는 Web 드롭다운·MCP wiki_propose·apply_proposal 이 각자 다른 목록을 들고 있어서,
+#: 화면에서 만들 수 있는데 적용하면 "unknown kind" 로 실패하는 종류(chunk_params 는 그 반대)가 있었다.
+KINDS: Dict[str, str] = {
+    "synonym": "FTS 질의 확장 (synonyms 테이블) — 즉시 적용, 리빌드 없음",
+    "alias": "규칙 사전에 별칭 추가 — 그래프 재빌드 필요",
+    "entity": "규칙 사전에 새 엔티티 추가 — 그래프 재빌드 필요",
+    "relation": "그래프에 관계 직접 추가 (source=evolve)",
+    "wiki_note": "위키 페이지에 편집 노트 추가 — 다음 빌드에서 overlay 색인",
+    "query_rule": "질의 규칙 사전(query_rules.json) 항목 추가",
+    "pin": "고정 근거(pins.json) 추가",
+    "tuning": "튜닝 값 변경 (tuning.json)",
+    "chunk_params": "청킹 파라미터 변경 — **전체 리빌드**가 따른다",
+    "corpus_gap": "문서가 없다는 기록 (자동 적용 불가 — 사람이 문서를 추가해야 한다)",
+}
+
+#: 자동 적용을 허용하는 기본 종류. 되돌리기 쉬운 데이터 변경만 넣는다.
+#: chunk_params 는 전체 리빌드를, alias/entity 는 그래프 재빌드를 일으키므로 기본에서 뺀다 —
+#: 자동 적용은 사람이 안 보는 사이에 도는 경로라, 비싼 작업은 승인 뒤에만 돌아야 한다.
+AUTO_APPLY_KINDS_DEFAULT = ("synonym", "query_rule", "pin", "wiki_note")
+
 from .config import save_settings
 from .graph_rules import load_rules, save_rules, entity_id_for
 from .providers import parse_json, LLMError
@@ -79,11 +100,27 @@ def capture_query(pipe, q: str, result: Dict[str, Any], final: List[Any]) -> Lis
         ids.append(store.add_proposal("wiki_note", {"page": "_gaps", "note": "질문 '%s' 에 대한 근거 문서가 없거나 인용되지 않음. 관련 자료를 보강하세요." % q},
                                       "근거 인용 없는 답변", 0.5, "capture"))
     if s.toggles.evolve_auto_apply:
+        # 2026-09-19: 자동 적용에도 **종류 제한**을 둔다. 예전에는 confidence 만 보고 무엇이든 적용해서,
+        # 사람이 안 보는 사이에 chunk_params 제안 하나가 전체 리빌드를 돌릴 수 있었다.
+        # 스케줄러의 auto_apply 는 원래 kinds 를 제한하고 있었는데 토글 경로만 빠져 있었다.
+        allow = auto_apply_kinds(s)
         for pid in ids:
             p = store.get_proposal(pid)
-            if p and p["status"] == "proposed" and (p["confidence"] or 0) >= s.evolve_min_confidence:
-                apply_proposal(pipe, pid, auto=True)
+            if not p or p["status"] != "proposed" or (p["confidence"] or 0) < s.evolve_min_confidence:
+                continue
+            if p["kind"] not in allow:
+                continue
+            apply_proposal(pipe, pid, auto=True)
     return ids
+
+
+def auto_apply_kinds(settings: Any) -> List[str]:
+    """자동 적용을 허용할 제안 종류. `config.json` 의 `evolve_auto_apply_kinds` 로 바꾼다 (비우면 기본값)."""
+    raw = getattr(settings, "evolve_auto_apply_kinds", None)
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.split(",") if x.strip()]
+    vals = [str(x) for x in (raw or []) if str(x) in KINDS]
+    return vals or list(AUTO_APPLY_KINDS_DEFAULT)
 
 
 #: 동의어·별칭 후보로 쓸 수 있는 말인가.
@@ -183,6 +220,24 @@ def llm_review(pipe, limit: int = 30) -> Dict[str, Any]:
 
 
 # ------------------------------------------------------------------ apply / rollback
+#: 이름류 값에서 앞뒤 공백을 지워야 하는 payload 키.
+#: 왜: LLM 리뷰가 문서 헤딩에서 이름을 뽑을 때 `"HWD-PHY-TIMING-B1 "` 처럼 꼬리 공백이 붙어 올라온다.
+#: 그대로 등록하면 공백까지가 엔티티 이름이 되어 어떤 질의와도 맞지 않는다 — 조용히 효과가 없는 제안이 된다.
+_STRIP_KEYS = ("name", "entity", "alias", "term", "expansion", "src", "dst", "rel", "page", "topic", "key", "type")
+
+
+def _clean_payload(kind: str, pl: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(pl or {})
+    for k in _STRIP_KEYS:
+        if isinstance(out.get(k), str):
+            out[k] = out[k].strip()
+    if isinstance(out.get("aliases"), list):
+        out["aliases"] = [a.strip() if isinstance(a, str) else a for a in out["aliases"]]
+    if isinstance(out.get("values"), list):
+        out["values"] = [v.strip() if isinstance(v, str) else v for v in out["values"]]
+    return out
+
+
 def apply_proposal(pipe, pid: int, auto: bool = False, evaluate: bool = True) -> Dict[str, Any]:
     """스냅샷 → 적용 → (리빌드) → 회귀평가 → 악화 시 롤백."""
     store, s = pipe.store, pipe.s
@@ -196,6 +251,19 @@ def apply_proposal(pipe, pid: int, auto: bool = False, evaluate: bool = True) ->
         store.set_proposal_status(pid, "failed")
         store.log_evolution(pid, "fail", {"kind": "corpus_gap", "payload": p["payload"], "error": "corpus_gap 은 자동 적용 불가 (문서 추가 필요)"}, "")
         return {"status": "failed", "error": "corpus_gap 은 문서 추가로 해결하는 제안입니다 (자동 적용 불가). 주제: %s" % (p["payload"] or {}).get("topic")}
+    # 값이 성한지 먼저 본다 (2026-09-19). 예전에는 payload 에 필수 키가 없어도 일단 스냅샷 → 평가 → KeyError 로
+    # failed 가 났다. 평가는 수십 초가 걸리므로, 애초에 적용될 수 없는 제안에 그 시간을 쓰지 않는다.
+    # 설명(describe_proposal)의 error 점검과 같은 규칙을 쓴다 — 화면에서 [X] 로 보이는 것은 여기서도 막힌다.
+    try:
+        _d = describe_proposal(pipe, p)
+        _errs = [c["text"] for c in (_d.get("checks") or []) if c.get("level") == "error"]
+    except Exception:
+        _errs = []
+    if _errs:
+        store.set_proposal_status(pid, "failed")
+        store.log_evolution(pid, "fail", {"kind": p["kind"], "payload": p["payload"], "error": "; ".join(_errs)}, "")
+        return {"status": "failed", "error": "적용할 수 없는 제안입니다 — " + " / ".join(_errs), "checks": _d.get("checks")}
+    p = dict(p, payload=_clean_payload(p["kind"], p["payload"]))
     before = None
     if evaluate:
         before = pipe.evaluate(log=False)[0]["summary"]
@@ -334,7 +402,37 @@ def _snapshot(pipe, pid: int) -> Dict[str, str]:
     from .config import CONFIG_PATH
     if os.path.exists(CONFIG_PATH):
         shutil.copy2(CONFIG_PATH, os.path.join(snap_dir, "config.json"))
+    _prune_snapshots(pipe)
     return {"dir": snap_dir}
+
+
+def _prune_snapshots(pipe) -> int:
+    """적용마다 만든 자동 스냅샷을 `evolve_snapshot_keep` 개만 남긴다 (2026-09-19).
+
+    왜: 스냅샷 하나가 DB + 위키 트리 전체 복사본이다. 자동 적용을 켜 두면 하루에도 수십 개가 쌓여
+    data 폴더가 조용히 불어난다. `snapshots.prune` 은 태그가 `auto:` 인 것만 지우므로 여기서 직접 관리한다.
+    되돌리기는 최근 것부터 하므로 오래된 것부터 버린다. 0 이면 예전처럼 무제한.
+    """
+    keep = int(getattr(pipe.s, "evolve_snapshot_keep", 0) or 0)
+    if keep <= 0:
+        return 0
+    base = os.path.join(pipe.s.data_dir, "snapshots")
+    try:
+        dirs = [os.path.join(base, d) for d in os.listdir(base)
+                if d.startswith("p") and os.path.isdir(os.path.join(base, d))]
+    except OSError:
+        return 0
+    if len(dirs) <= keep:
+        return 0
+    dirs.sort(key=lambda p: os.path.getmtime(p))
+    removed = 0
+    for d in dirs[:len(dirs) - keep]:
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def _restore(pipe, snap: Dict[str, str]) -> None:
@@ -368,8 +466,37 @@ def _restore(pipe, snap: Dict[str, str]) -> None:
     pipe.reload()
 
 
-def status(pipe) -> Dict[str, Any]:
+def describe_proposal(pipe, pid_or_row: Any) -> Dict[str, Any]:
+    """제안 한 건을 사람이 읽을 수 있는 설명으로 (Web `/api/evolve/describe` · CLI `evolve show` · MCP wiki_evolve explain).
+
+    LLM 을 쓰지 않는다 — 규칙 사전/튜닝 스펙/DB 만 보고 만든다. 자세한 설명은 proposal_explain 모듈 참고.
+    """
+    from . import proposal_explain as _pe
+    row = pid_or_row if isinstance(pid_or_row, dict) else pipe.store.get_proposal(int(pid_or_row))
+    if not row:
+        return {"error": "no such proposal"}
+    return _pe.describe(row, pipe)
+
+
+def describe_proposals(pipe, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """여러 건 — 규칙 사전을 한 번만 읽는다 (대기 제안이 100건을 넘으므로 건별 로드는 느리다)."""
+    from . import proposal_explain as _pe
+    return _pe.describe_many(rows, pipe)
+
+
+def status(pipe, explain: bool = True) -> Dict[str, Any]:
     st = pipe.store
-    return {"pending": st.proposals("proposed"), "recent_log": st.evolution_log(30),
+    pending = st.proposals("proposed")
+    if explain:
+        # 대기 제안에는 설명을 붙여 보낸다 — Web/MCP 가 payload JSON 원문만 보여 주던 문제(2026-09-19).
+        try:
+            for p, d in zip(pending, describe_proposals(pipe, pending)):
+                p["explain"] = d
+        except Exception:
+            pass
+    return {"pending": pending, "recent_log": st.evolution_log(30),
             "applied": st.proposals("applied", 30), "synonyms": st.synonyms(),
-            "auto_apply": pipe.s.toggles.evolve_auto_apply, "min_confidence": pipe.s.evolve_min_confidence}
+            "auto_apply": pipe.s.toggles.evolve_auto_apply, "min_confidence": pipe.s.evolve_min_confidence,
+            # 종류 목록과 자동 적용 허용 목록도 함께 준다 — 화면·MCP 가 자기 목록을 따로 들고 있지 않게
+            "kinds": dict(KINDS), "auto_apply_kinds": auto_apply_kinds(pipe.s),
+            "snapshot_keep": int(getattr(pipe.s, "evolve_snapshot_keep", 0) or 0)}

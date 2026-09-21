@@ -1,0 +1,455 @@
+{
+ "ts": "2026-09-20 12:54",
+ "total": 64,
+ "failed": 0,
+ "rows": [
+  {
+   "name": "admin 로그인",
+   "surface": "auth",
+   "how": "-",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "config",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "config",
+   "how": "A",
+   "ok": true,
+   "detail": "11"
+  },
+  {
+   "name": "UI 저장 → config show --effective",
+   "surface": "config",
+   "how": "A",
+   "ok": true,
+   "detail": "top_k_final                        = 11                             [file] (기본 8)  LLMWIKI_TOP_K_FINAL"
+  },
+  {
+   "name": "UI 저장 → GET /api/config/effective",
+   "surface": "config",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → reload API",
+   "surface": "config",
+   "how": "reload",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "파일 편집 → GET 반영",
+   "surface": "config",
+   "how": "reload",
+   "ok": true,
+   "detail": "13"
+  },
+  {
+   "name": "파일 편집 → /api/status.settings 반영",
+   "surface": "config",
+   "how": "reload",
+   "ok": true,
+   "detail": "13"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "llm_roles",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "llm_roles",
+   "how": "A",
+   "ok": true,
+   "detail": "{'answer': {'timeout_s': 123}}"
+  },
+  {
+   "name": "UI 저장 → GET /api/models 반영",
+   "surface": "llm_roles",
+   "how": "A",
+   "ok": true,
+   "detail": "{'answer': {'provider': 'mock', 'provider_source': 'global', 'model': 'llama3.1'"
+  },
+  {
+   "name": "파일 편집 → reload → GET 반영",
+   "surface": "llm_roles",
+   "how": "reload",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "tuning",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "tuning",
+   "how": "A",
+   "ok": true,
+   "detail": "5"
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "tuning",
+   "how": "A",
+   "ok": true,
+   "detail": "5"
+  },
+  {
+   "name": "파일 편집 → reload API",
+   "surface": "tuning",
+   "how": "reload",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "파일 편집 → GET 반영",
+   "surface": "tuning",
+   "how": "reload",
+   "ok": true,
+   "detail": "6"
+  },
+  {
+   "name": "파일 편집 → 질의가 쓰는 값",
+   "surface": "tuning",
+   "how": "reload",
+   "ok": true,
+   "detail": "6"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "query_rules",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "query_rules",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → explain 반영",
+   "surface": "query_rules",
+   "how": "A",
+   "ok": true,
+   "detail": "{\"term\": \"싱크검증\", \"normalized\": \"싱크검증\", \"found\": true, \"entries\": [{\"type\": \"syno"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (mtime 자동)",
+   "surface": "query_rules",
+   "how": "auto",
+   "ok": true,
+   "detail": "{\"term\": \"파일직접\", \"normalized\": \"파일직접\", \"found\": true, \"entries\": [{\"type\": \"syno"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "rules.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "rules.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "rules.json",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (mtime 자동)",
+   "surface": "rules.json",
+   "how": "auto",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "models.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "models.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "models.json",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (mtime 자동)",
+   "surface": "models.json",
+   "how": "auto",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "prompts",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "prompts",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "prompts",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (mtime 자동)",
+   "surface": "prompts",
+   "how": "auto",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "agents.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "agents.json",
+   "how": "A",
+   "ok": true,
+   "detail": "7"
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "agents.json",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (저장 시 재적재)",
+   "surface": "agents.json",
+   "how": "auto",
+   "ok": true,
+   "detail": "9"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "schedule",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "schedule",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → GET 반영",
+   "surface": "schedule",
+   "how": "A",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "파일 편집 → GET 반영 (자동 재적재)",
+   "surface": "schedule",
+   "how": "auto",
+   "ok": true,
+   "detail": "True"
+  },
+  {
+   "name": "UI 저장 → 응답 200",
+   "surface": "server.json",
+   "how": "A",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "UI 저장 → 파일",
+   "surface": "server.json",
+   "how": "A",
+   "ok": true,
+   "detail": "7"
+  },
+  {
+   "name": "UI 저장 → 응답의 유효 한도",
+   "surface": "server.json",
+   "how": "A",
+   "ok": true,
+   "detail": "{\"concurrency\": {\"max_parallel_reads\": 7, \"max_parallel_per_user\": 3, \"max_paral"
+  },
+  {
+   "name": "파일 편집 → reload API",
+   "surface": "server.json",
+   "how": "reload",
+   "ok": true,
+   "detail": "9"
+  },
+  {
+   "name": "파일 편집 → reload → GET 반영",
+   "surface": "server.json",
+   "how": "reload",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "GET /api/env (admin)",
+   "surface": ".env",
+   "how": "-",
+   "ok": true,
+   "detail": "200"
+  },
+  {
+   "name": "값이 마스킹된다 (원문 노출 없음)",
+   "surface": ".env",
+   "how": "-",
+   "ok": true,
+   "detail": "sk-…cdef"
+  },
+  {
+   "name": "LLMWIKI_* 오버라이드 목록",
+   "surface": ".env",
+   "how": "-",
+   "ok": true,
+   "detail": "['LLMWIKI_AGENTS_PATH', 'LLMWIKI_CONFIG', 'LLMWIKI_ENV_FILE', 'LLMWIKI_EVAL_PATH', 'LLMWIKI_LOGS_DIR_PATH']"
+  },
+  {
+   "name": "비-admin 은 거부 (401/403)",
+   "surface": ".env",
+   "how": "-",
+   "ok": true,
+   "detail": "401"
+  },
+  {
+   "name": "파일 편집 → reload API",
+   "surface": ".env",
+   "how": "reload",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "파일 편집 → GET 반영",
+   "surface": ".env",
+   "how": "reload",
+   "ok": true,
+   "detail": "both"
+  },
+  {
+   "name": "config fill-defaults --all 실행",
+   "surface": "fill-defaults",
+   "how": "-",
+   "ok": true,
+   "detail": "['확인: config show --effective · tuning show · 되돌리기: 필요 없는 줄은 지우면 기본값']"
+  },
+  {
+   "name": "config.json 에 answer_mode 가 명시된다",
+   "surface": "fill-defaults",
+   "how": "-",
+   "ok": true,
+   "detail": "['corpus_dirs', 'corpus_exclude', 'data_dir', 'wiki_dir']"
+  },
+  {
+   "name": "toggles 에 새 토글이 명시된다",
+   "surface": "fill-defaults",
+   "how": "-",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "name": "tuning.json 이 기본값까지 명시된다",
+   "surface": "fill-defaults",
+   "how": "-",
+   "ok": true,
+   "detail": "True"
+  },
+  {
+   "name": "한 번 채운 뒤에는 추가할 키가 없다",
+   "surface": "fill-defaults",
+   "how": "-",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "name": "fill-defaults 뒤 서버가 파일을 읽는다",
+   "surface": "fill-defaults",
+   "how": "reload",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "튜닝 저장이 Pipeline 데이터(/api/architecture)에 바로 보인다",
+   "surface": "tuning",
+   "how": "Settings → Pipeline",
+   "ok": true,
+   "detail": "HTTP 200  · arch=7"
+  },
+  {
+   "name": "config 원천 튜닝 키도 Pipeline 데이터에 보인다",
+   "surface": "tuning",
+   "how": "Settings → Pipeline",
+   "ok": true,
+   "detail": "HTTP 200  · arch=33"
+  },
+  {
+   "name": "config 저장이 Pipeline 데이터에 바로 보인다",
+   "surface": "config",
+   "how": "Settings → Pipeline",
+   "ok": true,
+   "detail": "9"
+  },
+  {
+   "name": "역할 타임아웃 변경이 단계 시간 제한에 반영된다",
+   "surface": "models",
+   "how": "Settings → 시간 제한",
+   "ok": true,
+   "detail": "answer_llm ≤ 123.0s"
+  },
+  {
+   "name": "같은 값이 Pipeline 단계 표에도 있다",
+   "surface": "models",
+   "how": "Settings → Pipeline",
+   "ok": true,
+   "detail": "stages.answer"
+  }
+ ]
+}

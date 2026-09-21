@@ -41,8 +41,12 @@
 | query_rules | `syn_w` | float | 0.8 | 0.8 | 0.0~2.0 | synonym 확장 리스트 가중치 (원 질의 1.0 대비). |  | 0.8 | tuning.json |  |
 | query_rules | `related_w` | float | 0.4 | 0.4 | 0.0~2.0 | related(관련어) 보조 리스트 가중치 — 주 질의에 섞지 않고 별도 리스트로 융합. | 높이면 관련 주제가 상위로 올라와 precision↓. | 0.4 | tuning.json |  |
 | query_rules | `exclude_penalty` | float | 0.5 | 0.5 | 0.0~1.0 | exclude 용어를 포함한 후보의 fused 점수 배율 (0=완전 제거). |  | 0.5 | tuning.json |  |
+| query_rules | `context_w` | float | 0.9 | 0.9 | 0.0~2.0 | context(문맥 의존) 확장의 치환 질의 가중치. | 문맥 조건이 맞을 때만 발화하므로 일반 synonym(syn_w 0.8)보다 **정확하다** → 조금 높게 둔다. 낮추면 문맥 확장이 순위에 덜 반영된다. | 0.9 | tuning.json |  |
+| query_rules | `hypernym_down_w` | float | 0.35 | 0.35 | 0.0~2.0 | hypernym: 질의의 **상위어**로부터 하위어를 보조 리스트에 넣을 때의 가중치. | '메모리 오류' 로 물었을 때 'DMA 오버런' 문서를 얼마나 끌어올릴지. 높이면 recall↑ precision↓ — related_w(0.4) 근처가 무난하다. | 0.35 | tuning.json |  |
+| query_rules | `hypernym_up_w` | float | 0.2 | 0.2 | 0.0~2.0 | hypernym: 질의의 **하위어**로부터 상위어를 보조 리스트에 넣을 때의 가중치. | 상위어 문서는 대개 일반론이라 구체적 질문의 답이 아니다 → down 보다 낮게. 0 으로 두면 올라가기를 끈다. | 0.2 | tuning.json |  |
 | query_rules | `acronym_phrase` | bool | True | True | True, False | acronym 확장어를 구문(phrase) 검색으로 넣을지 (false 면 토큰 OR). |  | true | tuning.json |  |
 | query_rules | `query_rules_max_rounds` | int | 2 | 2 | 1~5 | 규칙을 몇 번 접어 적용할지. 1 이면 한 번만 — 'TAT→Turn Around Time'(acronym) 뒤에 걸린 'Turn Around Time→응답시간'(synonym) 이 무시된다. | 크게 하면 사슬이 긴 사전에서 확장어가 폭증해 precision↓·지연↑. 연관어(related)와 별칭(alias)은 다시 펼치지 않는다. | 2 (기본), 3 (약어→정식명→동의어 사슬이 깊은 사전) | tuning.json |  |
+| query_rules | `related_symmetric` | bool | False | False | True, False | related(연관어)를 양방향으로 쓸지. false(기본) 는 일방 — 키 A 가 질의에 있을 때만 값 B 를 보조 리스트에 넣는다. true 면 B 가 질의에 있을 때 A 도 보조 리스트에 넣는다 (acronym/synonym 은 원래 양방향, alias 는 늘 일방). `rules explain <용어>` 로 확인. | 켜면 recall↑ 이지만 연관어가 서로를 끌어와 precision↓. 동치라면 related 대신 acronym/synonym 에 넣는 것이 정답. | false | tuning.json |  |
 | query_expand | `query_expand_n` | int | 2 | 3 **(변경)** | 1~5 | 생성할 대체 질의 수. | 많을수록 recall↑ 지연↑ (질의마다 FTS+벡터 실행). | 2 | tuning.json |  |
 | query_expand | `query_expand_w` | float | 0.6 | 0.6 | 0.0~2.0 | 대체 질의 결과 리스트의 융합 가중치 (원 질의 채널 가중치 대비 배율). | 1.0 이면 원 질의와 동등. | 0.6 | tuning.json |  |
 | query_expand | `query_decompose_max` | int | 3 | 3 | 1~6 | 분해 sub-query 최대 수. |  | 3 | tuning.json |  |
@@ -85,10 +89,28 @@
 | rrf_fuse | `channel_w_external` | float | 1.0 | 1.0 | 0.0~3.0 | 외부 RAG 채널(ext_<source>, external_rag 토글) 가중치 배율. 소스별 weight(mcp_sources.json retrieve.weight) 와 곱한다. | 외부 결과를 내부 채널보다 앞세우려면 >1, 참고용이면 0.5 이하. | 1.0 | tuning.json |  |
 | rrf_fuse | `external_rag_k` | int | 5 | 5 | 1~50 | 외부 RAG 소스마다 요청할 결과 수 (retrieve.args 의 {k}). fallback 라운드에서는 k_mult 배. | 많을수록 외부 지연·토큰↑. | 5 | tuning.json |  |
 | rrf_fuse | `external_rag_inject` | int | 2 | 2 | 0~20 | 외부 소스별 상위 n개 결과를 (RRF 순위와 무관하게) 리랭크 후보 창에 보장 주입. 외부 채널은 리스트가 하나뿐이라 내부 리스트 여러 개(fts/alt/vector…)와 RRF 로 경쟁하면 후보 밖으로 밀리기 쉬우므로, 최종 판단은 리랭커에 맡긴다. | 0 이면 순수 RRF 경쟁. 크면 외부 결과가 항상 리랭크를 받는다(리랭크 비용↑). | 2 | tuning.json |  |
+| rrf_fuse | `fts_topk_n` | int | 0 | 0 | 0~200 | FTS 채널에서 'top-k 안' 으로 볼 순위 (0 = 구간 가중 끔). 이 순위까지는 fts_topk_w, 밖은 fts_tail_w 를 채널 가중치에 곱한다. | FTS 상위만 믿고 싶을 때(정확 매칭이 강한 코퍼스) n 을 작게·topk_w 를 크게. 보조 리스트(fts_rule/fts_alt/fts_rel)에도 같은 값이 적용된다. | 0 (기본), 5 | tuning.json |  |
+| rrf_fuse | `fts_topk_w` | float | 1.0 | 1.0 | 0.0~5.0 | FTS 채널 top-k 안 후보의 채널 가중 배율. | 1.5 면 상위 n개가 RRF 합산에서 1.5배. 1.0 이면 변화 없음. | 1.0 (기본), 1.5 | tuning.json |  |
+| rrf_fuse | `fts_tail_w` | float | 1.0 | 1.0 | 0.0~5.0 | FTS 채널 top-k 밖 후보의 배율 (0 = 밖은 후보에서 버림). | 0.5 면 하위 후보의 기여가 절반. 0 이면 그 채널의 하위 후보는 융합에 참여하지 않는다(다른 채널에서 나오면 살아남는다). | 1.0 (기본), 0.5 | tuning.json |  |
+| rrf_fuse | `vector_topk_n` | int | 0 | 0 | 0~200 | 벡터 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔). vector_alt 리스트에도 적용. | 의미 임베더의 상위 결과가 신뢰도가 높을 때 상위를 우대. | 0 (기본), 5 | tuning.json |  |
+| rrf_fuse | `vector_topk_w` | float | 1.0 | 1.0 | 0.0~5.0 | 벡터 채널 top-k 안 후보의 배율. |  | 1.0 | tuning.json |  |
+| rrf_fuse | `vector_tail_w` | float | 1.0 | 1.0 | 0.0~5.0 | 벡터 채널 top-k 밖 후보의 배율 (0 = 버림). | hash 임베딩처럼 하위 순위가 잡음이면 0.5 이하. | 1.0 | tuning.json |  |
+| rrf_fuse | `graph_topk_n` | int | 0 | 0 | 0~200 | 그래프 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔). | 시드 직결 청크(상위)와 다중 홉 청크(하위)를 다르게 대접할 때. | 0 (기본), 3 | tuning.json |  |
+| rrf_fuse | `graph_topk_w` | float | 1.0 | 1.0 | 0.0~5.0 | 그래프 채널 top-k 안 후보의 배율. |  | 1.0 | tuning.json |  |
+| rrf_fuse | `graph_tail_w` | float | 1.0 | 1.0 | 0.0~5.0 | 그래프 채널 top-k 밖 후보의 배율 (0 = 버림). |  | 1.0 | tuning.json |  |
+| rrf_fuse | `doc_vector_topk_n` | int | 0 | 0 | 0~200 | 문서 카드 벡터 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔). |  | 0 (기본), 3 | tuning.json |  |
+| rrf_fuse | `doc_vector_topk_w` | float | 1.0 | 1.0 | 0.0~5.0 | 문서 카드 벡터 채널 top-k 안 후보의 배율. |  | 1.0 | tuning.json |  |
+| rrf_fuse | `doc_vector_tail_w` | float | 1.0 | 1.0 | 0.0~5.0 | 문서 카드 벡터 채널 top-k 밖 후보의 배율 (0 = 버림). |  | 1.0 | tuning.json |  |
+| rrf_fuse | `external_topk_n` | int | 0 | 0 | 0~200 | 외부 RAG 채널(모든 ext_<source>)에서 'top-k 안' 으로 볼 순위 (0 = 끔). | 외부 소스의 상위 결과만 신뢰할 때. 소스마다 따로 세지 않고 각 ext_ 리스트에 같은 n 을 적용한다. | 0 (기본), 2 | tuning.json |  |
+| rrf_fuse | `external_topk_w` | float | 1.0 | 1.0 | 0.0~5.0 | 외부 RAG 채널 top-k 안 후보의 배율. |  | 1.0 | tuning.json |  |
+| rrf_fuse | `external_tail_w` | float | 1.0 | 1.0 | 0.0~5.0 | 외부 RAG 채널 top-k 밖 후보의 배율 (0 = 버림). |  | 1.0 | tuning.json |  |
+| rrf_fuse | `channel_inject` | str |  |  |  | 채널별 리랭크 창 보장 주입 수 `fts:2,vector:2,graph:1` (채널: fts \| vector \| graph \| doc_vector \| external). 그 채널 주 리스트의 상위 n개를 RRF 순위와 무관하게 리랭크 후보 창 안으로 올린다(창 끝 요소 바로 위의 fused, why=inject:<채널>). external_rag_inject 와 같은 방식. | '벡터 1위인데 리랭크 후보에도 못 들었다' 를 막는다. 최종 순위는 리랭커가 정하므로 부작용은 리랭크 후보 수 증가뿐. | "" (기본), fts:2,vector:2,graph:1 | tuning.json |  |
 | rrf_fuse | `doc_type_boost` | str |  |  |  | 문서 유형 부스트 맵 `issue:1.2,cl:1.1` (fused × 값). 라우터가 힌트를 잡으면 해당 유형 추가 ×1.2. | 질문 유형과 문서 유형이 맞을 때 상위로. | issue:1.2,coding_rule:1.1 | tuning.json |  |
 | rrf_fuse | `pin_boost` | float | 10.0 | 10.0 | 1.0~100.0 | pin 된 청크의 fused 점수 배율 (사실상 최상위 고정). |  | 10.0 | tuning.json |  |
 | rrf_fuse | `provenance_boost` | float | 0.2 | 0.2 | 0.0~2.0 | 그래프 후보 중 explicit/rule 관계로 도달한 청크의 추가 배율(1+w). |  | 0.2 | tuning.json |  |
 | rrf_fuse | `feedback_boost_w` | float | 0.15 | 0.15 | 0.0~1.0 | 긍정 피드백 청크 부스트 최대 배율(1+w×strength). |  | 0.15 | tuning.json |  |
+| rrf_fuse | `fusion_llm_candidates` | int | 0 | 0 | 0~100 | 융합 뒤 LLM 검토(토글 llm_after_fusion, 역할 fusion, prompts/fusion_review.md)에 보낼 상위 후보 수. 0 = rerank_candidates 와 같게. | 많을수록 프롬프트(후보 × rerank_chunk_chars)와 토큰↑, 검토 범위↑. 리랭크 후보 수보다 크게 두면 리랭크 창 밖 후보까지 걸러 준다. | 0 (=rerank_candidates), 24 | tuning.json |  |
+| rrf_fuse | `fusion_llm_drop_penalty` | float | 0.3 | 0.3 | 0.0~1.0 | 융합 뒤 LLM 검토가 drop 으로 고른 후보의 fused 점수 배율. 0 이면 후보에서 제거한다(why=llm_drop). | 0.3 은 감점만 하므로 LLM 이 틀려도 리랭크가 되살릴 수 있다. 0 은 확실히 제거하지만 LLM 오판이 그대로 결과가 된다. | 0.3 (기본), 0 (제거) | tuning.json |  |
 | rerank | `rerank_candidates` | int | 16 | 24 **(변경)** | 1~100 | 리랭크 후보 수. |  | 16 | config.json |  |
 | rerank | `rerank_chunk_chars` | int | 600 | 600 | 100~4000 | LLM/크로스인코더 입력 청크 글자 수. |  | 600 | config.json |  |
 | rerank | `rerank_method` | choice | auto | auto | auto, api, llm, cross_encoder, local | 리랭크 방식. auto = rerank_url 이 있으면 api, 아니면 LLM 가능 시 LLM(rerank_llm 토글), 아니면 local. api = 전용 rerank 엔드포인트(Cohere/Jina/vLLM/Voyage). cross_encoder = sentence-transformers CrossEncoder(로컬). llm = LLM 순위. local = 휴리스틱. | api/cross_encoder 는 토큰 0·품질 높음(bge-reranker-v2-m3 등 다국어). 실패 시 local 폴백. | api + rerank_url http://host:8000/v1/rerank | tuning.json |  |
@@ -98,9 +120,13 @@
 | rerank | `rerank_w_length` | float | 0.1 | 0.1 | 0.0~1.0 | local 리랭크: 길이 보정(400자 미만 감점) 가중치. |  | 0.1 | tuning.json |  |
 | rerank | `rerank_fused_w` | float | 0.0 | 0.0 | 0.0~5.0 | 리랭크 최종 순위에 **융합·부스트 점수(fused)** 를 얼마나 섞을지. 0 = 리랭크 점수만으로 정렬(기본, 예전 동작). | 리랭크는 후보를 다시 줄 세우면서 그 앞 단계(채널 융합 rrf_k·채널 가중치·시간/문서유형/pin/provenance 부스트)가 매긴 점수를 **버린다**(동점일 때만 참고). 그래서 rrf_k·fusion_method 를 아무리 바꿔도 최종 순위가 거의 그대로다 (2026-09-17 실측: rrf_k 2~60 에서 MRR 0.467~0.477). 이 값을 올리면 융합·부스트가 최종 순위에 실제로 반영되어 그 손잡이들이 의미를 갖는다. 특히 **pin_boost 로 고정한 근거가 리랭크에 밀리는 것**을 막을 때 쓴다. 리랭크 점수와 fused 는 척도가 달라 후보 집합 안에서 각각 0~1 로 정규화한 뒤 `rerank + w × fused` 로 합친다. | 0 = 리랭크만 믿는다(기본) · 0.3 = 융합을 참고 · 1.0 = 리랭크와 같은 비중 · pin 을 확실히 올리려면 1.0 이상 | tuning.json |  |
 | rerank | `rerank_heading_bonus` | float | 0.1 | 0.1 | 0.0~1.0 | local 리랭크: 헤딩에 질의 키워드가 있으면 더하는 보너스. | 섹션 제목이 곧 주제인 문서(회의록 결정사항)에서 MRR↑ (실습 코퍼스 all 채널 MRR 0.743→0.799). 단, 제목만 맞고 본문에 답이 없는 문단(일정표)이 올라올 수 있어 단일 채널 평가에서는 1문항 하락 — 0 으로 끄면 원복. | 0.1 (기본). 헤딩이 빈약한 PDF 위주 코퍼스면 0. | tuning.json |  |
+| rerank | `post_rerank_llm_k` | int | 0 | 0 | 0~100 | 리랭크 뒤 LLM 선택(토글 llm_after_rerank, 역할 select, prompts/rerank_review.md)에 보낼 리랭크 상위 후보 수. 0 = top_k_final × 2. | LLM 이 이 안에서 컨텍스트에 넣을 청크(select)와 통째로 읽을 문서(expand_docs)를 고른다. 선택된 청크 수는 top_k_final 에 매이지 않는다(컨텍스트 상한 context_max_chars 로만 제한). | 0 (=top_k_final×2), 12 | tuning.json |  |
 | context | `top_k_final` | int | 8 | 10 **(변경)** | 1~50 | 최종 컨텍스트 후보 수. | 많을수록 근거↑ 토큰↑. | 8 | config.json |  |
 | context | `context_max_chars` | int | 9000 | 14000 **(변경)** | 500~200000 | 컨텍스트 총 글자 상한. | ≈ 토큰/3. | 9000 | config.json |  |
 | context | `context_chunk_chars` | int | 1200 | 1200 | 100~20000 | context_trim 시 청크당 글자 상한. |  | 1200 | config.json |  |
+| context | `context_chars_per_token` | float | 2.0 | 2.0 | 1.0~6.0 | 모델 창(토큰)을 글자 수로 바꿀 때 쓰는 비율 (글자/토큰). | 낮출수록 토큰을 넉넉히 잡아 **덜 넣는다**(안전). 한글·혼합 문서는 2.0, 영문 위주 코퍼스는 3~4 로 올려 더 넣을 수 있다. | 2.0 | tuning.json |  |
+| context | `context_budget_reserve_tokens` | int | 2000 | 2000 | 0~32000 | 모델 창에서 컨텍스트 말고 다른 것(시스템 프롬프트·질문·형식 지시)에 남겨 두는 토큰. | 프롬프트를 길게 고쳤거나 질문이 긴 편이면 키운다. 컨텍스트 상한이 그만큼 줄어든다. | 2000 | tuning.json |  |
+| context | `context_min_fit_chars` | int | 400 | 400 | 0~5000 | 컨텍스트 상한에 걸린 근거를 **잘라서라도 넣을** 최소 남은 공간(글자). | 예전에는 큰 청크 하나가 상한을 넘으면 거기서 **멈춰** 뒤 순위 근거가 통째로 빠졌다. 이제 남은 공간이 이 값 이상이면 잘라서 넣고, 아니면 건너뛰고 다음 후보를 계속 본다. 0 = 자르지 않고 건너뛰기만. | 400 | tuning.json |  |
 | context | `context_neighbors` | int | 0 | 1 **(변경)** | 0~3 | 상위 context_neighbor_top 개 청크의 앞/뒤 인접 청크를 n개씩 추가(같은 문서). | 표·목록이 청크 경계에서 잘린 경우 답변 완성도↑. 토큰↑. | 1 (상위 2개 청크의 앞뒤 1개씩). | tuning.json |  |
 | context | `context_neighbor_top` | int | 2 | 2 | 1~10 | 인접 청크를 붙일 상위 청크 수. |  | 2 | tuning.json |  |
 | context | `dedupe_similarity` | float | 0.85 | 0.85 | 0.5~1.0 | dedupe_hits 시 토큰 Jaccard 유사도가 이 이상인 문단(다른 문서 포함)을 중복으로 제거. | 일정표와 회의록에 같은 문장이 반복되는 코퍼스에서 토큰 절약. 너무 낮으면 관련 문단이 사라짐. | 0.85 | tuning.json |  |
@@ -129,6 +155,10 @@
 | answer | `extractive_sentences` | int | 6 | 6 | 1~30 | 추출식 답변 문장 수. |  | 6 | tuning.json |  |
 | answer | `extractive_min_len` | int | 15 | 15 | 1~200 | 추출식 답변 후보 문장 최소 길이. |  | 15 | tuning.json |  |
 | answer | `extractive_max_len` | int | 400 | 400 | 20~2000 | 추출식 답변 후보 문장 최대 길이. |  | 400 | tuning.json |  |
+| answer | `refs_preview_chars` | int | 200 | 200 | 0~2000 | 결과 refs(LLM 에 실제로 전달된 근거 목록)의 항목마다 붙이는 본문 미리보기 글자 수. CLI --json · Web REF 목록 · MCP structuredContent.refs 에 같은 값. | 화면·응답 크기에만 영향. 답변 품질과 무관. | 200 (기본), 0 (미리보기 없음) | tuning.json |  |
+| answer | `output_candidates_n` | int | 0 | 0 | 0~500 | output_mode=fused\|reranked 에서 응답 candidates[] 에 담을 후보 수. 0 = rerank_candidates 와 같게. | output_mode=answer 에는 영향 없음. 크게 두면 리랭크 창 밖 후보(리랭크 점수 없음)까지 보인다. | 0 (=rerank_candidates), 30 | tuning.json |  |
+| answer | `output_list_n` | int | 20 | 20 | 0~500 | output_mode=fused\|reranked 에서 응답 lists{채널: [(chunk_id, score)]} 에 담을 채널별 상위 개수. | 화면·응답 크기에만 영향. | 20 | tuning.json |  |
+| answer | `output_chunk_chars` | int | 0 | 0 | 0~20000 | output_mode=fused\|reranked 에서 candidates[].text 를 이 글자 수로 자른다. 0 = 전문. | 응답 크기 제어. MCP 로 붙는 LLM 에 넘길 때 300~600. | 0 (전문), 400 | tuning.json |  |
 | claim | `claim_support_min` | float | 0.5 | 0.5 | 0.0~1.0 | 휴리스틱 claim 검증: 문장의 핵심 토큰(키워드·수치·ID) 중 인용 근거에 있는 비율이 이 미만이면 unsupported. |  | 0.5 | tuning.json |  |
 | claim | `claim_policy` | choice | mark | mark | mark, drop, refine | 미지원 문장 처리: mark(문장 끝에 [미확인] 표기) \| drop(제거) \| refine(answer_refine 토글 시 LLM 재작성, 아니면 mark). | drop 은 답변이 짧아질 수 있음. | mark | tuning.json |  |
 | claim | `claim_min_groundedness` | float | 0.6 | 0.6 | 0.0~1.0 | groundedness 가 이 미만이면 답변 상단에 경고 + 포렌식 자동 기록. |  | 0.6 | tuning.json |  |

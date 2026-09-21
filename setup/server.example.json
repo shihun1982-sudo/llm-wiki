@@ -1,7 +1,7 @@
 {
   "_comment": "이 파일을 프로젝트 루트의 server.json 으로 복사해 수정하세요. 다중 사용자(동시 접속) 서버의 동시성·대기열·속도 제한·접근 제어·모니터 설정입니다. 설명: docs/CONCURRENCY.md · 변경: Web › Observability › 서버 모니터(admin) 또는 `python -m llmwiki server limits set concurrency.max_parallel_reads=16`. 모든 키는 환경변수 LLMWIKI_SERVER_<SECTION>_<KEY> 로도 덮어쓸 수 있습니다 (예 LLMWIKI_SERVER_CONCURRENCY_MAX_PARALLEL_READS=16).",
   "concurrency": {
-    "_comment": "질의(read)는 여러 개가 동시에, 빌드/설정 저장(write)은 하나만. 30명 동시 접속 기준 권장: max_parallel_reads 8~16 (LLM 응답 대기가 대부분이라 CPU 코어 수보다 크게 잡아도 된다), per_user 2~3, queue_max 64.",
+    "_comment": "질의(read)는 여러 개가 동시에, 빌드/설정 저장(write)은 하나만. 30명 동시 접속 기준 권장: max_parallel_reads 8~16 (LLM 응답 대기가 대부분이라 CPU 코어 수보다 크게 잡아도 된다), per_user 2~3, queue_max 64. 빌드(write) 관련 대기는 48시간(172800초)입니다: write_wait_timeout_s 는 빌드가 진행 중인 질의가 끝나길 기다리는 시간이라 짧으면 긴 빌드가 취소됩니다. 반대로 read_wait_timeout_s 는 **질의** 쪽 수명이라 900 으로 짧게 둡니다 - 전체 재빌드 동안 질의 스레드가 쌓여 서버가 마비되는 것을 막고, 초과하면 503 재시도 안내를 보냅니다 (빌드 중에도 질의를 받으려면 reads_during_build 를 쓰세요).",
     "max_parallel_reads": 8,
     "max_parallel_per_user": 3,
     "max_parallel_per_ip": 6,
@@ -10,15 +10,15 @@
     "queue_max": 64,
     "queue_timeout_s": 120,
     "reads_during_build": "incremental",
-    "write_wait_timeout_s": 600,
+    "write_wait_timeout_s": 172800,
     "read_wait_timeout_s": 900,
     "keep_alive_s": 30
   },
   "timeouts": {
-    "_comment": "협조적 시간 제한(초). 넘으면 취소를 요청하고, 다음 단계·배치·LLM 호출 전에 멈춘 뒤 지금까지의 결과로 응답합니다. 0 = 제한 없음. cli_s 는 0 으로 두지 마세요 - Web 콘솔 CLI 는 읽기 슬롯을 잡은 채 실행되므로 느린 한 명령이 다른 사용자를 모두 대기열에 밀어 넣습니다(빌드처럼 오래 걸리는 CLI 는 job_s 를 따릅니다).",
+    "_comment": "협조적 시간 제한(초). 넘으면 취소를 요청하고, 다음 단계·배치·LLM 호출 전에 멈춘 뒤 지금까지의 결과로 응답합니다. 0 = 제한 없음. cli_s 는 0 으로 두지 마세요 - Web 콘솔 CLI 는 읽기 슬롯을 잡은 채 실행되므로 느린 한 명령이 다른 사용자를 모두 대기열에 밀어 넣습니다(빌드처럼 오래 걸리는 CLI 는 job_s 를 따릅니다). job_s 는 빌드·평가·스냅샷 같은 배치 작업의 상한으로 48시간(172800초)입니다 - 0 으로 두면 제한이 없습니다. Web 콘솔의 `build` 명령도 cli_s 가 아니라 job_s 를 따릅니다.",
     "query_s": 900,
     "search_s": 120,
-    "job_s": 0,
+    "job_s": 172800,
     "mcp_s": 900,
     "cli_s": 600
   },
@@ -58,6 +58,10 @@
     "stats_window_min": 15,
     "live_dir": "data/live",
     "live_stale_s": 90
+  },
+  "debug": {
+    "_comment": "500 응답에 스택트레이스를 포함할지. 기본 false — 트레이스는 logs/error.log 에 참조 id(ref)와 함께 남고 클라이언트는 {code:'internal', ref} 만 받는다 (admin 은 항상 본다). 개발 PC 에서만 true.",
+    "expose_trace": false
   },
   "collab": {
     "enabled": true,

@@ -482,8 +482,11 @@ def normalize_meta(fm: Dict[str, Any], doc_id: str, title: str, text: str, mtime
             "hw_chip": str(hw.get("chip") or ""), "hw_rev": str(hw.get("rev") or ""), "related": related,
             "period_from": _norm_date(period.get("from")) or "", "period_to": _norm_date(period.get("to")) or "",
             "summary": str(meta.get("summary") or ""), "schema_version": int(meta.get("schema_version") or 0) if had else 0,
+            # `acl:` 는 문서가 스스로 매기는 접근 등급 (`acl: class1` 또는 `acl: [class1, admin]`).
+            # extra 가 아니라 정식 필드로 뽑아야 doc_meta 의 전용 컬럼에 들어가고, 질의마다 값싸게 읽힌다 (llmwiki/docacl.py).
+            "acl": _as_list(meta.get("acl")) if isinstance(meta.get("acl"), (list, tuple)) else str(meta.get("acl") or "").strip(),
             "inferred": not had, "extra": {k: v for k, v in meta.items() if k not in (
-                "schema_version", "doc_type", "id", "title", "date", "author", "status", "tags", "module", "modules", "hw", "related", "period", "summary")}}
+                "schema_version", "doc_type", "id", "title", "date", "author", "status", "tags", "module", "modules", "hw", "related", "period", "summary", "acl")}}
 
 
 def meta_tokens(nm: Dict[str, Any]) -> str:
@@ -561,6 +564,14 @@ def lint_document(fm: Dict[str, Any], nm: Dict[str, Any], body: str, had_fm: boo
     for key in sc.get("required_related", []):
         if not (nm.get("related") or {}).get(key):
             issues.append({"level": "error" if had_fm else "warn", "field": "related.%s" % key, "msg": "related.%s 필수 (예: CL → 이슈 번호)" % key})
+    # `acl:` 은 유형 스키마에 없는 공통 필드다. 오타(acl: class-1)는 조용히 무시돼 문서가 공개된 채로 남으므로
+    # 빌드 린트에서 알려 준다 (llmwiki/docacl.py · docs/SECURITY.md).
+    if nm.get("acl"):
+        from .docacl import RANK as _ROLE_RANK
+        bad = [x for x in ([nm["acl"]] if isinstance(nm["acl"], str) else list(nm["acl"])) if str(x) not in _ROLE_RANK]
+        if bad:
+            issues.append({"level": "error", "field": "acl",
+                           "msg": "알 수 없는 역할: %s (허용 %s) — 이 값은 무시되어 문서가 공개로 남습니다" % (", ".join(map(str, bad)), ", ".join(_ROLE_RANK))})
     heads = [h.strip().lower() for h in _HEAD_RE.findall(body or "")]
     secs = sc.get("sections") or {}
     for req in secs.get("required", []):

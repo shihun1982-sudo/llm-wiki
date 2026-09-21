@@ -282,7 +282,7 @@ def list_tasks_static() -> List[Dict[str, Any]]:
         except Exception as e:
             nr, err = None, str(e)
         out.append(dict(t, last_run=s.get("last_run"), last_status=s.get("last_status"), last_ms=s.get("last_ms"), last_error=s.get("last_error"),
-                        next_run=nr, running=False, invalid=err))
+                        last_skipped=s.get("last_skipped"), next_run=nr, running=False, invalid=err))
     if d.get("error"):
         out.append({"name": "(schedule.json)", "invalid": d["error"], "enabled": False})
     return out
@@ -492,8 +492,12 @@ def run_action(pipe, task: Dict[str, Any], log=None) -> Dict[str, Any]:
         if op == "auto_apply":
             # 사람이 확인하지 않고 적용하므로: 신뢰도 하한 · 종류 제한 · 개수 상한을 모두 지킨다
             min_conf = float(act.get("min_confidence") or pipe.s.evolve_min_confidence or 0.9)
-            kinds = [str(k) for k in (act.get("kinds") or ["pin", "query_rule", "tuning", "synonym"])]
+            # 종류 제한은 evolve 쪽 한 곳에서 정한다 (config.json evolve_auto_apply_kinds, 비우면 안전한 기본값).
+            kinds = [str(k) for k in (act.get("kinds") or _ev.auto_apply_kinds(pipe.s))]
             limit = int(act.get("max_apply") or 5)
+            # 2026-09-19: 회귀 평가 기본값을 **켬**으로 바꿨다. 사람이 안 보는 경로인데 평가를 끄면
+            # 악화되어도 롤백이 돌지 않아, 검색 품질이 조용히 나빠진 채로 쌓인다. 끄려면 태스크에 evaluate:false 를 적는다.
+            evaluate = bool(act.get("evaluate", True))
             applied, skipped, errors = [], 0, []
             for p in pipe.store.proposals("proposed"):
                 if len(applied) >= limit:
@@ -502,12 +506,13 @@ def run_action(pipe, task: Dict[str, Any], log=None) -> Dict[str, Any]:
                     skipped += 1
                     continue
                 try:
-                    r = _ev.apply_proposal(pipe, int(p["id"]), evaluate=bool(act.get("evaluate", False)))
+                    r = _ev.apply_proposal(pipe, int(p["id"]), evaluate=evaluate)
                     applied.append({"id": p["id"], "kind": p["kind"], "ok": not r.get("error"), "detail": str(r)[:120]})
                     note("제안 #%s(%s) 적용" % (p["id"], p["kind"]))
                 except Exception as e:      # 한 건 실패가 전체를 막지 않게
                     errors.append({"id": p.get("id"), "error": str(e)[:200]})
-            return {"applied": applied, "skipped": skipped, "errors": errors, "min_confidence": min_conf, "kinds": kinds}
+            return {"applied": applied, "skipped": skipped, "errors": errors, "min_confidence": min_conf,
+                    "kinds": kinds, "evaluate": evaluate}
         raise ValueError("evolve op 은 review|consolidate|auto_apply|status")
     if typ == "memory":
         from . import memory as _mem
@@ -773,6 +778,8 @@ class Scheduler:
                 st = self.state.get(t["name"], {})
                 r = self.running.get(t["name"])
                 out.append(dict(t, last_run=st.get("last_run"), last_status=st.get("last_status"), last_ms=st.get("last_ms"), last_error=st.get("last_error"),
+                                # last_skipped: 앞 실행이 안 끝나 건너뛴 시각 (overlap=skip). "왜 안 돌았나" 의 답이라 목록에 싣는다.
+                                last_skipped=st.get("last_skipped"),
                                 last_result=st.get("last_result"), next_run=st.get("next_run"), running=bool(r), token=(r or {}).get("token"),
                                 weight=action_weight(t)[0], invalid=""))
             for e in self.errors:

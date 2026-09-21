@@ -106,11 +106,23 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("syn_w", "query_rules", "float", 0.8, "synonym 확장 리스트 가중치 (원 질의 1.0 대비).", "", "0.8", 0.0, 2.0),
     _p("related_w", "query_rules", "float", 0.4, "related(관련어) 보조 리스트 가중치 — 주 질의에 섞지 않고 별도 리스트로 융합.", "높이면 관련 주제가 상위로 올라와 precision↓.", "0.4", 0.0, 2.0),
     _p("exclude_penalty", "query_rules", "float", 0.5, "exclude 용어를 포함한 후보의 fused 점수 배율 (0=완전 제거).", "", "0.5", 0.0, 1.0),
+    # 2026-09-19 추가 유형 (llmwiki/query_rules.py 의 RULE_TYPES 레지스트리)
+    _p("context_w", "query_rules", "float", 0.9, "context(문맥 의존) 확장의 치환 질의 가중치.",
+       "문맥 조건이 맞을 때만 발화하므로 일반 synonym(syn_w 0.8)보다 **정확하다** → 조금 높게 둔다. 낮추면 문맥 확장이 순위에 덜 반영된다.", "0.9", 0.0, 2.0),
+    _p("hypernym_down_w", "query_rules", "float", 0.35, "hypernym: 질의의 **상위어**로부터 하위어를 보조 리스트에 넣을 때의 가중치.",
+       "'메모리 오류' 로 물었을 때 'DMA 오버런' 문서를 얼마나 끌어올릴지. 높이면 recall↑ precision↓ — related_w(0.4) 근처가 무난하다.", "0.35", 0.0, 2.0),
+    _p("hypernym_up_w", "query_rules", "float", 0.2, "hypernym: 질의의 **하위어**로부터 상위어를 보조 리스트에 넣을 때의 가중치.",
+       "상위어 문서는 대개 일반론이라 구체적 질문의 답이 아니다 → down 보다 낮게. 0 으로 두면 올라가기를 끈다.", "0.2", 0.0, 2.0),
     _p("acronym_phrase", "query_rules", "bool", True, "acronym 확장어를 구문(phrase) 검색으로 넣을지 (false 면 토큰 OR).", "", "true", choices=[True, False]),
     _p("query_rules_max_rounds", "query_rules", "int", 2,
        "규칙을 몇 번 접어 적용할지. 1 이면 한 번만 — 'TAT→Turn Around Time'(acronym) 뒤에 걸린 'Turn Around Time→응답시간'(synonym) 이 무시된다.",
        "크게 하면 사슬이 긴 사전에서 확장어가 폭증해 precision↓·지연↑. 연관어(related)와 별칭(alias)은 다시 펼치지 않는다.",
        "2 (기본), 3 (약어→정식명→동의어 사슬이 깊은 사전)", 1, 5),
+    _p("related_symmetric", "query_rules", "bool", False,
+       "related(연관어)를 양방향으로 쓸지. false(기본) 는 일방 — 키 A 가 질의에 있을 때만 값 B 를 보조 리스트에 넣는다. "
+       "true 면 B 가 질의에 있을 때 A 도 보조 리스트에 넣는다 (acronym/synonym 은 원래 양방향, alias 는 늘 일방). `rules explain <용어>` 로 확인.",
+       "켜면 recall↑ 이지만 연관어가 서로를 끌어와 precision↓. 동치라면 related 대신 acronym/synonym 에 넣는 것이 정답.",
+       "false", choices=[True, False]),
     # ------------------------------------------------------------------ query_expand
     _p("query_expand_n", "query_expand", "int", 2, "생성할 대체 질의 수.", "많을수록 recall↑ 지연↑ (질의마다 FTS+벡터 실행).", "2", 1, 5),
     _p("query_expand_w", "query_expand", "float", 0.6, "대체 질의 결과 리스트의 융합 가중치 (원 질의 채널 가중치 대비 배율).", "1.0 이면 원 질의와 동등.", "0.6", 0.0, 2.0),
@@ -171,11 +183,37 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("external_rag_k", "rrf_fuse", "int", 5, "외부 RAG 소스마다 요청할 결과 수 (retrieve.args 의 {k}). fallback 라운드에서는 k_mult 배.", "많을수록 외부 지연·토큰↑.", "5", 1, 50),
     _p("external_rag_inject", "rrf_fuse", "int", 2, "외부 소스별 상위 n개 결과를 (RRF 순위와 무관하게) 리랭크 후보 창에 보장 주입. 외부 채널은 리스트가 하나뿐이라 내부 리스트 여러 개(fts/alt/vector…)와 RRF 로 경쟁하면 후보 밖으로 밀리기 쉬우므로, 최종 판단은 리랭커에 맡긴다.",
        "0 이면 순수 RRF 경쟁. 크면 외부 결과가 항상 리랭크를 받는다(리랭크 비용↑).", "2", 0, 20),
+    # 채널별 top-k 구간 가중 (docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.2): 채널 c 의 순위 r 에 w_c × (topk_w if r ≤ topk_n else tail_w).
+    # 보조 리스트(fts_rule/fts_alt1/vector_alt2/fts_rel1/ext_<src>)는 이름 앞부분의 기본 채널 값을 물려받는다. 적용 배율은 Hit.boosts["topk_<채널>"].
+    _p("fts_topk_n", "rrf_fuse", "int", 0, "FTS 채널에서 'top-k 안' 으로 볼 순위 (0 = 구간 가중 끔). 이 순위까지는 fts_topk_w, 밖은 fts_tail_w 를 채널 가중치에 곱한다.",
+       "FTS 상위만 믿고 싶을 때(정확 매칭이 강한 코퍼스) n 을 작게·topk_w 를 크게. 보조 리스트(fts_rule/fts_alt/fts_rel)에도 같은 값이 적용된다.", "0 (기본), 5", 0, 200),
+    _p("fts_topk_w", "rrf_fuse", "float", 1.0, "FTS 채널 top-k 안 후보의 채널 가중 배율.", "1.5 면 상위 n개가 RRF 합산에서 1.5배. 1.0 이면 변화 없음.", "1.0 (기본), 1.5", 0.0, 5.0),
+    _p("fts_tail_w", "rrf_fuse", "float", 1.0, "FTS 채널 top-k 밖 후보의 배율 (0 = 밖은 후보에서 버림).",
+       "0.5 면 하위 후보의 기여가 절반. 0 이면 그 채널의 하위 후보는 융합에 참여하지 않는다(다른 채널에서 나오면 살아남는다).", "1.0 (기본), 0.5", 0.0, 5.0),
+    _p("vector_topk_n", "rrf_fuse", "int", 0, "벡터 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔). vector_alt 리스트에도 적용.", "의미 임베더의 상위 결과가 신뢰도가 높을 때 상위를 우대.", "0 (기본), 5", 0, 200),
+    _p("vector_topk_w", "rrf_fuse", "float", 1.0, "벡터 채널 top-k 안 후보의 배율.", "", "1.0", 0.0, 5.0),
+    _p("vector_tail_w", "rrf_fuse", "float", 1.0, "벡터 채널 top-k 밖 후보의 배율 (0 = 버림).", "hash 임베딩처럼 하위 순위가 잡음이면 0.5 이하.", "1.0", 0.0, 5.0),
+    _p("graph_topk_n", "rrf_fuse", "int", 0, "그래프 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔).", "시드 직결 청크(상위)와 다중 홉 청크(하위)를 다르게 대접할 때.", "0 (기본), 3", 0, 200),
+    _p("graph_topk_w", "rrf_fuse", "float", 1.0, "그래프 채널 top-k 안 후보의 배율.", "", "1.0", 0.0, 5.0),
+    _p("graph_tail_w", "rrf_fuse", "float", 1.0, "그래프 채널 top-k 밖 후보의 배율 (0 = 버림).", "", "1.0", 0.0, 5.0),
+    _p("doc_vector_topk_n", "rrf_fuse", "int", 0, "문서 카드 벡터 채널에서 'top-k 안' 으로 볼 순위 (0 = 끔).", "", "0 (기본), 3", 0, 200),
+    _p("doc_vector_topk_w", "rrf_fuse", "float", 1.0, "문서 카드 벡터 채널 top-k 안 후보의 배율.", "", "1.0", 0.0, 5.0),
+    _p("doc_vector_tail_w", "rrf_fuse", "float", 1.0, "문서 카드 벡터 채널 top-k 밖 후보의 배율 (0 = 버림).", "", "1.0", 0.0, 5.0),
+    _p("external_topk_n", "rrf_fuse", "int", 0, "외부 RAG 채널(모든 ext_<source>)에서 'top-k 안' 으로 볼 순위 (0 = 끔).", "외부 소스의 상위 결과만 신뢰할 때. 소스마다 따로 세지 않고 각 ext_ 리스트에 같은 n 을 적용한다.", "0 (기본), 2", 0, 200),
+    _p("external_topk_w", "rrf_fuse", "float", 1.0, "외부 RAG 채널 top-k 안 후보의 배율.", "", "1.0", 0.0, 5.0),
+    _p("external_tail_w", "rrf_fuse", "float", 1.0, "외부 RAG 채널 top-k 밖 후보의 배율 (0 = 버림).", "", "1.0", 0.0, 5.0),
+    _p("channel_inject", "rrf_fuse", "str", "", "채널별 리랭크 창 보장 주입 수 `fts:2,vector:2,graph:1` (채널: fts | vector | graph | doc_vector | external). "
+       "그 채널 주 리스트의 상위 n개를 RRF 순위와 무관하게 리랭크 후보 창 안으로 올린다(창 끝 요소 바로 위의 fused, why=inject:<채널>). external_rag_inject 와 같은 방식.",
+       "'벡터 1위인데 리랭크 후보에도 못 들었다' 를 막는다. 최종 순위는 리랭커가 정하므로 부작용은 리랭크 후보 수 증가뿐.", "\"\" (기본), fts:2,vector:2,graph:1"),
     _p("doc_type_boost", "rrf_fuse", "str", "", "문서 유형 부스트 맵 `issue:1.2,cl:1.1` (fused × 값). 라우터가 힌트를 잡으면 해당 유형 추가 ×1.2.",
        "질문 유형과 문서 유형이 맞을 때 상위로.", "issue:1.2,coding_rule:1.1"),
     _p("pin_boost", "rrf_fuse", "float", 10.0, "pin 된 청크의 fused 점수 배율 (사실상 최상위 고정).", "", "10.0", 1.0, 100.0),
     _p("provenance_boost", "rrf_fuse", "float", 0.2, "그래프 후보 중 explicit/rule 관계로 도달한 청크의 추가 배율(1+w).", "", "0.2", 0.0, 2.0),
     _p("feedback_boost_w", "rrf_fuse", "float", 0.15, "긍정 피드백 청크 부스트 최대 배율(1+w×strength).", "", "0.15", 0.0, 1.0),
+    _p("fusion_llm_candidates", "rrf_fuse", "int", 0, "융합 뒤 LLM 검토(토글 llm_after_fusion, 역할 fusion, prompts/fusion_review.md)에 보낼 상위 후보 수. 0 = rerank_candidates 와 같게.",
+       "많을수록 프롬프트(후보 × rerank_chunk_chars)와 토큰↑, 검토 범위↑. 리랭크 후보 수보다 크게 두면 리랭크 창 밖 후보까지 걸러 준다.", "0 (=rerank_candidates), 24", 0, 100),
+    _p("fusion_llm_drop_penalty", "rrf_fuse", "float", 0.3, "융합 뒤 LLM 검토가 drop 으로 고른 후보의 fused 점수 배율. 0 이면 후보에서 제거한다(why=llm_drop).",
+       "0.3 은 감점만 하므로 LLM 이 틀려도 리랭크가 되살릴 수 있다. 0 은 확실히 제거하지만 LLM 오판이 그대로 결과가 된다.", "0.3 (기본), 0 (제거)", 0.0, 1.0),
     # ------------------------------------------------------------------ rerank
     _p("rerank_candidates", "rerank", "int", 16, "리랭크 후보 수.", "", "16", 1, 100, source="config"),
     _p("rerank_chunk_chars", "rerank", "int", 600, "LLM/크로스인코더 입력 청크 글자 수.", "", "600", 100, 4000, source="config"),
@@ -198,10 +236,21 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("rerank_heading_bonus", "rerank", "float", 0.1, "local 리랭크: 헤딩에 질의 키워드가 있으면 더하는 보너스.",
        "섹션 제목이 곧 주제인 문서(회의록 결정사항)에서 MRR↑ (실습 코퍼스 all 채널 MRR 0.743→0.799). 단, 제목만 맞고 본문에 답이 없는 문단(일정표)이 올라올 수 있어 단일 채널 평가에서는 1문항 하락 — 0 으로 끄면 원복.",
        "0.1 (기본). 헤딩이 빈약한 PDF 위주 코퍼스면 0.", 0.0, 1.0),
+    _p("post_rerank_llm_k", "rerank", "int", 0, "리랭크 뒤 LLM 선택(토글 llm_after_rerank, 역할 select, prompts/rerank_review.md)에 보낼 리랭크 상위 후보 수. 0 = top_k_final × 2.",
+       "LLM 이 이 안에서 컨텍스트에 넣을 청크(select)와 통째로 읽을 문서(expand_docs)를 고른다. 선택된 청크 수는 top_k_final 에 매이지 않는다(컨텍스트 상한 context_max_chars 로만 제한).",
+       "0 (=top_k_final×2), 12", 0, 100),
     # ------------------------------------------------------------------ context
     _p("top_k_final", "context", "int", 8, "최종 컨텍스트 후보 수.", "많을수록 근거↑ 토큰↑.", "8", 1, 50, source="config"),
     _p("context_max_chars", "context", "int", 9000, "컨텍스트 총 글자 상한.", "≈ 토큰/3.", "9000", 500, 200000, source="config"),
     _p("context_chunk_chars", "context", "int", 1200, "context_trim 시 청크당 글자 상한.", "", "1200", 100, 20000, source="config"),
+    # 2026-09-19: context_max_chars 는 사람이 정한 값이라 모델의 입력 창과 무관했다. 창이 작은 모델에 긴 컨텍스트를
+    # 넣으면 프롬프트가 조용히 잘려 뒤쪽 근거가 통째로 사라진다. 아래 두 값으로 models.json 의 context_k 를 실제 상한에 연결한다.
+    _p("context_chars_per_token", "context", "float", 2.0, "모델 창(토큰)을 글자 수로 바꿀 때 쓰는 비율 (글자/토큰).",
+       "낮출수록 토큰을 넉넉히 잡아 **덜 넣는다**(안전). 한글·혼합 문서는 2.0, 영문 위주 코퍼스는 3~4 로 올려 더 넣을 수 있다.", "2.0", 1.0, 6.0),
+    _p("context_budget_reserve_tokens", "context", "int", 2000, "모델 창에서 컨텍스트 말고 다른 것(시스템 프롬프트·질문·형식 지시)에 남겨 두는 토큰.",
+       "프롬프트를 길게 고쳤거나 질문이 긴 편이면 키운다. 컨텍스트 상한이 그만큼 줄어든다.", "2000", 0, 32000),
+    _p("context_min_fit_chars", "context", "int", 400, "컨텍스트 상한에 걸린 근거를 **잘라서라도 넣을** 최소 남은 공간(글자).",
+       "예전에는 큰 청크 하나가 상한을 넘으면 거기서 **멈춰** 뒤 순위 근거가 통째로 빠졌다. 이제 남은 공간이 이 값 이상이면 잘라서 넣고, 아니면 건너뛰고 다음 후보를 계속 본다. 0 = 자르지 않고 건너뛰기만.", "400", 0, 5000),
     _p("context_neighbors", "context", "int", 0, "상위 context_neighbor_top 개 청크의 앞/뒤 인접 청크를 n개씩 추가(같은 문서).",
        "표·목록이 청크 경계에서 잘린 경우 답변 완성도↑. 토큰↑.", "1 (상위 2개 청크의 앞뒤 1개씩).", 0, 3),
     _p("context_neighbor_top", "context", "int", 2, "인접 청크를 붙일 상위 청크 수.", "", "2", 1, 10),
@@ -240,6 +289,15 @@ TUNABLES: List[Dict[str, Any]] = [
     _p("extractive_sentences", "answer", "int", 6, "추출식 답변 문장 수.", "", "6", 1, 30),
     _p("extractive_min_len", "answer", "int", 15, "추출식 답변 후보 문장 최소 길이.", "", "15", 1, 200),
     _p("extractive_max_len", "answer", "int", 400, "추출식 답변 후보 문장 최대 길이.", "", "400", 20, 2000),
+    _p("refs_preview_chars", "answer", "int", 200, "결과 refs(LLM 에 실제로 전달된 근거 목록)의 항목마다 붙이는 본문 미리보기 글자 수. CLI --json · Web REF 목록 · MCP structuredContent.refs 에 같은 값.",
+       "화면·응답 크기에만 영향. 답변 품질과 무관.", "200 (기본), 0 (미리보기 없음)", 0, 2000),
+    # 출력 모드 (config.json output_mode ≠ answer 일 때만 의미, docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.3)
+    _p("output_candidates_n", "answer", "int", 0, "output_mode=fused|reranked 에서 응답 candidates[] 에 담을 후보 수. 0 = rerank_candidates 와 같게.",
+       "output_mode=answer 에는 영향 없음. 크게 두면 리랭크 창 밖 후보(리랭크 점수 없음)까지 보인다.", "0 (=rerank_candidates), 30", 0, 500),
+    _p("output_list_n", "answer", "int", 20, "output_mode=fused|reranked 에서 응답 lists{채널: [(chunk_id, score)]} 에 담을 채널별 상위 개수.",
+       "화면·응답 크기에만 영향.", "20", 0, 500),
+    _p("output_chunk_chars", "answer", "int", 0, "output_mode=fused|reranked 에서 candidates[].text 를 이 글자 수로 자른다. 0 = 전문.",
+       "응답 크기 제어. MCP 로 붙는 LLM 에 넘길 때 300~600.", "0 (전문), 400", 0, 20000),
     # ------------------------------------------------------------------ claim
     _p("claim_support_min", "claim", "float", 0.5, "휴리스틱 claim 검증: 문장의 핵심 토큰(키워드·수치·ID) 중 인용 근거에 있는 비율이 이 미만이면 unsupported.", "", "0.5", 0.0, 1.0),
     _p("claim_policy", "claim", "choice", "mark", "미지원 문장 처리: mark(문장 끝에 [미확인] 표기) | drop(제거) | refine(answer_refine 토글 시 LLM 재작성, 아니면 mark).",
@@ -308,9 +366,13 @@ class Tuning:
         for k, v in (values or {}).items():
             if k in _INDEX and _INDEX[k]["source"] == "tuning":
                 try:
-                    self._base[k] = coerce(k, v)
+                    cv = coerce(k, v)
                 except (ValueError, TypeError):
-                    pass
+                    continue
+                # 기본값과 같은 값은 '오버라이드' 가 아니다 — `config fill-defaults --tuning` 이 모든 키를 파일에 적어 두어도
+                # to_dict()/describe(overridden) 는 실제로 바꾼 것만 보이게 한다 (set() 과 같은 규칙)
+                if cv != _INDEX[k]["default"]:
+                    self._base[k] = cv
 
     # ---- 요청 단위 오버레이 ----
     @property
@@ -395,12 +457,64 @@ def load_tuning(path: Optional[str] = None) -> Tuning:
     return T
 
 
-def save_tuning(t: Tuning, path: Optional[str] = None) -> str:
+EXPLICIT_MARK = "_explicit_defaults"    # tuning.json 에 이 키가 true 면 모든 튜닝 키를 기본값까지 적어 둔다 (config fill-defaults --tuning)
+_COMMENT_SPARSE = "단계별 튜닝 파라미터 오버라이드. 키/기본값/설명은 docs/TUNING.md 또는 `python -m llmwiki tuning show`. 기본값과 같은 값은 저장하지 않습니다."
+_COMMENT_EXPLICIT = ("단계별 튜닝 파라미터 (모든 키를 기본값까지 명시 — `config fill-defaults --tuning`). 설명·범위는 docs/TUNING.md 또는 "
+                     "`python -m llmwiki tuning show`. 값을 바꾸면 그 줄만 고치면 된다. _explicit_defaults 를 지우면 다음 저장부터 바꾼 값만 남긴다.")
+
+
+def tunable_keys() -> List[str]:
+    """tuning.json 이 가질 수 있는 키 (source=tuning) — 단계 순서."""
+    return [p["key"] for p in TUNABLES if p["source"] == "tuning"]
+
+
+def save_tuning(t: Tuning, path: Optional[str] = None, explicit: Optional[bool] = None) -> str:
+    """tuning.json 저장. explicit=None 이면 파일의 _explicit_defaults 표식을 따른다:
+    표식이 있으면 모든 튜닝 키를 현재값(기본값 포함)으로, 없으면 예전처럼 바꾼 값만."""
     path = path or TUNING_PATH
-    data: Dict[str, Any] = {"_comment": "단계별 튜닝 파라미터 오버라이드. 키/기본값/설명은 docs/TUNING.md 또는 `python -m llmwiki tuning show`. 기본값과 같은 값은 저장하지 않습니다."}
-    data.update(t.to_dict())
     from . import atomicio
+    if explicit is None:
+        prev = atomicio.read_json(path)
+        explicit = bool(isinstance(prev, dict) and prev.get(EXPLICIT_MARK))
+    if explicit:
+        data: Dict[str, Any] = {"_comment": _COMMENT_EXPLICIT, EXPLICIT_MARK: True}
+        data.update({k: t.get(k) for k in tunable_keys()})
+    else:
+        data = {"_comment": _COMMENT_SPARSE}
+        data.update(t.to_dict())
     return atomicio.write_json(path, data)
+
+
+def fill_defaults(path: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
+    """tuning.json 에 빠진 튜닝 키를 전부 기본값으로 채워 쓴다 (있는 값 유지, _explicit_defaults=true 표식).
+    표식이 있으면 이후 `tuning set` · Web 저장도 모든 키를 유지한다. 반환 {path, added, unknown, written}."""
+    path = path or TUNING_PATH
+    from . import atomicio
+    prev = atomicio.read_json(path)
+    prev = prev if isinstance(prev, dict) else {}
+    out: Dict[str, Any] = {"_comment": _COMMENT_EXPLICIT, EXPLICIT_MARK: True}
+    added: List[str] = []
+    unknown: List[str] = []
+    for k in tunable_keys():
+        if k in prev:
+            out[k] = prev[k]
+        else:
+            out[k] = _INDEX[k]["default"]
+            added.append(k)
+    for k, v in prev.items():
+        if k.startswith("_"):
+            continue
+        if k in _INDEX and _INDEX[k]["source"] == "config":
+            unknown.append("%s (config.json 항목 — 여기서는 무시됨)" % k)
+        elif k not in _INDEX:
+            unknown.append(k)
+            out[k] = v                    # 모르는 키도 지우지 않는다 (다른 버전이 쓰는 값일 수 있음)
+    rep = {"path": path, "added": added, "unknown": unknown, "dry_run": dry_run,
+           "written": False, "changed": bool(added) or not prev.get(EXPLICIT_MARK)}
+    if rep["changed"] and not dry_run:
+        atomicio.write_json(path, out)
+        rep["written"] = True
+    return rep
 
 
 def render_doc(settings: Any = None, t: Optional[Tuning] = None) -> str:

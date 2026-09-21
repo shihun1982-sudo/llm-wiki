@@ -11,13 +11,63 @@
  },
  {
   "ok": true,
+  "name": "Web: overrides.llm_retries 가 실제 시도 횟수를 바꾼다",
+  "detail": "retries=0→1 · retries=2→3 (기대 1·3)"
+ },
+ {
+  "ok": true,
+  "name": "MCP: 같은 overrides 가 같은 시도 횟수를 만든다",
+  "detail": "retries=0→1 · retries=2→3"
+ },
+ {
+  "ok": true,
+  "name": "Web 과 MCP 가 **같은 값**을 돌려준다",
+  "detail": "web=(1,3) mcp=(1,3)"
+ },
+ {
+  "ok": true,
+  "name": "MCP 구조화 결과에 llm_report 가 실린다",
+  "detail": "expand(mock/mock) 4회 시도 후 실패 (timeout 600s) — mock timeout (테스트 훅 LLMWIKI_MOCK_F"
+ },
+ {
+  "ok": true,
+  "name": "역할 단위 llm_roles.answer.retries 도 걸린다",
+  "detail": "max_attempts=2 (기대 2)"
+ },
+ {
+  "ok": true,
+  "name": "overrides.llm_timeout 이 incident 의 timeout_s 로 보인다",
+  "detail": "timeout_s=7"
+ },
+ {
+  "ok": true,
+  "name": "전역 철자와 역할 철자의 권한 등급이 같다",
+  "detail": "어긋남: 없음"
+ },
+ {
+  "ok": true,
+  "name": "CLI: `query --set llm_retries=` 가 같은 시도 횟수를 만든다",
+  "detail": "retries=0→1 · retries=2→3"
+ },
+ {
+  "ok": true,
+  "name": "**세 창구가 같은 값** (Web=CLI=MCP)",
+  "detail": "web=(1,3) cli=(1,3) mcp=(1,3)"
+ },
+ {
+  "ok": true,
+  "name": "CLI: 낮은 역할은 금지 키를 못 쓴다 (Web/MCP 와 같은 이유 메시지)",
+  "detail": "code=5 !! --set: 요청 단위 overrides 에 허용되지 않는 키: openai_base_url — URL·헤더·경로·서버 운영 설정은 admin 이 Setti"
+ },
+ {
+  "ok": true,
   "name": "500 이 아니라 200 으로 응답한다",
   "detail": "HTTP 200"
  },
  {
   "ok": true,
   "name": "근거 기반 답변이 여전히 나온다",
-  "detail": "mode=extractive · 4303자"
+  "detail": "mode=extractive · 4620자"
  },
  {
   "ok": true,
@@ -72,7 +122,7 @@
  {
   "ok": true,
   "name": "5xx(예상 밖 오류) 없이 처리되거나 거절된다",
-  "detail": "200=2 거절=10 그밖=0 (14s)"
+  "detail": "200=2 거절=10 그밖=0 (13s)"
  },
  {
   "ok": true,
@@ -92,7 +142,7 @@
  {
   "ok": true,
   "name": "죽은 외부 소스가 있어도 답이 나온다",
-  "detail": "HTTP 200 · 3.0s"
+  "detail": "HTTP 200 · 2.2s"
  },
  {
   "ok": true,
@@ -102,7 +152,7 @@
  {
   "ok": true,
   "name": "죽은 소스가 질의를 무한정 붙들지 않는다",
-  "detail": "3.0s"
+  "detail": "2.2s"
  },
  {
   "ok": true,
@@ -118,5 +168,70 @@
   "ok": true,
   "name": "도구 목록은 영향을 받지 않는다",
   "detail": "HTTP 200"
+ },
+ {
+  "ok": true,
+  "name": "GET /api/limits 가 단계별 제한을 준다",
+  "detail": "HTTP 200 · 단계 44개"
+ },
+ {
+  "ok": true,
+  "name": "trace 노드 이름으로 제한을 찾을 수 있다 (실측 ms 옆 '≤ 제한')",
+  "detail": "answer_llm=\"answer 역할 LLM 1회\""
+ },
+ {
+  "ok": true,
+  "name": "빌드 제한 timeouts.job_s 가 48시간 이상(또는 무제한)",
+  "detail": "172800.0초"
+ },
+ {
+  "ok": true,
+  "name": "빌드 제한 concurrency.write_wait_timeout_s 가 48시간 이상(또는 무제한)",
+  "detail": "172800.0초"
+ },
+ {
+  "ok": true,
+  "name": "빌드 제한 build_lock_timeout 가 48시간 이상(또는 무제한)",
+  "detail": "172800.0초"
+ },
+ {
+  "ok": true,
+  "name": "빌드 제한 build_lock_stale_s 가 48시간 이상(또는 무제한)",
+  "detail": "172800.0초"
+ },
+ {
+  "ok": true,
+  "name": "server.json timeouts.job_s = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "server.json concurrency.write_wait_timeout_s = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "setup/server.example.json timeouts.job_s = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "config.json build_lock_timeout = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "config.json build_lock_stale_s = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "setup/config.example.json build_lock_stale_s = 172800",
+  "detail": "172800"
+ },
+ {
+  "ok": true,
+  "name": "read_wait_timeout_s 는 짧게 유지된다 (빌드가 아니라 질의의 수명)",
+  "detail": "900초"
  }
 ]

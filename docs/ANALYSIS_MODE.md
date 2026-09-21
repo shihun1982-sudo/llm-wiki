@@ -1,6 +1,6 @@
 # ANALYSIS MODE — 상세 분석 모드: 질의 한 건의 모든 단계를 한 장의 리포트로 (품질 · 속도 · 토큰)
 
-> 대상: 검색 품질/지연/토큰량이 마음에 들지 않을 때 "어느 단계를 어떤 설정으로 고쳐야 하나"를 알아내려는 운영자, 그리고 그 리포트를 받아 튜닝을 제안할 LLM. 자동/기대 결과 포렌식([FORENSIC.md](FORENSIC.md))이 "왜 이 근거가 빠졌나"에 답한다면, 이 모드는 **한 질의의 전 단계 실행 기록·설정·수치를 빠짐없이 문서화**해 세 관점(품질·속도·토큰)에서 조절점을 짚는다. 2026-09-15 구현, 설계 근거 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §10, 검증 [VERIFICATION_0915.md](VERIFICATION_0915.md) §8.
+> 대상: 검색 품질/지연/토큰량이 마음에 들지 않을 때 "어느 단계를 어떤 설정으로 고쳐야 하나"를 알아내려는 운영자, 그리고 그 리포트를 받아 튜닝을 제안할 LLM. 자동/기대 결과 포렌식([FORENSIC.md](FORENSIC.md))이 "왜 이 근거가 빠졌나"에 답한다면, 이 모드는 **한 질의의 전 단계 실행 기록·설정·수치를 빠짐없이 문서화**해 세 관점(품질·속도·토큰)에서 조절점을 짚는다. 2026-09-15 구현, 설계 근거 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §10, 검증 [VERIFICATION_0915.md](history/2026-09-15/VERIFICATION_0915.md) §8.
 
 ## 0. 한 장 요약
 
@@ -80,7 +80,7 @@
 | CLI | `query --analyze --focus … --print-analysis`, `analyze <id|last> --focus --print --out --json` | | |
 
 ## 5. 검증 (실측)
-`tests/test_analysis.py` 6개: 토글 → debug_level 2·리포트 파일(md/json)·모든 섹션·샘플·타임라인·final; 저장된 요청 분석·focus·last·없는 id·캐시 결과 안내; 약한 질의의 렌즈 소견과 조절점 현재값; CLI `query --analyze`/`analyze last|--print|--out|--json`/종료 코드/read 등급; MCP `wiki_analysis`; Web `/api/query overrides.analysis_mode` → `/api/analysis` json/md/download/full/404. 하네스 행은 [VERIFICATION_0915.md](VERIFICATION_0915.md) §8.
+`tests/test_analysis.py` 6개: 토글 → debug_level 2·리포트 파일(md/json)·모든 섹션·샘플·타임라인·final; 저장된 요청 분석·focus·last·없는 id·캐시 결과 안내; 약한 질의의 렌즈 소견과 조절점 현재값; CLI `query --analyze`/`analyze last|--print|--out|--json`/종료 코드/read 등급; MCP `wiki_analysis`; Web `/api/query overrides.analysis_mode` → `/api/analysis` json/md/download/full/404. 하네스 행은 [VERIFICATION_0915.md](history/2026-09-15/VERIFICATION_0915.md) §8.
 
 ## 6. 문제 해결
 | 증상 | 조치 |

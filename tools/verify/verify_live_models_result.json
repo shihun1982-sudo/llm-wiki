@@ -1,0 +1,110 @@
+{
+ "ts": "2026-09-19 07:58",
+ "chat": "ollama:llama3.1:latest",
+ "embed": "ollama:bge-m3:latest",
+ "dim": 1024,
+ "discovered": {
+  "chat": [
+   "ollama:llama3.1:latest"
+  ],
+  "embed": [
+   "ollama:bge-m3:latest",
+   "hash:hash"
+  ],
+  "rerank": [],
+  "notes": [
+   ".env 에 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 이 없어 Anthropic 은 건너뜀",
+   "sentence-transformers 없음 — 크로스인코더 리랭크는 건너뜀"
+  ]
+ },
+ "seconds": 1440.0,
+ "total": 12,
+ "failed": 1,
+ "warned": 1,
+ "rows": [
+  {
+   "name": "models test --live (역할별 실제 호출)",
+   "group": "연결",
+   "ok": true,
+   "severity": "fail",
+   "detail": "OK 11개 · [OK ] answer     ollama/llama3.1:latest  2045ms  connected  live: OK 2419ms repl"
+  },
+  {
+   "name": "models test --catalog (카탈로그 전체 ping)",
+   "group": "연결",
+   "ok": true,
+   "severity": "fail",
+   "detail": "(ping 만 확인. 실제 완성 호출까지 확인하려면 models test --catalog --live · 역할별 확인은 models test)"
+  },
+  {
+   "name": "build --full (실제 임베딩으로 색인)",
+   "group": "빌드",
+   "ok": true,
+   "severity": "fail",
+   "detail": "21s · ALERTS: [{\"level\": \"warn\", \"check\": \"channels_populated\", \"detail\": \"비"
+  },
+  {
+   "name": "build verify (채널 결손 0)",
+   "group": "빌드",
+   "ok": true,
+   "severity": "fail",
+   "detail": "alerts=[]"
+  },
+  {
+   "name": "query (grounded) 완주",
+   "group": "질의",
+   "ok": true,
+   "severity": "fail",
+   "detail": "result_type=grounded · 618자"
+  },
+  {
+   "name": "근거 목록(refs) 이 비어 있지 않다",
+   "group": "질의",
+   "ok": true,
+   "severity": "fail",
+   "detail": "refs=18"
+  },
+  {
+   "name": "groundedness 판정이 있다",
+   "group": "질의",
+   "ok": true,
+   "severity": "fail",
+   "detail": "groundedness=0.455 · verdict=weak"
+  },
+  {
+   "name": "답변에 인용 [C#] 이 있다 (모델 품질)",
+   "group": "질의",
+   "ok": false,
+   "severity": "warn",
+   "detail": "인용 0개 · citation_precision=0.0 · refined=True · 이 모델이 지시를 안 따랐을 수 있다"
+  },
+  {
+   "name": "query --answer-mode best_effort",
+   "group": "질의",
+   "ok": true,
+   "severity": "fail",
+   "detail": "result_type=best_effort · [BK] 2개"
+  },
+  {
+   "name": "LLM 리랭크 단계가 실제로 돌았다",
+   "group": "LLM단계",
+   "ok": true,
+   "severity": "fail",
+   "detail": "ms=5059.61"
+  },
+  {
+   "name": "융합 뒤 LLM 검토 단계가 실제로 돌았다",
+   "group": "LLM단계",
+   "ok": true,
+   "severity": "fail",
+   "detail": "meta={\"candidates\": 96, \"model\": \"llama3.1:latest\", \"role\": \"fusion\", \"drop_penalty\":"
+  },
+  {
+   "name": "eval hit@5 (실제 임베딩)",
+   "group": "평가",
+   "ok": false,
+   "severity": "fail",
+   "detail": "hit@k=None · mrr=None · term_recall=None · n=None"
+  }
+ ]
+}

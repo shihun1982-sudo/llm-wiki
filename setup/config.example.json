@@ -18,6 +18,7 @@
   "llm_model": "claude-opus-5",
   "llm_effort": "low",
   "answer_effort": "medium",
+  "output_mode": "answer",
   "llm_fallbacks": true,
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3.1",
@@ -31,7 +32,43 @@
       "timeout_s": 60,
       "retries": 1,
       "budget_s": 130,
-      "max_tokens": 400
+      "max_tokens": 400,
+      "provider": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "expand": {
       "model": "claude-haiku-4-5-20251001",
@@ -39,7 +76,43 @@
       "timeout_s": 30,
       "retries": 1,
       "budget_s": 70,
-      "max_tokens": 400
+      "max_tokens": 400,
+      "provider": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "verify": {
       "model": "claude-haiku-4-5-20251001",
@@ -47,39 +120,349 @@
       "timeout_s": 90,
       "retries": 1,
       "budget_s": 200,
-      "max_tokens": 1500
+      "max_tokens": 1500,
+      "provider": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "extract": {
       "model": "claude-sonnet-5",
       "timeout_s": 120,
       "retries": 2,
       "budget_s": 350,
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "provider": "",
+      "effort": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "answer": {
       "effort": "high",
       "timeout_s": 240,
       "retries": 2,
       "budget_s": 600,
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "provider": "",
+      "model": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "summary": {
       "timeout_s": 90,
       "retries": 2,
       "budget_s": 250,
-      "max_tokens": 800
+      "max_tokens": 800,
+      "provider": "",
+      "model": "",
+      "effort": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "review": {
       "timeout_s": 300,
       "retries": 2,
       "budget_s": 700,
-      "max_tokens": 3000
+      "max_tokens": 3000,
+      "provider": "",
+      "model": "",
+      "effort": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     },
     "forensic": {
       "timeout_s": 120,
       "retries": 1,
       "budget_s": 260,
-      "max_tokens": 1800
+      "max_tokens": 1800,
+      "provider": "",
+      "model": "",
+      "effort": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
+    },
+    "fusion": {
+      "provider": "",
+      "model": "",
+      "effort": "",
+      "timeout_s": "",
+      "retries": "",
+      "max_tokens": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
+    },
+    "select": {
+      "provider": "",
+      "model": "",
+      "effort": "",
+      "timeout_s": "",
+      "retries": "",
+      "max_tokens": "",
+      "ensemble": {
+        "enabled": false,
+        "members": [
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          },
+          {
+            "enabled": true,
+            "provider": "",
+            "model": "",
+            "weight": 1.0,
+            "effort": ""
+          }
+        ],
+        "wait": "",
+        "timeout_s": "",
+        "min_results": "",
+        "prompt": "",
+        "aggregator": {
+          "provider": "",
+          "model": "",
+          "effort": ""
+        }
+      }
     }
   },
   "rerank_candidates": 16,
@@ -89,6 +472,9 @@
   "answer_max_tokens": 3000,
   "llm_graph_budget": 0,
   "llm_graph_min_chars": 80,
+  "graph_profile_keep": 30,
+  "graph_profile_requests": 200,
+  "graph_profile_hubs": 10,
   "query_cache_size": 200,
   "auto_build_interval": 300,
   "embed_batch": 64,
@@ -96,6 +482,10 @@
   "keep_requests": 2000,
   "requests_dir": "data/requests",
   "requests_keep_days": 90,
+  "sweep_dir": "data/sweeps",
+  "sweep_keep": 30,
+  "sweep_max_values": 20,
+  "sweep_max_parallel": 1,
   "evolve_min_confidence": 0.8,
   "evolve_low_score_threshold": 0.05,
   "timezone": "Asia/Seoul",
@@ -106,6 +496,12 @@
   "log_max_mb": 10,
   "log_backups": 10,
   "log_console": false,
+  "log_total_max_mb": 500,
+  "log_limit_action": "warn",
+  "log_check_interval_s": 60,
+  "audit_max_mb": 20,
+  "audit_backups": 5,
+  "analysis_keep": 200,
   "openai_base_url": "http://localhost:11434/v1",
   "openai_api_key_header": "authorization",
   "openai_extra_headers": {},
@@ -124,7 +520,7 @@
   "llm_retry_backoff": "exponential",
   "llm_retry_backoff_max_s": 60.0,
   "llm_budget_s": 0,
-  "web_host": "127.0.0.1",
+  "web_host": "0.0.0.0",
   "web_port": 8765,
   "mcp_transport": "stdio",
   "mcp_host": "127.0.0.1",
@@ -139,7 +535,8 @@
   "embed_commit_every": 10,
   "wal_checkpoint_mb": 64,
   "embed_store_dtype": "float32",
-  "build_lock_timeout": 0,
+  "build_lock_timeout": 172800,
+  "build_lock_stale_s": 172800,
   "toggles": {
     "rule_graph": true,
     "llm_graph": false,
@@ -201,8 +598,33 @@
     "build_fts": true,
     "doc_expand": true,
     "llm_failure_report": true,
-    "collab": true
+    "collab": true,
+    "rerun_capture": true,
+    "analysis_mode": false,
+    "llm_after_fusion": false,
+    "llm_after_rerank": false,
+    "degrade_on_llm_failure": true,
+    "_how_context_guard": "[보안] 컨텍스트에 넣는 문서 본문의 구획(<<</C1>>>)·역할(system:)·인용([C7]) 흉내 조각을 무력화해 펜스로 감쌉니다. 내용은 지우지 않으므로 근거 품질은 그대로입니다. 끄면 문서가 모델에게 직접 지시할 수 있습니다 — docs/SECURITY.md §6.2",
+    "context_guard": true,
+    "_how_doc_acl": "[보안] 문서 단위 접근 제어. docacl.json 의 경로 규칙과 문서 front matter 의 acl: 로, 역할이 낮은 사용자에게는 그 문서를 근거로 주지 않습니다. 규칙이 비어 있으면 아무도 막지 않고 admin 은 항상 전부 봅니다. 규칙 편집은 setup/docacl.example.json · security docacl show|check — docs/SECURITY.md §6.2",
+    "doc_acl": true
   },
   "db_busy_timeout_s": 60.0,
-  "db_pool_size": 16
+  "db_pool_size": 16,
+  "_how_db_max_live_connections": "동시에 **빌려 나가 있는** SQLite 연결의 부드러운 상한 (0 = 무제한). 넘으면 db_pool_wait_timeout_s 만큼 반납을 기다렸다가, 그래도 없으면 만들어서라도 진행하고 overflow 로 셉니다 — 질의를 실패시키지 않습니다. 정상 운영에서는 걸리지 않는 값이라 차단 장치가 아니라 경보입니다: 서버 모니터의 db_pool.overflow 가 늘면 세션 누수나 과부하 — docs/CONCURRENCY.md §8.1",
+  "db_max_live_connections": 64,
+  "db_pool_wait_timeout_s": 2.0,
+  "corpus_exclude": [],
+  "answer_mode": "grounded",
+  "llm_ensemble_defaults": {
+    "wait": "all",
+    "timeout_s": 120,
+    "min_results": 1,
+    "prompt": "ensemble_merge"
+  },
+  "rerun_dir": "data/reruns",
+  "rerun_keep": 50,
+  "rerun_max_mb": 4.0,
+  "evolve_auto_apply_kinds": [],
+  "evolve_snapshot_keep": 20
 }

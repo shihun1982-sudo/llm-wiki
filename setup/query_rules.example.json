@@ -1,0 +1,71 @@
+{
+  "_comment": "규칙 기반 질의 확장 사전의 **원본 예시**. 프로젝트 루트 query_rules.json 으로 복사해서 자기 도메인 용어로 바꿔 쓰세요. 유형 표는 `python -m llmwiki rules types`, 한 용어가 어떻게 퍼지는지는 `rules explain <용어>`, 사전 자체의 문제는 `rules lint` 로 봅니다. 설명: docs/QUERY_RULES.md",
+  "_how_전체": "유형마다 **적용 방식이 다릅니다**. 같은 말을 아무 유형에나 넣으면 안 됩니다: 완전히 같은 말이면 acronym, 비슷하면 synonym, 표기만 다르면 alias, 곁가지면 related, 잡음이면 exclude, 붙여 쓰는 말이면 compound, 뜻이 문맥마다 갈리면 context, 분류 체계면 hypernym, 숫자+단위면 unit.",
+
+  "_how_acronym": "완전 동치·**양방향** (PDCCH ⇄ Physical Downlink Control Channel). FTS 에 구문 OR 로 동일 가중, 벡터는 치환 대체 질의, 그래프 시드 별칭까지 만듭니다. 가장 강하게 넓히므로 '정말 같은 말' 에만 쓰세요.",
+  "acronym": {
+    "PDCCH": ["Physical Downlink Control Channel"],
+    "AGC": ["Automatic Gain Control", "자동 이득 제어"],
+    "DMA": ["Direct Memory Access"],
+    "ISR": ["Interrupt Service Routine", "인터럽트 서비스 루틴"]
+  },
+
+  "_how_synonym": "준동치·**양방향** (재시작 ≈ 리셋 ≈ restart). FTS OR 에 syn_w(0.8) 가중, 벡터 치환 질의. acronym 보다 약하게 넓힙니다.",
+  "synonym": {
+    "재시작": ["리셋", "restart", "reset", "재기동"],
+    "오류": ["에러", "error", "실패", "fault"],
+    "지연": ["딜레이", "delay", "latency"]
+  },
+
+  "_how_alias": "표기 정규화·**일방** (모뎀B → MDM9x-B1). 질의를 canonical 로 치환하고 원 표기도 OR 로 남깁니다. 반대 방향(정규 표기 → 속어)으로는 일부러 넓히지 않습니다. alias 사슬(A→B, B→C)은 B 에서 멈추므로 최종 표기를 직접 적으세요 — `rules lint` 가 잡아 줍니다.",
+  "alias": {
+    "모뎀B": "MDM9x-B1",
+    "코딩룰": "coding rule"
+  },
+
+  "_how_related": "연관어·**일방**. 주 질의에 섞지 않고 **보조 리스트**(related_w 0.4)로 따로 융합합니다 — 정밀도를 지키기 위해서입니다. 양쪽으로 쓰고 싶으면 tuning `related_symmetric=true`.",
+  "related": {
+    "DMA underrun": ["FIFO overflow", "버퍼 언더런", "DMA 타임아웃"],
+    "AGC": ["RSSI", "gain table"]
+  },
+
+  "_how_exclude": "잡음 배제·**일방**. FTS 에 NOT 을 걸고 후보 점수에도 페널티(exclude_penalty)를 줍니다 — 벡터 채널은 NOT 이 안 통하므로 후처리가 필요합니다.",
+  "exclude": {
+    "시뮬레이터": ["simulator", "simulation"],
+    "예제": ["sample", "example"]
+  },
+
+  "_how_compound": "복합어 분리. 색인과 질의의 **토크나이저**에 주입되므로, 붙여 쓴 말과 띄어 쓴 말이 서로 찾아집니다. 바꾸면 **재색인**이 필요합니다.",
+  "compound": {
+    "재전송타이머": ["재전송", "타이머"],
+    "전력제어": ["전력", "제어"]
+  },
+
+  "_how_context": "[2026-09-19 추가] **뜻이 문맥에 따라 갈리는 말**. `when` 중 하나라도 질의에 있을 때만 `then` 으로 넓힙니다(context_w 0.9). 조건이 하나도 안 맞으면 **발화하지 않습니다** — 억지로 넓히느니 가만히 있는 편이 낫습니다. 같은 약어가 팀마다 다른 뜻인 경우(사내 위키에서 정밀도를 가장 많이 깎는 원인)에 쓰세요. 주의: 같은 말을 acronym/synonym 에도 넣으면 그쪽이 문맥과 무관하게 항상 넓혀서 문맥 가르기가 무의미해집니다 (`rules lint` 가 context_shadowed 로 경고).",
+  "context": {
+    "PA": [
+      {"when": ["rf", "전력", "송신", "tx", "증폭"], "then": ["Power Amplifier", "전력 증폭기"], "note": "RF 문맥"},
+      {"when": ["일정", "조직", "담당", "제품"], "then": ["Product Area"], "note": "조직/일정 문맥"}
+    ],
+    "MAC": [
+      {"when": ["계층", "프로토콜", "phy", "rlc"], "then": ["Medium Access Control"], "note": "프로토콜 문맥"},
+      {"when": ["주소", "이더넷", "네트워크"], "then": ["MAC address", "하드웨어 주소"], "note": "네트워크 문맥"}
+    ]
+  },
+
+  "_how_hypernym": "[2026-09-19 추가] **분류 체계** (상위어 ⊃ 하위어). 키가 상위어, 값이 하위어입니다. 보조 리스트로만 들어가고 **방향에 따라 가중이 다릅니다**: 질의의 상위어에서 하위어로 내려갈 때 hypernym_down_w(0.35), 질의의 하위어에서 상위어로 올라갈 때 hypernym_up_w(0.2) — 상위어 문서는 대개 일반론이라 구체적 질문의 답이 아니기 때문입니다. 동의어처럼 같은 가중으로 섞으면 분류 체계가 곧 잡음이 됩니다.",
+  "hypernym": {
+    "메모리 오류": ["DMA 오버런", "FIFO 언더런", "버퍼 오버플로", "힙 손상"],
+    "타이밍 이슈": ["클럭 스큐", "셋업 홀드 위반", "지터"],
+    "전력 문제": ["전류 누설", "전압 강하", "발열"]
+  },
+
+  "_how_unit": "[2026-09-19 추가] **단위·수치 동치**. 질의에서 `숫자+단위` 를 찾아 같은 값의 다른 표기를 OR 로 넣습니다 (4KB ⇄ 4 킬로바이트 ⇄ 4096 ⇄ 4096 byte). HW·모뎀 문서는 같은 값을 제각각 적어서 숫자가 든 질의가 문서를 못 찾는 일이 흔합니다. 사전 키로는 표현할 수 없어(키가 숫자와 함께 와야 뜻이 생깁니다) 이 유형만 질의 문자열을 직접 훑습니다. factor = 기본 단위로 바꾸는 배수, base = 기본 단위 이름, aliases = 같은 단위의 다른 표기.",
+  "unit": {
+    "KB": {"factor": 1024, "base": "byte", "aliases": ["킬로바이트", "kilobyte", "kbyte"]},
+    "MB": {"factor": 1048576, "base": "byte", "aliases": ["메가바이트", "megabyte"]},
+    "ms": {"factor": 0.001, "base": "초", "aliases": ["밀리초", "millisecond"]},
+    "us": {"factor": 0.000001, "base": "초", "aliases": ["마이크로초", "microsecond"]},
+    "MHz": {"factor": 1000000, "base": "Hz", "aliases": ["메가헤르츠", "megahertz"]}
+  }
+}

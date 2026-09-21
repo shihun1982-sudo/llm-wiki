@@ -29,7 +29,19 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
     stats: Dict[str, Any] = {"rule_entities": 0, "rule_relations": 0, "explicit_relations": 0, "id_relations": 0,
                              "llm_entities": 0, "llm_relations": 0, "llm_calls": 0,
                              "llm_input_tokens": 0, "llm_output_tokens": 0, "llm_failures": 0, "llm_skipped_short": 0,
-                             "llm_skipped_budget": 0}
+                             "llm_skipped_budget": 0, "dropped_dangling": 0, "llm_rel_dropped": 0, "llm_rel_mapped": 0}
+    # 타입·관계 어휘 (data/rules.json 의 schema 절). 규칙 추출기가 있으면 그 스키마를, 없으면 파일에서 직접 읽는다.
+    # 규칙 경로와 LLM 경로가 **같은 어휘**를 쓰게 하려는 것이다 (2026-09-19).
+    _schema = rule_ex.schema if rule_ex is not None else None
+    if _schema is None and use_llm:
+        try:
+            from .graph_rules import Schema as _Schema, load_rules as _lr, known_types as _kt
+            _r = _lr()
+            _schema = _Schema(_r.get("schema"), _kt(_r))
+        except Exception:
+            _schema = None
+    if _schema is not None and not _schema.relations:
+        _schema = None                                   # 스키마를 쓰지 않는 설치 — 아무것도 바꾸지 않는다
     chunk_ids = [c["chunk_id"] for c in chunks]
     touched: Set[str] = set(store.entities_for_chunks(chunk_ids))   # 이전 산출물에 연결돼 있던 엔티티도 갱신 대상
     store.clear_graph_for_chunks(chunk_ids)
@@ -39,6 +51,8 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
 
     with prof.stage("rule_extract", chunks=len(chunks), enabled=bool(rule_ex)) as st:
         if rule_ex:
+            # '필드에서 나온 관계' 목록은 규칙 파일에서 온다 (예전에는 코드에 박힌 문자열 튜플이었다 — 2026-09-19)
+            _FIELD_RELS = rule_ex.field_rel_names()
             slow: List[Any] = []
             type_counts: Dict[str, int] = defaultdict(int)
             rel_counts: Dict[str, int] = defaultdict(int)
@@ -66,13 +80,23 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                     if counts.get(eid, 0) > 0:
                         store.add_mention(eid, c["chunk_id"], c["doc_id"], counts[eid], "rule")
                 for r in rels:
-                    if r.src in ents and r.dst in ents or r.rel in ("owner", "attendee", "source", "responsible", "comments_on"):
-                        store.add_relation(r.src, r.dst, r.rel, r.description, r.weight, "rule" if r.provenance != "explicit" else "rule+explicit",
-                                           r.confidence, c["chunk_id"], provenance=r.provenance)
-                        rel_counts[r.rel] += 1
-                        prov_counts[r.provenance] += 1
-                        if r.provenance == "rule" and r.rel not in ("owner", "deadline", "amount", "attendee", "source", "responsible", "comments_on", "decides"):
-                            stats["id_relations"] += 1
+                    # 끝점이 이번 청크에서 만들어진 노드여야 저장한다 (dangling 관계 방지).
+                    #
+                    # 예전 조건은 `(양끝이 ents 에 있다) or (r.rel 이 이름 다섯 개 중 하나)` 였다.
+                    # 즉 owner·attendee·source·responsible·comments_on 다섯 이름은 **끝점이 없어도** 통과했고,
+                    # 그것이 graph_profile 이 보고하던 '끝점 없는 관계(dangling)' 의 출처였다.
+                    # 그 다섯은 `value: "entity"` 패턴이 만드는 관계인데, 그때 _v_entity 가 노드를 등록하지 않아
+                    # 생긴 구멍을 이름으로 막아 둔 것이다. 이제 _v_entity 가 노드를 등록하므로(count 는 세지 않는다)
+                    # 이름을 볼 필요가 없다 — 끝점만 본다 (2026-09-19).
+                    if not (r.src in ents and r.dst in ents):
+                        stats["dropped_dangling"] += 1
+                        continue
+                    store.add_relation(r.src, r.dst, r.rel, r.description, r.weight, "rule" if r.provenance != "explicit" else "rule+explicit",
+                                       r.confidence, c["chunk_id"], provenance=r.provenance)
+                    rel_counts[r.rel] += 1
+                    prov_counts[r.provenance] += 1
+                    if r.provenance == "rule" and r.rel not in _FIELD_RELS:
+                        stats["id_relations"] += 1
                 stats["rule_entities"] += len(ents)
                 stats["rule_relations"] += len(rels)
                 slow.append(((_now() - t0) * 1000, c["chunk_id"], len(ents), len(rels)))
@@ -117,8 +141,11 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                     eid = _resolve(store, rule_ex, name)
                     name_to_id[name] = eid
                     touched.add(eid)
+                    # LLM 이 낸 type 을 스키마 어휘에 맞춘다 (대소문자만 고치고 버리지는 않는다).
+                    # 예전에는 검증이 전혀 없어 'CL'(유효값 'cl')·'relation' 같은 값이 그대로 들어왔다.
+                    etype = _schema.etype(e.get("type") or "concept") if _schema else (e.get("type") or "concept")
                     store.upsert_entity(eid, store.get_entity(eid)["name"] if store.get_entity(eid) else name,
-                                        e.get("type") or "concept", e.get("description") or "", [name], "llm", 0.75)
+                                        etype, e.get("description") or "", [name], "llm", 0.75)
                     store.add_mention(eid, c["chunk_id"], c["doc_id"], 1, "llm")
                     if name not in known:
                         known.append(name)
@@ -133,7 +160,14 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
                         touched.add(eid)
                         if not store.get_entity(eid):
                             store.upsert_entity(eid, nm, "concept", "", [nm], "llm", 0.6)
-                    store.add_relation(sid, did, r.get("rel") or "related_to", r.get("description") or "",
+                    raw_rel = r.get("rel") or "related_to"
+                    rel = _schema.rel(raw_rel) if _schema else raw_rel
+                    if rel is None:                      # schema.on_unknown = "drop"
+                        stats["llm_rel_dropped"] += 1
+                        continue
+                    if rel != raw_rel:
+                        stats["llm_rel_mapped"] += 1     # uses/used/utilizes 처럼 갈라진 이름을 하나로 모았다
+                    store.add_relation(sid, did, rel, r.get("description") or "",
                                        float(r.get("weight") or 0.5), "llm", 0.7, c["chunk_id"], provenance="llm")
                     stats["llm_relations"] += 1
             _pg.tick(len(chunks), len(chunks), "")
@@ -145,6 +179,15 @@ def build_graph_for_chunks(store: Store, chunks: List[Any], doc_titles: Dict[str
     else:
         prof.skipped("llm_extract")
     store.commit()
+    # 어휘 밖 type/rel 이 있었으면 보고한다 — 예전에는 이상한 값이 들어와도 아무 흔적이 없었다 (2026-09-19)
+    if _schema is not None:
+        rep = _schema.report()
+        stats["schema"] = rep
+        if rep["unknown_rel_kinds"] or rep["unknown_type_kinds"]:
+            report("schema: 어휘 밖 관계 %d종(%d건) · 타입 %d종 — %s (정책 on_unknown=%s · `graph-rules lint` 로 확인)" % (
+                rep["unknown_rel_kinds"], rep["unknown_rel_hits"], rep["unknown_type_kinds"],
+                ", ".join("%s×%s" % (k, v) for k, v in (rep["unknown_rels"] or rep["unknown_types"])[:4]) or "-",
+                rep["on_unknown"]))
     stats["touched_entities"] = len(touched)
     stats["touched"] = sorted(touched)
     return stats

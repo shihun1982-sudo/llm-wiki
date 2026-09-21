@@ -297,6 +297,37 @@ def run_mode(mode: str, port: int, cdp: int, do_snapshot: bool):
                  "(function(){var b=document.getElementById('btn-perms-reset'); if(!b) return 'no-el'; b.click(); return 'clicked';})()",
                  "document.querySelector(\"#sec-perms [data-lv='run']\").value !== 'class2'")
 
+        # ---- 문서 접근 제어 (docacl.json) ----
+        # 화면 → 파일 → 서버 판정까지 한 줄로 확인한다. 규칙을 넣었는데 실제로 가려지지 않으면
+        # "보안 설정이 있는 줄 알았는데 없는" 가장 나쁜 상태가 되므로, 저장 후 check 결과까지 본다.
+        run.step("문서 접근 제어 패널이 그려짐", "", "'checked'",
+                 "!!document.querySelector('#acl-enabled') && !!document.getElementById('btn-acl-save')")
+        run.step("규칙 추가 → 저장",
+                 "(function(){document.getElementById('btn-acl-add').click();"
+                 " var rs=document.querySelectorAll('#acl-rules tr[data-i] [data-acl-prefix]');"
+                 " var last=rs[rs.length-1]; last.value='corpus/__verify_acl__/';"
+                 " var sel=last.closest('tr').querySelector('[data-acl-role]'); sel.value='class1'; return 'set';})()",
+                 "(function(){var b=document.getElementById('btn-acl-save'); if(!b) return 'no-el'; b.click(); return 'clicked';})()",
+                 "__lw.toasts.join(' ').indexOf('문서 접근 제어 저장됨') >= 0")
+        acl = api_get(page, "/api/docacl")
+        prefixes = [r.get("prefix") for r in (acl.get("rules") or [])]
+        ok_saved = "corpus/__verify_acl__/" in prefixes
+        run._rec("OK  " if ok_saved else "FAIL", "규칙이 docacl.json 에 저장됨",
+                 "" if ok_saved else "서버 규칙: %s" % prefixes, {})
+        run.step("영향 확인 버튼이 역할별 표를 그림", "",
+                 "(function(){var b=document.getElementById('btn-acl-check'); if(!b) return 'no-el'; b.click(); return 'clicked';})()",
+                 "document.querySelector('#acl-check').innerHTML.indexOf('가려짐') >= 0",
+                 note="저장 전에 '몇 건이 가려지나' 를 볼 수 있어야 규칙을 안심하고 넣는다")
+        run.step("규칙 삭제 → 저장 (뒷정리)",
+                 "(function(){var rows=document.querySelectorAll('#acl-rules tr[data-i]');"
+                 " for(var i=0;i<rows.length;i++){ var p=rows[i].querySelector('[data-acl-prefix]');"
+                 "  if(p && p.value.indexOf('__verify_acl__')>=0) p.value=''; } return 'cleared';})()",
+                 "(function(){document.getElementById('btn-acl-save').click(); return 'clicked';})()",
+                 "__lw.toasts.join(' ').indexOf('문서 접근 제어 저장됨') >= 0")
+        acl2 = api_get(page, "/api/docacl")
+        gone = "corpus/__verify_acl__/" not in [r.get("prefix") for r in (acl2.get("rules") or [])]
+        run._rec("OK  " if gone else "FAIL", "빈 접두사 규칙은 삭제로 처리됨", "" if gone else "아직 남아 있다", {})
+
         # ---- 내 비밀번호 변경 ----
         if mode == "on":
             run.step("내 비밀번호 변경 (로컬 로그인)",

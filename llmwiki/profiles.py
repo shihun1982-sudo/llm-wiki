@@ -25,7 +25,15 @@ _LOCK = threading.Lock()
 
 # 저장을 허용하는 키 (알 수 없는 키는 버린다 — 임의의 데이터 저장소로 쓰이지 않게)
 # pinview: 고정 탭 화면의 배치 상태 {cols, height, wide{}, collapsed{}} — split 은 이전 버전(2열 on/off) 호환용
-ALLOWED = ("theme", "toggles", "presets", "overrides", "pins", "pinview", "split", "mode", "tab", "group", "columns", "note")
+# sidebar_collapsed: 사이드바 블록 접힘 상태 {"presets": true, "tg:<묶음>": false, …, "_default": bool} (2026-09-18, 요청 13)
+# sidebar_toggles: 사이드바 '기능 토글' 블록의 배치 — "compact"(기본: 토글 묶음을 숨기고 "이번 요청 오버라이드: 토글 n · 튜닝 m" 요약과
+#   '🧭 Pipeline 에서 편집' 버튼만) | "full"(예전 배치: 묶음·배지·축 필터 전부). 토글 편집의 본 자리는 Pipeline 페이지다
+#   (2026-09-18, IMPLEMENTATION_PLAN_0918_2 §2.6). 값이 없으면 core.js 가 compact 로 본다. 되돌리기: 사이드바 제목 줄의 '전체 보기'
+#   또는 이 키를 "full" 로 저장.
+ALLOWED = ("theme", "toggles", "presets", "overrides", "pins", "pinview", "split", "mode", "tab", "group", "columns", "note",
+           "sidebar_collapsed", "sidebar_toggles")
+SIDEBAR_TOGGLES_DEFAULT = "compact"
+SIDEBAR_TOGGLES_VALUES = ("compact", "full")
 
 
 def profiles_path(data_dir: str) -> str:
@@ -51,6 +59,9 @@ def sanitize(profile: Any) -> Dict[str, Any]:
     for k in ALLOWED:
         if k in profile:
             out[k] = profile[k]
+    # sidebar_toggles 는 두 값만 — 오타("compat")가 저장되면 화면이 어느 쪽인지 알 수 없으므로 버린다 (기본 compact 로 돌아간다)
+    if "sidebar_toggles" in out and out["sidebar_toggles"] not in SIDEBAR_TOGGLES_VALUES:
+        out.pop("sidebar_toggles", None)
     raw = json.dumps(out, ensure_ascii=False)
     if len(raw.encode("utf-8")) > MAX_BYTES:
         raise ValueError("프로파일이 너무 큽니다 (%d바이트 > %d)" % (len(raw.encode("utf-8")), MAX_BYTES))

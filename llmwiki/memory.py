@@ -43,11 +43,15 @@ def on_feedback(store, query_id: int, feedback: int) -> Optional[int]:
     return record_episode(store, None, q["query"], "feedback", "positive" if feedback > 0 else "negative", chunks, [], {"query_id": query_id, "feedback": feedback})
 
 
-def feedback_weights(store, half_life_days: float = 60.0, limit: int = 2000) -> Dict[str, float]:
-    """청크별 피드백 부스트 (-1~1, 감쇠). 여러 에피소드가 같은 청크를 가리키면 합산 후 클리핑."""
-    out: Dict[str, float] = {}
+def _feedback_contributions(store, half_life_days: float, limit: int, with_source: bool = False):
+    """피드백 에피소드 → (chunk_id, 가중치, 출처) 하나씩. `feedback_weights` 와 `boost_table` 의 공용 계산.
+
+    같은 수식을 두 벌로 두면 화면에 보이는 값과 실제로 검색에 쓰이는 값이 갈라진다 — 그러면 이 화면이
+    거짓말을 하게 되므로 한 자리에서만 계산한다.
+    """
     now = time.time()
-    for r in store.conn.execute("SELECT chunks, feedback, last_reinforced, strength FROM episodes WHERE feedback IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,)):
+    cols = "id, ts, query, chunks, feedback, last_reinforced, strength" if with_source else "chunks, feedback, last_reinforced, strength"
+    for r in store.conn.execute("SELECT %s FROM episodes WHERE feedback IS NOT NULL ORDER BY id DESC LIMIT ?" % cols, (limit,)):
         fb = int(r["feedback"] or 0)
         if not fb:
             continue
@@ -58,7 +62,77 @@ def feedback_weights(store, half_life_days: float = 60.0, limit: int = 2000) -> 
             chunks = []
         for i, cid in enumerate(chunks[:5]):
             w = (1.0 if fb > 0 else -1.0) * f * (1.0 - 0.15 * i)
-            out[cid] = max(-1.0, min(1.0, out.get(cid, 0.0) + w))
+            src = ({"episode": int(r["id"]), "query": r["query"], "feedback": fb, "ts": r["ts"], "rank": i + 1,
+                    "decay": round(f, 3)} if with_source else None)
+            yield cid, w, src
+
+
+def feedback_weights(store, half_life_days: float = 60.0, limit: int = 2000) -> Dict[str, float]:
+    """청크별 피드백 부스트 (-1~1, 감쇠). 여러 에피소드가 같은 청크를 가리키면 합산 후 클리핑."""
+    out: Dict[str, float] = {}
+    for cid, w, _src in _feedback_contributions(store, half_life_days, limit):
+        out[cid] = max(-1.0, min(1.0, out.get(cid, 0.0) + w))
+    return out
+
+
+def boost_table(store, half_life_days: float = 60.0, limit: int = 2000, top: int = 50) -> List[Dict[str, Any]]:
+    """**지금 검색이 실제로 받고 있는 피드백 부스트** — 청크별 가중치 + 그렇게 된 근거 에피소드.
+
+    왜 필요한가: 메모리 화면에는 오래도록 '부스트 청크 N개' 라는 숫자만 있었다. 그런데 사람이 묻는 것은
+    "내가 누른 👎 가 반영됐나", "왜 이 문서가 자꾸 위로 오나" 이고, 그 답은 숫자가 아니라 **목록**이다.
+    여기서 `feedback_weights` 와 **같은 계산**(_feedback_contributions)을 쓰되 출처를 함께 돌려준다.
+
+    반환: [{chunk_id, doc_id, heading, weight, n_episodes, episodes:[{episode,query,feedback,ts,rank,decay}]}]
+          weight 의 절댓값이 큰 순. 문서 정보는 색인에서 찾지 못하면 비운다(빌드로 사라진 청크).
+    """
+    agg: Dict[str, Dict[str, Any]] = {}
+    for cid, w, src in _feedback_contributions(store, half_life_days, limit, with_source=True):
+        e = agg.setdefault(cid, {"chunk_id": cid, "weight": 0.0, "episodes": []})
+        e["weight"] = max(-1.0, min(1.0, e["weight"] + w))
+        if len(e["episodes"]) < 5:
+            e["episodes"].append(src)
+    rows = sorted(agg.values(), key=lambda x: -abs(x["weight"]))[:top]
+    for e in rows:
+        e["weight"] = round(e["weight"], 4)
+        e["n_episodes"] = len(e["episodes"])
+        e["doc_id"] = str(e["chunk_id"]).rsplit("#", 1)[0]
+        e["heading"], e["exists"] = "", False
+        try:
+            c = store.get_chunk(e["chunk_id"])
+            if c:
+                c = dict(c)
+                e["heading"], e["doc_id"], e["exists"] = (c.get("heading") or ""), (c.get("doc_id") or e["doc_id"]), True
+        except Exception:
+            pass
+    return rows
+
+
+def decaying_proposals(store, half_life_days: float = 60.0, archive_strength: float = 0.2, limit: int = 30) -> List[Dict[str, Any]]:
+    """감쇠 중인 미승인 제안 — 약한 것부터. "제안이 왜 사라졌지?" 의 답을 **사라지기 전에** 보여 준다.
+
+    `days_left` 는 지금 속도로 감쇠했을 때 `archive_strength` 아래로 내려가기까지 남은 날이다(대략).
+    0 이하면 다음 `decay` 실행에서 archived 가 된다 — 살리려면 승인하거나 다시 쓰이게 해야 한다.
+    """
+    import math
+    now = time.time()
+    out: List[Dict[str, Any]] = []
+    for r in store.conn.execute("SELECT id, kind, payload, reason, confidence, strength, ts, last_reinforced, hits, origin "
+                                "FROM proposals WHERE status='proposed' ORDER BY COALESCE(strength,1.0) ASC LIMIT ?", (limit,)):
+        d = dict(r)
+        last = float(d.get("last_reinforced") or d.get("ts") or now)
+        base = float(d.get("strength") or 1.0)
+        cur = base * _decay_factor(now - last, half_life_days)
+        days = None
+        if half_life_days > 0 and archive_strength > 0 and cur > 0:
+            days = round(max(0.0, half_life_days * math.log(cur / archive_strength, 2)), 1) if cur > archive_strength else 0.0
+        try:
+            d["payload"] = json.loads(d.get("payload") or "{}")
+        except Exception:
+            pass
+        d["strength_now"] = round(cur, 4)
+        d["days_left"] = days
+        d["at_risk"] = bool(days is not None and days <= 7)
+        out.append(d)
     return out
 
 
@@ -116,7 +190,15 @@ def consolidate(store, min_events: int = 3, limit: int = 1000) -> Dict[str, Any]
             elif kind == "tuning":
                 key = "tuning|%s|%s" % (pl.get("key", ""), pl.get("value", ""))
             elif kind == "alias":
-                key = "alias|" + (pl.get("alias") or "")
+                # 별칭은 '어느 엔티티에' 붙이는지가 정체성이다. 예전에는 alias 만으로 묶어서, 대상이 다른 제안이
+                # 한 덩어리가 되거나 대상 없는(entity 키가 빠진) payload 가 그대로 승격됐다 (2026-09-19).
+                if not pl.get("entity"):
+                    continue
+                key = "alias|%s|%s" % (pl.get("entity"), pl.get("alias") or "")
+            elif kind == "entity":
+                key = "entity|" + (pl.get("name") or "")
+                if not pl.get("name"):
+                    continue
             else:
                 continue
             g = groups.setdefault(key, {"kind": kind, "payload": pl, "n": 0, "queries": [], "conf": 0.0, "detail": s.get("detail", "")})
@@ -147,14 +229,30 @@ def status(store, half_life_days: float = 60.0) -> Dict[str, Any]:
             "forensics": q("SELECT COUNT(*) FROM forensics")}
 
 
-def episodes(store, limit: int = 50) -> List[Dict[str, Any]]:
+def episodes(store, limit: int = 50, only: str = "", q: str = "") -> List[Dict[str, Any]]:
+    """최근 에피소드. `only`: ""(전부) | "feedback"(피드백 있는 것) | "negative"(👎) | "positive"(👍).
+    `q` 를 주면 질문 본문에서 찾는다 — 에피소드가 쌓이면 목록만으로는 찾을 수 없다."""
+    where, args = [], []
+    if only == "feedback":
+        where.append("feedback IS NOT NULL")
+    elif only == "negative":
+        where.append("feedback < 0")
+    elif only == "positive":
+        where.append("feedback > 0")
+    if q:
+        where.append("query LIKE ?")
+        args.append("%" + q + "%")
+    sql = "SELECT * FROM episodes%s ORDER BY id DESC LIMIT ?" % ((" WHERE " + " AND ".join(where)) if where else "")
     out = []
-    for r in store.conn.execute("SELECT * FROM episodes ORDER BY id DESC LIMIT ?", (limit,)):
+    for r in store.conn.execute(sql, tuple(args) + (limit,)):
         d = dict(r)
         for k in ("chunks", "topics", "detail"):
             try:
                 d[k] = json.loads(d[k] or ("[]" if k != "detail" else "{}"))
             except Exception:
                 pass
+        # 화면이 "요청 프로파일로 가기"·"질의 로그로 가기" 를 걸 수 있게 id 를 꺼내 준다
+        det = d.get("detail") if isinstance(d.get("detail"), dict) else {}
+        d["query_id"] = det.get("query_id")
         out.append(d)
     return out

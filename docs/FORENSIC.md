@@ -1,6 +1,6 @@
 # FORENSIC — 포렌식 디버깅: "왜 답이 부실했나" (자동) + "내가 기대한 문서가 왜 안 나왔나" (기대 결과 포렌식)
 
-> 대상: 답변 품질 문제를 재현·진단해 규칙/pin/튜닝/코퍼스 중 무엇을 고칠지 결정하려는 운영자, 그리고 사용자 피드백을 받아 같은 절차를 자동으로 돌리려는 외부 LLM(MCP `wiki_forensic`). 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §6.
+> 대상: 답변 품질 문제를 재현·진단해 규칙/pin/튜닝/코퍼스 중 무엇을 고칠지 결정하려는 운영자, 그리고 사용자 피드백을 받아 같은 절차를 자동으로 돌리려는 외부 LLM(MCP `wiki_forensic`). 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §6.
 
 ## 0. 두 종류의 포렌식 (+ 상세 분석 모드)
 
@@ -24,6 +24,38 @@ python -m llmwiki forensic <request_id> --llm                           :: foren
 python -m llmwiki memory consolidate                                    :: 같은 주제 소견이 forensic_min_events 이상 반복되면 제안으로 승격
 ```
 동작 확인은 `tests/test_phase3_5.py::test_evidence_fallback_forensic` 과 실측(README §7)으로 재검증했다. 한계: trace 만 보므로 "무엇이 나왔어야 했나"는 모른다 → §2.
+
+### 1.1 목록은 **문제 건부터** 보여 준다 (2026-09-20)
+
+포렌식은 질의가 끝날 때마다 판정을 남긴다 — 잘 된 것도 포함해서. 그래서 기록이 쌓이면
+**대부분이 정상 건**이 된다. 이 저장소에서 실제로 세어 보니:
+
+| 판정 | 건수 | 뜻 |
+|---|---|---|
+| `sufficient` | 1,025 | 근거가 충분했다 (볼 이유가 없다) |
+| `weak` | 76 | 답은 했지만 **근거가 약했다** |
+| `insufficient` | 10 | 근거를 못 찾아 답하지 못했다 |
+| `expectation` | 9 | 사람이 "이게 나왔어야 한다" 고 지적한 것 (§2) |
+
+**1,122건 중 95건만 볼 이유가 있다.** 예전에는 최근 60건을 그냥 나열했기 때문에 화면이 `sufficient` 로
+덮여 있었고, "왜 답이 부실했나" 를 보러 온 사람이 찾는 줄을 **하나도 못 봤다**. 그래서 기본 보기를
+문제 건으로 좁혔다.
+
+```bat
+python -m llmwiki forensic list                        :: 기본 = 문제 건만 (insufficient·weak·expectation·error)
+python -m llmwiki forensic list --only all             :: 정상 건까지 전부
+python -m llmwiki forensic list --only weak            :: 판정 하나만 (콤마로 여러 개)
+python -m llmwiki forensic list --q "DMA"              :: 질의문에 이 말이 든 것만
+```
+
+맨 윗줄에 **판정별 전체 건수**가 함께 나온다. 목록은 상한(`--limit`)이 있지만 이 숫자는 전부를 센다 —
+예전에는 최근 N건만 세어 `weak 2건` 처럼 축소돼 보였고, 그러면 문제가 적은 줄 알고 넘어가게 된다.
+
+Web 은 Quality › 포렌식 위쪽의 **판정 칩**(`문제만` · 판정별 · `전부`)과 질의문 검색으로 같은 일을 한다.
+칩마다 전체 건수가 붙고, 옆에 **문제 비율** · **소견이 잡힌 단계** · **제안 종류** · **자주 나온 주제**가 나온다.
+한 줄을 누르면 소견·제안 상세가 열리고, 그 자리에서 `진단 실행`·`LLM 소견`·`기대 결과 포렌식`으로 이어진다.
+
+API: `GET /api/forensics?only=problems|all&verdict=weak,insufficient&q=…&limit=`.
 
 ## 2. 기대 결과 포렌식 (`forensic expect`)
 
@@ -133,9 +165,11 @@ forensics #32 에 기록됨 (origin=expectation)
 
 | 파일 | 내용 |
 |---|---|
-| `llmwiki/forensic.py` | `diagnose`(자동), `resolve_expected`, `trace_expectation`, `format_expectation`, `record/list/summary` |
+| `llmwiki/forensic.py` | `diagnose`(자동), `resolve_expected`, `trace_expectation`, `format_expectation`, `record`, **`list_forensics(verdict, q, only_problems)`** · **`verdict_counts`** · `summary`(문제 비율), `PROBLEM_VERDICTS` |
 | `llmwiki/query_engine.py` | 라운드 캡처(`QueryEngine.rounds`: lists·fused_order·boost_order·rerank_before·final_order·expand·context_ids), `record_request=False` 재실행 모드, `hits_brief` 저장, `llm_report` |
 | `llmwiki/answer.py` | `build_context` 가 `dropped/neighbors/doc_expand` 를 돌려줌 |
 | `llmwiki/evolve.py` | 제안 kind `pin`/`query_rule`/`tuning` 적용, `corpus_gap` 은 자동 적용 불가 안내 |
 | `llmwiki/cli.py` `web/server.py` `mcp.py` `web/static/js/ask.js` `quality.js` | `forensic expect`, `/api/forensic/expect`, `wiki_forensic`, Ask/Quality 화면 |
 | `tests/test_features_0914.py::ForensicExpectTest` | 인용된 경우/무관 문서/코퍼스 없는 용어/answer 단계 탈락/캐시 요청 따라가기/제안 적용 · **미해결 안내와 수정안·목표 정렬**(`test_expect_report_is_ordered_and_explains_unresolved`) |
+| `tests/test_quality_ux_0920.py::ForensicFilterTest` | **기본 보기가 정상 건을 감추는가** · 판정/질의문 필터 · 건수가 페이지가 아니라 전체를 세는가 |
+| `tools/verify/verify_tri_surface.py` §2.6 | CLI `forensic list --only` ↔ `GET /api/forensics?only=` 가 **같은 목록**을 주는가 |

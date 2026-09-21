@@ -1,0 +1,23 @@
+{
+  "_comment": "문서 단위 접근 제어 (llmwiki/docacl.py · docs/SECURITY.md §문서 접근 제어). 이 파일을 프로젝트 루트에 docacl.json 으로 복사해서 쓰세요. rules 가 비어 있고 default_min_role 이 viewer 면 아무도 막지 않습니다(설치 직후 기본 동작).",
+  "enabled": true,
+
+  "_default_min_role": "어떤 규칙에도 걸리지 않는 문서를 보려면 최소 어떤 역할이어야 하는가. viewer = 모두 공개. class3 이상으로 올리면 '규칙에 없는 문서는 전부 비공개' 가 됩니다(화이트리스트 방식).",
+  "default_min_role": "viewer",
+
+  "_rules": "경로 접두사(prefix) 로 폴더째 등급을 매깁니다. 위에서 아래로 모두 보고 **가장 높은 등급**이 적용됩니다. prefix 는 doc_id(색인된 문서의 경로) 앞부분과 문자 그대로 비교합니다 — `python -m llmwiki security docacl check --role viewer` 로 몇 건이 가려지는지 먼저 확인하세요.",
+  "rules": [
+    {"prefix": "corpus/hr/",       "min_role": "class1", "note": "인사·평가·급여"},
+    {"prefix": "corpus/security/", "min_role": "class1", "note": "보안 사고 보고서"},
+    {"prefix": "corpus/roadmap/",  "min_role": "class2", "note": "미공개 로드맵"},
+    {"prefix": "corpus/customer/", "min_role": "class2", "note": "고객사 이름이 들어간 문서"}
+  ],
+
+  "_deny_message": "막혔을 때 화면·MCP 에 보여 줄 문구. 문서 제목을 노출하지 않는 중립적인 문장을 쓰세요.",
+  "deny_message": "권한이 없는 문서입니다",
+
+  "_note_front_matter": "문서 스스로도 등급을 매길 수 있습니다. 마크다운 front matter 에 `acl: class1` 또는 `acl: [class1, admin]` 을 적으면 됩니다. 목록을 쓰면 그중 가장 낮은 역할이 하한입니다. 경로 규칙과 문서 acl 이 둘 다 걸리면 더 높은 쪽을 씁니다.",
+  "_note_admin": "admin 은 운영·감사를 위해 항상 전부 봅니다. 이 파일로 admin 을 막을 수는 없습니다.",
+  "_note_toggle": "config.json 의 토글 `doc_acl` 을 false 로 두면 이 파일 전체가 무시됩니다(긴급 해제용).",
+  "_note_exits": "막히는 출구: 질의 근거(doc_acl 단계) · 채널 검색(/api/search, MCP wiki_search) · 문서 열람(/api/doc, /api/doc_chunks, /api/chunk, MCP wiki_doc) · 유사 문서(MCP wiki_related). CLI 는 로컬 운영자 도구이므로 admin 으로 동작합니다."
+}

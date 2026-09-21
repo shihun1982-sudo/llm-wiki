@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,6 +35,12 @@ class Phase0Test(unittest.TestCase):
         os.environ["LLMWIKI_RULES_PATH"] = os.path.join(self.tmp, "rules.json")
         from llmwiki import config as _cfg
         self._cfg_path, self._tun_path = _cfg.CONFIG_PATH, tn.TUNING_PATH
+        # 설정 파일 격리는 **환경변수**로 한다 (LLMWIKI_CONFIG_PATH). 예전에는 모듈 상수 `config.CONFIG_PATH` 를
+        # 몽키패치했는데, 2026-09-19 에 save/load 가 `path_for("config")` 를 쓰도록 바뀌면서 그 패치가
+        # 무력해졌고 `preset apply --save` 가 **프로젝트의 config.json** 을 임시 경로로 덮어썼다.
+        # 상수를 바꾸는 방식은 '지원되는 격리 수단' 이 아니다 — 환경변수가 그것이다.
+        os.environ["LLMWIKI_CONFIG_PATH"] = os.path.join(self.tmp, "config.json")
+        os.environ["LLMWIKI_TUNING_PATH"] = os.path.join(self.tmp, "tuning.json")
         _cfg.CONFIG_PATH = os.path.join(self.tmp, "config.json")
         tn.TUNING_PATH = os.path.join(self.tmp, "tuning.json")
         ls._STATE["dir"] = None
@@ -47,7 +54,8 @@ class Phase0Test(unittest.TestCase):
         self.p.store.close()
         from llmwiki import config as _cfg
         _cfg.CONFIG_PATH, tn.TUNING_PATH = self._cfg_path, self._tun_path
-        for k in ("LLMWIKI_LOGS_DIR_PATH", "LLMWIKI_PROMPTS_DIR_PATH", "LLMWIKI_PRESETS_PATH", "LLMWIKI_RULES_PATH"):
+        for k in ("LLMWIKI_LOGS_DIR_PATH", "LLMWIKI_PROMPTS_DIR_PATH", "LLMWIKI_PRESETS_PATH", "LLMWIKI_RULES_PATH",
+                  "LLMWIKI_CONFIG_PATH", "LLMWIKI_TUNING_PATH"):
             os.environ.pop(k, None)
         ls._STATE["dir"] = None
         tn.load_tuning(os.path.join(self.tmp, "none.json"))
@@ -138,12 +146,23 @@ class Phase0Test(unittest.TestCase):
     # ---- 빌드 락 ----
     def test_build_lock(self):
         path = os.path.join(self.tmp, "data", "build.lock")
+        # 2026-09-19: build_lock_timeout 기본값이 48시간(앞 빌드를 기다린다)이 되었다.
+        # 이 테스트는 '즉시 실패' 쪽을 보는 것이므로 0 으로 낮춘다 — 그러지 않으면 이틀을 기다린다.
+        self.s.build_lock_timeout = 0
         with BuildLock(path):
             with self.assertRaises(BuildLockedError):
                 self.p.build(full=False)
             out = run_captured(["build"], self.s, self.p)
             self.assertEqual(out["code"], 2)
             self.assertIn("refused", out["output"])
+        # 기다리는 쪽: timeout 을 주면 그 시간까지 기다렸다가 실패한다 (기본 48시간은 '앞 빌드가 끝나면 이어서')
+        with BuildLock(path):
+            t0 = time.time()
+            with self.assertRaises(BuildLockedError):
+                BuildLock(path, timeout=1.5).acquire()
+            waited = time.time() - t0
+            self.assertGreaterEqual(waited, 1.0, "timeout 을 줬는데 기다리지 않았다")
+            self.assertLess(waited, 10.0, "timeout 을 한참 넘겨 기다렸다")
         # stale 락(죽은 pid) 은 회수
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"pid": 999999, "host": __import__("socket").gethostname(), "ts": 0}, f)

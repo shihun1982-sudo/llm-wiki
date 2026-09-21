@@ -177,10 +177,20 @@ class EmptyChannelHealthTest(unittest.TestCase):
         self.assertTrue(self._quality(p)["ok"])
 
     def test_auto_fallback_to_hash_is_warned_when_index_is_large(self):
-        """auto 인데 모델을 못 찾아 hash 가 된 경우에만, 그리고 색인이 클 때만 경고한다."""
+        """auto 인데 모델을 못 찾아 hash 가 된 경우에만, 그리고 색인이 클 때만 경고한다.
+
+        주의: `auto` 는 이 PC 에 실제로 무엇이 깔려 있는지에 따라 결과가 달라진다(VOYAGE 키 · Ollama 의
+        임베딩 모델). 그래서 **찾지 못하는 상태를 명시적으로 만든다** — 그러지 않으면 누군가 `ollama pull bge-m3`
+        를 한 순간 이 테스트가 깨진다(2026-09-19에 실제로 그랬다).
+        """
         p = self._pipe(vector=True, graph=False, rule_graph=False, llm_graph=False, doc_vector=False)
         p.s.embed_provider = "auto"
+        p.s.ollama_url = "http://127.0.0.1:1"      # 닿지 않는 주소 → auto 가 Ollama 임베딩 모델을 찾지 못한다
+        self._no_voyage = os.environ.pop("VOYAGE_API_KEY", None)
+        self.addCleanup(lambda: os.environ.__setitem__("VOYAGE_API_KEY", self._no_voyage) if self._no_voyage else None)
+        p.reload()
         p.build(full=True)
+        self.assertEqual(p.embedder.name, "hash", "auto 가 hash 로 떨어지지 않았습니다 (이 테스트의 전제)")
         c = self._quality(p)
         self.assertIsNotNone(c)
         # 작은 색인(문서 1개)에서는 경고하지 않는다

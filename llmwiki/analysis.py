@@ -21,10 +21,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import path_for
+from . import prompts as _prompts
 from .profiler import flatten_trace
 
 FOCUS = ("quality", "speed", "tokens")
-LLM_STAGES = ("query_expand", "rerank_llm", "evidence_check", "answer_llm", "claim_check", "compress", "router", "fallback")
+LLM_STAGES = ("query_expand", "fusion_llm", "rerank_llm", "rerank_review_llm", "evidence_check", "answer_llm", "claim_check", "compress", "router", "fallback")
 
 
 def analysis_dir() -> str:
@@ -654,13 +655,59 @@ def render_markdown(rep: Dict[str, Any], focus: Optional[str] = None) -> str:
     return "\n".join(L) + "\n"
 
 
-def save_report(rep: Dict[str, Any], focus: Optional[str] = None) -> Dict[str, str]:
+def _stem_num(stem: str) -> int:
+    try:
+        return int(stem.rsplit("_", 1)[-1])
+    except (TypeError, ValueError):
+        return 0
+
+
+def prune_reports(keep: int) -> List[str]:
+    """logs/analysis 에 최근 keep 건(req_<id>.md + .json 한 쌍 = 1건)만 남기고 오래된 리포트를 지운다 (config.json analysis_keep).
+    오래된 순서 = mtime, 같으면 id 가 작은 것. 지운 파일 이름 목록을 돌려준다. keep<=0 이면 아무것도 지우지 않는다."""
+    keep = int(keep or 0)
+    if keep <= 0:
+        return []
+    d = analysis_dir()
+    groups: Dict[str, Dict[str, Any]] = {}
+    for fn in os.listdir(d):
+        p = os.path.join(d, fn)
+        if not os.path.isfile(p):
+            continue
+        stem = fn.rsplit(".", 1)[0]
+        g = groups.setdefault(stem, {"mtime": 0.0, "files": []})
+        g["files"].append(p)
+        try:
+            g["mtime"] = max(g["mtime"], os.path.getmtime(p))
+        except OSError:
+            pass
+    if len(groups) <= keep:
+        return []
+    order = sorted(groups.items(), key=lambda kv: (kv[1]["mtime"], _stem_num(kv[0]), kv[0]))
+    removed: List[str] = []
+    for _stem, g in order[:len(groups) - keep]:
+        for p in g["files"]:
+            try:
+                os.remove(p)
+                removed.append(os.path.basename(p))
+            except OSError:
+                pass
+    return removed
+
+
+def save_report(rep: Dict[str, Any], focus: Optional[str] = None, keep: Optional[int] = None) -> Dict[str, str]:
+    """리포트를 logs/analysis 에 쓰고, keep(analysis_keep) 이 있으면 오래된 리포트를 그 개수까지 지운다."""
     md_path, js_path = report_paths(int(rep.get("request_id") or 0))
     md = render_markdown(rep, focus)
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
     with open(js_path, "w", encoding="utf-8") as f:
         json.dump(rep, f, ensure_ascii=False, indent=1, default=str)
+    if keep:
+        try:
+            prune_reports(int(keep))
+        except Exception:
+            pass
     return {"md": md_path, "json": js_path, "chars": len(md)}
 
 
@@ -678,7 +725,7 @@ def run_for_result(pipe, result: Dict[str, Any], trace: Dict[str, Any], focus: O
     """질의 직후(analysis_mode) 호출: 리포트 생성·저장 → result['analysis'] 에 붙일 dict."""
     try:
         rep = build_report(pipe, result.get("request_id"), trace, result, focus)
-        paths = save_report(rep, focus) if rep.get("request_id") else {}
+        paths = save_report(rep, focus, keep=getattr(pipe.s, "analysis_keep", 200)) if rep.get("request_id") else {}
         return dict(summarize(rep), **paths)
     except Exception as e:
         return {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
@@ -690,7 +737,7 @@ def analyze(pipe, request_id: Optional[int] = None, focus: Optional[str] = None,
     if rep.get("error"):
         return {"error": rep["error"], "report": rep}
     md = render_markdown(rep, focus)
-    paths = save_report(rep, focus) if save else {}
+    paths = save_report(rep, focus, keep=getattr(pipe.s, "analysis_keep", 200)) if save else {}
     return {"report": rep, "markdown": md, "paths": paths, "summary": summarize(rep)}
 
 
@@ -710,23 +757,10 @@ def _strip_prompt_samples(md: str) -> str:
     return "\n".join(out)
 
 
-_INSIGHT_SYS = """TASK=analysis_insight
-당신은 사내 RAG 검색 엔진의 튜닝 담당자입니다. 아래는 질의 한 건의 상세 분석 리포트입니다.
-리포트에 **실제로 적힌 수치와 설정만** 근거로, 무엇을 바꾸면 좋아지는지 제안하세요.
-
-규칙
-- 리포트에 없는 사실을 지어내지 마세요. 근거가 없으면 제안하지 마세요.
-- 제안마다 (1) 무엇이 문제인지 (2) 어떤 설정을 어떤 값으로 (3) 기대 효과와 부작용 을 적으세요.
-- 설정 이름은 리포트의 '조절점' 에 나온 토글·튜닝 키를 그대로 쓰세요. 현재값도 함께 적습니다.
-- 효과가 큰 것부터 최대 5개. 이미 최적이면 빈 목록을 돌려주세요.
-
-아래 JSON 만 출력하세요 (설명 문장 금지).
-{"insights":[{"lens":"quality|speed|tokens","severity":"error|warn|info",
-  "problem":"무엇이 문제인가 (리포트의 수치 인용)",
-  "change":"바꿀 설정과 값 (예: context_max_chars 14000 → 9000)",
-  "key":"토글/튜닝 키 이름","from":"현재값","to":"제안값",
-  "effect":"기대 효과","risk":"부작용"}],
- "verdict":"한 줄 총평"}"""
+# 이 프롬프트는 **파일**이 원천이다 (prompts/analysis_insight.md) — 다른 15개와 같게 Settings › 프롬프트에서 고친다.
+# 예전에는 이 문자열이 코드에 박혀 있어 "LLM 이 쓰이는 자리인데 화면에서 못 고치는" 유일한 곳이었다 (2026-09-19).
+def _insight_sys() -> str:
+    return _prompts.get("analysis_insight")
 
 
 def _digest_for_llm(rep: Dict[str, Any], max_chars: int = 5000) -> str:
@@ -828,7 +862,7 @@ def llm_insight(pipe, request_id: Optional[int] = None, focus: Optional[str] = N
     user = ("아래는 질의 한 건의 분석 수치와 규칙 기반 소견입니다. 이 자료만 보고 판단하세요.\n\n"
             "%s\n\n지정한 JSON 형식 {\"insights\":[…],\"verdict\":\"…\"} 으로만 답하세요." % digest)
     try:
-        r = llm.complete(_INSIGHT_SYS, user, max_tokens=pipe.s.role_max_tokens("forensic", 1800),
+        r = llm.complete(_insight_sys(), user, max_tokens=pipe.s.role_max_tokens("forensic", 1800),
                          effort=pipe.s.role_llm("forensic")["effort"], json_mode=True)
         raw = r.get("text") or ""
         data = parse_json(raw)

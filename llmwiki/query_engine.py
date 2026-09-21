@@ -13,7 +13,9 @@ import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from .answer import build_context, generate_answer, check_claims, check_claims_llm, apply_claim_policy, refine_answer, guard_repeat
+from .answer import (build_context, generate_answer, check_claims, check_claims_llm, apply_claim_policy, refine_answer, guard_repeat,
+                     normalize_answer_mode, result_type_of, normalize_output_mode, render_candidates_table, OUTPUT_STOP_AFTER,
+                     RESULT_CANDIDATES_FUSED, RESULT_CANDIDATES_RERANKED, RESULT_CONTEXT)
 from .profiler import Profiler
 from .providers import parse_json, LLMError
 from . import providers as _providers
@@ -29,7 +31,7 @@ from . import tuning as _tuning
 # LLM 역할이 최종 실패했을 때 파이프라인이 자동으로 타는 대체 경로 (llm_report 설명용)
 ROLE_FALLBACK = {"answer": "추출식 답변(원문 문장 구조화)으로 대체", "rerank": "로컬 휴리스틱 리랭크로 대체", "expand": "LLM 질의 확장 생략(규칙 확장만)",
                  "verify": "휴리스틱 근거/claim 판정만 사용", "forensic": "휴리스틱 포렌식 소견만", "extract": "규칙 기반 그래프만", "summary": "커뮤니티 요약 생략",
-                 "review": "LLM 리뷰 생략"}
+                 "review": "LLM 리뷰 생략", "fusion": "융합 뒤 LLM 검토 생략(융합·부스트 순위 유지)", "select": "리랭크 뒤 LLM 선택 생략(리랭크 순위 유지)"}
 
 
 def llm_report_from_incidents(incidents: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -57,6 +59,13 @@ DOC_TYPE_HINTS = {
 }
 
 
+def _row_dict(c: Any) -> Dict[str, Any]:
+    """청크 행(sqlite3.Row | dict | None) → dict. Row 는 .get 이 없다."""
+    if c is None:
+        return {}
+    return c if isinstance(c, dict) else dict(c)
+
+
 def doc_type_hints(q: str) -> List[str]:
     ql = q.lower()
     out = []
@@ -80,6 +89,8 @@ class RoundConfig:
         self.use_llm_alts = True
         self.mcp_enrich = False
         self.level = "base"
+        # output_mode (§2.3): None = 끝까지 · "boost" = 융합·부스트 뒤 멈춤(리랭크 전) · "rerank" = 리랭크 뒤 · "context" = 컨텍스트까지
+        self.stop_after: Optional[str] = None
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -143,14 +154,26 @@ class QueryEngine:
             roles.append("expand")
         if t.evidence_check_llm or t.claim_check_llm:
             roles.append("verify")
+        if getattr(t, "llm_after_fusion", False):
+            roles.append("fusion")
+        if getattr(t, "llm_after_rerank", False):
+            roles.append("select")
         p._ensure_providers(prof, tuple(roles))
+        # 답변 모드 (grounded | best_effort) — 모르는 값은 grounded 로 (Web overrides 가 임의 문자열을 보낼 수 있다)
+        answer_mode = normalize_answer_mode(getattr(s, "answer_mode", "grounded"))
+        # 출력 모드 (answer | fused | reranked | context, §2.3) — answer 가 아니면 그 지점에서 멈추고 중간 산출물을 그대로 돌려준다.
+        output_mode = normalize_output_mode(getattr(s, "output_mode", "answer"))
+        is_answer = output_mode == "answer"
 
         # ---- 캐시: query_cache (메모리) → precompute (영속) ----
         # 단계 재실행 중에는 캐시를 **읽지 않는다**. 재실행은 "설정을 바꿔 가며 뒤 단계를 다시 본다" 는 것인데,
         # 캐시가 맞으면 아무 단계도 돌지 않은 예전 답이 그대로 돌아와 "눌러도 그대로다" 가 된다.
+        # output_mode ≠ answer 도 캐시를 읽지 않는다 — 캐시에는 완성된 답이 들어 있고(키에 output_mode 가 없다), 중간 산출물은 LLM 없이 싸게 다시 만든다.
         if self.resume is not None:
             prof.skipped("cache_hit", "단계 재실행 — 캐시를 쓰지 않는다")
-        key = p._cache_key(q) if (t.query_cache and self.resume is None) else None
+        elif not is_answer:
+            prof.skipped("cache_hit", "output_mode=%s — 캐시를 쓰지 않는다" % output_mode)
+        key = p._cache_key(q) if (t.query_cache and self.resume is None and is_answer) else None
         cached = p.qcache_get(key) if key else None
         if cached:
             with prof.stage("cache_hit", key=key[:12]) as st:
@@ -160,7 +183,7 @@ class QueryEngine:
             res["request_id"] = p.store.log_request("query", "[cache] " + q, trace, {"cached_from": cached["result"].get("request_id")}, res.get("config"), None, keep=s.keep_requests)
             return res, trace
         pkey = None
-        if t.precompute and self.resume is None:
+        if t.precompute and self.resume is None and is_answer:
             from . import precompute as _pc
             pkey = _pc.cache_key(q, p.store.build_version(), p.answer_signature())
             hit = _pc.get_cached(p.store, pkey)
@@ -304,7 +327,7 @@ class QueryEngine:
                                       "feedback_w": feedback_w})
 
         # ---- 검색 라운드 ----
-        base_cfg = RoundConfig()
+        base_cfg = RoundConfig(stop_after=OUTPUT_STOP_AFTER.get(output_mode))
         if self.resume is not None and self.resume.wants("ctx"):
             # '답변부터' · '검증부터' — 검색과 컨텍스트 구성을 통째로 재생한다 (여기가 가장 크게 아끼는 지점)
             R = self._replay_retrieval(prof, base_cfg, q_search)
@@ -318,7 +341,12 @@ class QueryEngine:
         verdict = "sufficient"
         rounds: List[Dict[str, Any]] = []
         replay_ctx = bool(self.resume is not None and self.resume.wants("ctx"))
-        if t.evidence_check:
+        if output_mode in ("fused", "reranked"):
+            # 컨텍스트를 만들지 않았으므로 판정할 것이 없다 (context 모드는 정상적으로 판정·fallback 까지 간다)
+            prof.skipped("evidence_check", "output_mode=%s" % output_mode)
+            if t.fallback_loop:
+                prof.skipped("fallback", "output_mode=%s" % output_mode)
+        elif t.evidence_check:
             ev, llm_ev, verdict = self._assess(prof, q_search, R, stage="evidence_check")
             # 재생 중에는 fallback 루프를 돌지 않는다: fallback 은 **검색을 다시 하는** 것이라
             # "앞 단계를 그대로 두고 뒤만 바꿔 본다" 는 재실행의 목적과 어긋난다.
@@ -359,11 +387,26 @@ class QueryEngine:
         # ---- 답변 ----
         al = p.llm_for("answer")
         answer_replay = self.resume.get("answer") if self.resume is not None else None
-        if answer_replay is not None:
+        cands_out: List[Dict[str, Any]] = []
+        if not is_answer:
+            # output_mode=fused|reranked|context — 답변 LLM 을 부르지 않는다. answer 칸에는 세 창구(CLI/Web/MCP)가 같은 본문을 보이도록
+            # 후보 표(마크다운) 또는 컨텍스트 본문을 넣는다. claim 검증·재작성은 ans.mode ≠ llm 이라 아래에서 자연히 건너뛴다.
+            prof.skipped("answer_llm", "output_mode=%s — 답변을 만들지 않는다" % output_mode)
+            if output_mode == "context":
+                ans = {"answer": ctx.get("text") or "", "mode": "context", "result_type": RESULT_CONTEXT, "cited": [], "model": None}
+            else:
+                cands_out = self._candidates(R, int(T.get("output_chunk_chars") or 0))
+                title = "## %s 후보 %d건 (%s)" % ("리랭크" if output_mode == "reranked" else "융합·부스트", len(cands_out),
+                                              "리랭크 뒤 · 문서 확장·컨텍스트 전" if output_mode == "reranked" else "리랭크 전")
+                ans = {"answer": render_candidates_table(cands_out, title), "mode": "candidates",
+                       "result_type": RESULT_CANDIDATES_RERANKED if output_mode == "reranked" else RESULT_CANDIDATES_FUSED, "cited": [], "model": None}
+        elif answer_replay is not None:
             # '검증부터' — 답변을 다시 만들지 않고 그때의 답변을 그대로 쓴다 (검증 설정만 바꿔 볼 때)
             ans = dict(answer_replay)
             prof.replayed("answer_llm", chars=len(str(ans.get("answer") or "")), mode=ans.get("mode"), model=ans.get("model"))
-        elif t.evidence_check and verdict == "insufficient":
+        elif t.evidence_check and verdict == "insufficient" and answer_mode == "grounded":
+            # grounded 에서만 "근거가 부족하니 답하지 않는다". best_effort 는 이 분기를 타지 않고 아래에서 LLM 을 부른다
+            # (프롬프트가 answer_best_effort.md 로 바뀌고 [BK] 로 배경 지식을 표시한다 — docs/ANSWER_MODES.md §4).
             with prof.stage("answer_insufficient", reasons=(ev or {}).get("reasons")) as st:
                 hd = self._hit_dicts(final, chunks, ctx, fts_snips)
                 text = _ev.insufficient_text(q, ev or {}, llm_ev, rounds, hd)
@@ -375,7 +418,9 @@ class QueryEngine:
                 ctx = self._compress(prof, q_search, ctx, chunks, p, s)
             ans = generate_answer(q, ctx, al, t.llm_answer, prof, s.role_llm("answer")["effort"], chunks, final,
                                   max_tokens=s.role_max_tokens("answer", s.answer_max_tokens),
-                                  meta=p.store.doc_meta_map(), graph=graph_res)
+                                  meta=p.store.doc_meta_map(), graph=graph_res,
+                                  mode=answer_mode, verdict=verdict, reasons=(ev or {}).get("reasons"),
+                                  degrade=bool(getattr(t, "degrade_on_llm_failure", True)))
             if verdict == "weak" and ans["mode"] == "llm":
                 ans["answer"] = "> ⚠ 근거가 약합니다 (%s). 아래 답변은 제한된 근거에 기반합니다.\n\n" % "; ".join((ev or {}).get("reasons") or []) + ans["answer"]
         if self.capture is not None:
@@ -421,7 +466,7 @@ class QueryEngine:
                         unsupported_samples=unsup[:3])
                 st.debug(claims=[{k: c.get(k) for k in ("i", "verdict", "cites", "support", "factual")} for c in claims_info["claims"]])
         elif t.claim_check:
-            prof.skipped("claim_check", "answer mode %s" % ans["mode"])
+            prof.skipped("claim_check", ("output_mode=%s" % output_mode) if not is_answer else ("answer mode %s" % ans["mode"]))
         else:
             prof.skipped("claim_check")
         # 재작성(refine)·claim 정책이 답변을 다시 쓸 수 있으므로 마지막으로 한 번 더 반복 루프를 본다.
@@ -444,12 +489,25 @@ class QueryEngine:
         # ---- 결과 ----
         hit_dicts = self._hit_dicts(final, chunks, ctx, fts_snips)
         groundedness = claims_info["groundedness"] if claims_info else None
+        # 규칙 효과 누적: 어느 확장 규칙이 실제로 컨텍스트에 기여했나 (llmwiki/ruleeffect.py, kv 한 줄)
+        rule_effect = None
+        if qr and (qr.get("fired") or []) and (R.get("rule_src") or {}):
+            try:
+                from . import ruleeffect as _re
+                rule_effect = _re.record(p.store, qr["fired"], R.get("rule_src") or {}, hit_dicts, ans.get("answer") or "")
+            except Exception as e:      # 관측용이라 질의를 실패시키지 않는다
+                rule_effect = {"error": str(e)[:120]}
         result: Dict[str, Any] = {
             "query": q, "answer": ans["answer"], "answer_mode": ans["mode"], "cited": ans["cited"], "model": ans.get("model"),
+            # result_type: grounded | best_effort | extractive | insufficient | error | candidates_fused | candidates_reranked | context
+            "result_type": ans.get("result_type") or result_type_of(ans["mode"]), "output_mode": output_mode,
+            # refs: LLM 에 실제로 전달된(컨텍스트에 들어간) 근거 목록 — output_mode=fused|reranked 는 컨텍스트가 없으므로 빈 목록
+            "refs": self._refs(ctx, chunks, int(T.get("refs_preview_chars") or 0)),
             "hits": hit_dicts, "route": route_info, "graph": {k: v for k, v in graph_res.items() if k != "chunks"},
             "plan": plan, "evidence": dict(ev or {}, llm=llm_ev, verdict=verdict) if t.evidence_check else None, "fallback": rounds,
             "claims": {k: v for k, v in (claims_info or {}).items() if k != "claims"} if claims_info else None, "groundedness": groundedness,
             "boosts": R.get("boost_stats"), "doc_expand": R.get("expand_info"), "llm_report": llm_report,
+            "rule_effect": rule_effect,
             "config": {"toggles": dict(t.__dict__), "weights": R["weights"], "llm": al.name, "llm_model": al.model,
                        "rerank_llm": p.llm_for("rerank").describe().get("model"), "embedder": p.embedder.name,
                        "tuning": _tuning.T.to_dict(), "alt_queries": alt_llm, "round": R["cfg"].to_dict()},
@@ -458,18 +516,28 @@ class QueryEngine:
         if ans.get("repeat_loop"):
             # 모델이 같은 구절을 되풀이한 고장 답변 — 상단 배너로 알리고 캐시에는 넣지 않는다
             result["repeat_loop"] = ans["repeat_loop"]
-        if log and t.evolve_capture:
+        if not is_answer:
+            # 중간 산출물 (§2.3). stages 는 단계별 순서(id) — "리랭크 입력 전후" 를 한 응답에서 비교할 수 있다
+            n_list = int(T.get("output_list_n") or 0)
+            result["stages"] = {k: list(R.get(k) or []) for k in ("fused_order", "boost_order", "rerank_before", "final_order")}
+            result["stages"]["inject"] = R.get("inject") or {}
+            if output_mode == "context":
+                result["context"] = {"text": ctx.get("text") or "", "chars": int(ctx.get("chars") or 0), "citations": list(ctx.get("citations") or [])}
+            else:
+                result["candidates"] = cands_out
+                result["lists"] = {name: [[cid, round(float(sc), 6)] for cid, sc in lst[:n_list]] for name, lst in (R.get("lists") or {}).items()}
+        if log and t.evolve_capture and is_answer:
             from .evolve import capture_query
             with prof.stage("evolve_capture") as st:
                 result["proposals"] = capture_query(p, q, result, final)
                 st.note(proposals=result["proposals"])
         else:
-            prof.skipped("evolve_capture", "log off" if not log else "disabled")
+            prof.skipped("evolve_capture", "log off" if not log else ("output_mode=%s" % output_mode if not is_answer else "disabled"))
         trace = prof.finish()
         result["ms"] = trace["ms"]
         result["tokens"] = trace["summary"]["llm"]
         result["run_id"] = trace.get("run_id")
-        if log and t.evolve_capture:
+        if log and t.evolve_capture and is_answer:
             result["query_id"] = p.store.log_query(q, result["config"], [h.chunk_id for h in final], ans["answer"],
                                                    {"top_fused": final[0].fused if final else 0, "n_hits": len(final), "verdict": verdict, "groundedness": groundedness}, trace)
         # requests 에는 hits 전문 대신 요약(hits_brief) 을 남긴다 — forensic expect 가 '원 요청에서 이 청크가 어디까지 갔나' 를 읽는다
@@ -478,6 +546,9 @@ class QueryEngine:
         if self.record_request:
             result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None,
                                                       keep=s.keep_requests, archive_dir=s.requests_archive_dir())
+            # 질의 로그 ↔ 요청 기록 연결: Observability 질의·로그에서 바로 전체 trace 로 넘어갈 수 있게.
+            if result.get("query_id"):
+                p.store.set_query_request_id(int(result["query_id"]), int(result["request_id"] or 0))
         else:
             result["request_id"] = None
         # ---- 단계 재실행용 중간 결과 저장 ----
@@ -491,9 +562,10 @@ class QueryEngine:
             result["rerun"] = _rerun.save(s, result["request_id"], self.capture)
         elif self.resume is not None:
             result["rerun"] = self.resume.summary()
-        # ---- 포렌식 자동 ----
-        need_forensic = self.record_request and t.forensic_auto and (verdict != "sufficient" or ans["mode"] == "insufficient" or
-                                                                     (groundedness is not None and groundedness < float(T.get("claim_min_groundedness"))))
+        # ---- 포렌식 자동 ---- (fused/reranked 는 판정 자체가 없으므로 대상이 아니다; context 는 근거 판정이 있으니 그대로)
+        need_forensic = self.record_request and t.forensic_auto and output_mode in ("answer", "context") and \
+            (verdict != "sufficient" or ans["mode"] == "insufficient" or
+             (groundedness is not None and groundedness < float(T.get("claim_min_groundedness"))))
         if need_forensic:
             from . import forensic as _fx
             try:
@@ -503,7 +575,7 @@ class QueryEngine:
                 _log.log("warning", "forensic recorded #%s (%s)" % (fid, diag["severity"]), "query", request_id=result["request_id"], verdict=verdict)
             except Exception as e:
                 result["forensic"] = {"error": str(e)[:200]}
-        if log and t.evolve_capture and self.record_request:
+        if log and t.evolve_capture and self.record_request and is_answer:
             from . import memory as _mem
             try:
                 _mem.record_episode(p.store, result["request_id"], q, "query", ans["mode"] if ans["mode"] != "llm" else verdict, [h.chunk_id for h in final],
@@ -511,13 +583,15 @@ class QueryEngine:
             except Exception:
                 pass
         # ---- 상세 분석 리포트 (analysis_mode) ----
-        if t.analysis_mode and self.record_request:
+        if t.analysis_mode and self.record_request and is_answer:
             from . import analysis as _an
             result["analysis"] = _an.run_for_result(p, result, trace)
             if result["analysis"].get("md"):
                 _log.log("info", "analysis report: %s" % result["analysis"]["md"], "query", request_id=result["request_id"])
         # 반복 루프로 망가진 답변은 캐시에 넣지 않는다 — 한 번 들어가면 그 질문은 리빌드 전까지
         # 계속 같은 고장 답변을 1ms 만에 돌려준다 (2026-09-16).
+        # output_mode ≠ answer 는 key/pkey 가 None 이라 여기 오지 않는다 — 중간 산출물은 캐시·사전계산에 넣지 않는다
+        # (완성 답변 자리를 후보 표가 차지하면 다음 일반 질의가 그 표를 답으로 받는다).
         if key and self.record_request and not result.get("repeat_loop"):
             p.qcache_put(key, {"result": dict(result), "trace": trace})
         if pkey and t.precompute and ans["mode"] != "insufficient" and self.record_request:
@@ -547,6 +621,35 @@ class QueryEngine:
         chunks: Dict[str, Any] = dict(store.get_chunks(want))
         chunks.update(ext_chunks)
         missing = [c for c in want if c not in chunks]
+        # 문서 접근 제어는 **재생 경로에도** 걸어야 한다 (2026-09-19). 저장본에는 그때의 컨텍스트 본문이
+        # 통째로 들어 있어서, 여기서 막지 않으면 등급이 낮은 사용자가 남의(또는 예전 admin 실행의) 근거를
+        # 그대로 받아 본다. 정상 경로의 `doc_acl` 단계와 같은 판정기를 쓴다.
+        af = None
+        try:
+            af = self.pipe.acl_filter()
+        except Exception:
+            af = None
+        if af is not None and af.enabled:
+            with prof.stage("doc_acl", role=af.role, replay=True) as st:
+                final, removed = af.filter_hits(final, chunks)
+                chunks = {k: v for k, v in chunks.items() if af.chunk_ok(k, af.doc_id_of(v, k))}
+                cites = [c for c in (ctx.get("citations") or []) if af.chunk_ok(str(c.get("chunk_id") or ""))]
+                if removed or len(cites) != len(ctx.get("citations") or []):
+                    # 근거가 빠졌으면 저장된 컨텍스트 **본문을 그대로 쓸 수 없다** — 다시 조립한다.
+                    from .answer import build_context
+                    from . import models_catalog as _mc
+                    t_ = self.pipe.s.toggles
+                    ctx = build_context(final, chunks, None, _mc.context_budget(self.pipe.s, "answer")["chars"],
+                                        query=q_search, trim=t_.context_trim, dedupe=t_.dedupe_hits,
+                                        chunk_chars=self.pipe.s.context_chunk_chars,
+                                        guard=bool(getattr(t_, "context_guard", True)))
+                    rebuilt = True
+                else:
+                    rebuilt = False
+                st.note(**dict(af.summary(), removed=removed, context_rebuilt=rebuilt))
+                st.debug(blocked=dict(list(af.blocked_docs.items())[:20]))
+        elif af is not None:
+            prof.skipped("doc_acl", "규칙 없음" if af.role != "admin" else "admin")
         prof.replayed("fts_search", source="checkpoint")
         prof.replayed("vector_search", source="checkpoint")
         prof.replayed("graph_search", source="checkpoint")
@@ -622,6 +725,35 @@ class QueryEngine:
                 st.note(error=str(e)[:200])
         return ctx
 
+    def _refs(self, ctx: Dict[str, Any], chunks: Dict[str, Any], preview_chars: int) -> List[Dict[str, Any]]:
+        """LLM 에 실제로 전달된 근거 목록 [{n, chunk_id, doc_id, ext_id, heading, kind, chars, preview}] — 컨텍스트 인용 순서 그대로."""
+        meta = self.pipe.store.doc_meta_map()
+        out = []
+        for cit in ctx.get("citations") or []:
+            c = _row_dict(chunks.get(cit["chunk_id"]))     # 색인 청크는 sqlite3.Row, 외부 청크는 dict
+            dm = meta.get(c.get("doc_id") or "") or {}
+            text = c.get("text") or ""
+            out.append({"n": cit.get("n"), "chunk_id": cit["chunk_id"], "doc_id": c.get("doc_id") or cit.get("doc_id") or "",
+                        "ext_id": dm.get("ext_id") or ((c.get("external") or {}).get("id") if isinstance(c, dict) else None),
+                        "heading": c.get("heading") or cit.get("heading") or "", "kind": cit.get("kind") or "hit",
+                        "chars": len(text), "preview": text[:preview_chars] if preview_chars > 0 else ""})
+        return out
+
+    def _candidates(self, R: Dict[str, Any], chunk_chars: int) -> List[Dict[str, Any]]:
+        """output_mode=fused|reranked 의 candidates[] — R['final'] 순서대로 후보 + 청크 메타. text 는 output_chunk_chars 로 자른다 (0 = 전문)."""
+        meta = self.pipe.store.doc_meta_map()
+        chunks = R["chunks"]
+        out = []
+        for i, h in enumerate(R["final"]):
+            c = _row_dict(chunks.get(h.chunk_id))
+            dm = meta.get(c.get("doc_id") or "") or {}
+            ext = c.get("external")
+            text = c.get("text") or ""
+            out.append(dict(h.to_dict(), rank=i + 1, doc_id=c.get("doc_id") or "", ext_id=dm.get("ext_id") or ((ext or {}).get("id")),
+                            heading=c.get("heading") or "", doc_type=dm.get("doc_type") or (ext or {}).get("doc_type"), date=dm.get("date"),
+                            text=(text[:chunk_chars] if chunk_chars > 0 else text), chars=len(text), **({"external": ext} if ext else {})))
+        return out
+
     def _hit_dicts(self, final: List[Hit], chunks: Dict[str, Any], ctx: Dict[str, Any], fts_snips: Dict[str, str]) -> List[Dict[str, Any]]:
         cite_n = {c["chunk_id"]: c["n"] for c in ctx["citations"]}
         meta = self.pipe.store.doc_meta_map()
@@ -644,8 +776,115 @@ class QueryEngine:
         out.sort(key=lambda d: (d["n"] is None, d["n"] or 0))
         return out
 
+    # ---------------------------------------------------------------- 융합 뒤 · 리랭크 뒤 LLM (토글 llm_after_fusion / llm_after_rerank)
+    # 두 단계의 공통 규칙 (docs/ANSWER_MODES.md §4):
+    #   - 후보 번호는 **1부터**. 프롬프트 본문에 그렇게 그리고, 파싱은 n-1 로 한다(범위 밖 번호는 버린다).
+    #   - LLM 이 실패하거나(LLMError) JSON 이 깨지면 **순위를 그대로 둔다** — 품질을 깎는 방향으로는 실패하지 않는다.
+    #   - 역할은 fusion / select 라 모델·정책·앙상블이 역할 단위 설정을 그대로 따른다(config.json llm_roles).
+    def _cand_lines(self, cands: List[Hit], chunks: Dict[str, Any], chunk_chars: int, with_doc: bool = False) -> List[str]:
+        lines: List[str] = []
+        for i, h in enumerate(cands):
+            c = _row_dict(chunks.get(h.chunk_id))
+            head = (c.get("heading") or "")[:70]
+            text = (c.get("text") or "")[:chunk_chars].replace("\n", " ")
+            if with_doc:
+                lines.append("[%d] 문서=%s · %s\n%s" % (i + 1, c.get("doc_id") or "?", head, text))
+            else:
+                lines.append("[%d] (%s) %s" % (i + 1, head, text))
+        return lines
+
+    def _fusion_llm(self, prof: Profiler, q: str, hits: List[Hit], chunks: Dict[str, Any], T: Any, n_cands: int) -> None:
+        """융합·부스트 직후(리랭크 전) LLM(역할 fusion)이 명백히 무관한 후보를 고른다 → drop 은 fused × fusion_llm_drop_penalty
+        (0 이면 목록에서 제거, why=llm_drop). hits 를 제자리에서 고치고 다시 정렬한다."""
+        p = self.pipe
+        n = int(T.get("fusion_llm_candidates") or 0) or n_cands
+        cands = hits[:n]
+        if not cands:
+            prof.skipped("fusion_llm", "후보가 없다")
+            return
+        fl = p.llm_for("fusion")
+        if not fl.available:
+            prof.skipped("fusion_llm", "LLM provider unavailable → 융합 순위 유지")
+            return
+        penalty = float(T.get("fusion_llm_drop_penalty") or 0.0)
+        with prof.stage("fusion_llm", candidates=len(cands), model=getattr(fl, "model", fl.name), role="fusion", drop_penalty=penalty) as st:
+            sys_p = _prompts.get("fusion_review")
+            prompt = "\n\n".join(["질문: " + q, ""] + self._cand_lines(cands, chunks, int(p.s.rerank_chunk_chars)))
+            st.note(prompt_chars=len(prompt) + len(sys_p), est_input_tokens=(len(prompt) + len(sys_p)) // 3)
+            st.sample(system=sys_p, prompt=prompt[:6000])
+            try:
+                r = fl.complete(sys_p, prompt, max_tokens=p.s.role_max_tokens("fusion", 400), effort=p.s.role_llm("fusion")["effort"], json_mode=True)
+                st.sample(response=r["text"][:2000])
+                data = parse_json(r["text"]) or {}
+                drop = sorted({int(x) - 1 for x in (data.get("drop") or []) if isinstance(x, (int, float)) and 0 < int(x) <= len(cands)})
+                if len(drop) >= len(cands):
+                    # 전부 버리라는 응답은 따르지 않는다 (근거가 통째로 사라지면 답을 만들 수 없다)
+                    st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), dropped=[], ignored="LLM 이 모든 후보를 drop 했다 — 순위 유지")
+                    return
+                removed: List[str] = []
+                for i in drop:
+                    h = cands[i]
+                    h.why.append("llm_drop")
+                    h.boosts["llm_drop"] = penalty
+                    if penalty <= 0:
+                        removed.append(h.chunk_id)
+                    else:
+                        h.fused *= penalty
+                if removed:
+                    rm = set(removed)
+                    hits[:] = [h for h in hits if h.chunk_id not in rm]
+                hits.sort(key=lambda h: -h.fused)
+                st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), dropped=[cands[i].chunk_id for i in drop], removed=len(removed),
+                        reason=str(data.get("reason") or "")[:200], top=[h.chunk_id for h in hits[:5]])
+                st.debug(after=[h.chunk_id for h in hits[:60]])
+            except (LLMError, ValueError) as e:
+                st.note(error=str(e)[:200], fallback="융합·부스트 순위 유지")
+
+    def _rerank_review_llm(self, prof: Profiler, q: str, hits: List[Hit], chunks: Dict[str, Any], T: Any, top_k_final: int) -> List[str]:
+        """리랭크 직후(문서 확장·컨텍스트 전) LLM(역할 select)이 컨텍스트에 넣을 청크 순서와 통째로 읽을 문서를 고른다.
+        반환: expand_docs(문서 id 목록 — doc_expand 가 우선·전체 확장). hits 는 제자리에서 재정렬한다."""
+        p = self.pipe
+        n = int(T.get("post_rerank_llm_k") or 0) or max(top_k_final * 2, 10)
+        cands = hits[:n]
+        if not cands:
+            prof.skipped("rerank_review_llm", "후보가 없다")
+            return []
+        sl = p.llm_for("select")
+        if not sl.available:
+            prof.skipped("rerank_review_llm", "LLM provider unavailable → 리랭크 순위 유지")
+            return []
+        with prof.stage("rerank_review_llm", candidates=len(cands), model=getattr(sl, "model", sl.name), role="select") as st:
+            sys_p = _prompts.get("rerank_review")
+            prompt = "\n\n".join(["질문: " + q, ""] + self._cand_lines(cands, chunks, int(p.s.rerank_chunk_chars), with_doc=True))
+            st.note(prompt_chars=len(prompt) + len(sys_p), est_input_tokens=(len(prompt) + len(sys_p)) // 3)
+            st.sample(system=sys_p, prompt=prompt[:6000])
+            try:
+                r = sl.complete(sys_p, prompt, max_tokens=p.s.role_max_tokens("select", 400), effort=p.s.role_llm("select")["effort"], json_mode=True)
+                st.sample(response=r["text"][:2000])
+                data = parse_json(r["text"]) or {}
+                sel: List[int] = []
+                for x in (data.get("select") or []):
+                    if isinstance(x, (int, float)) and 0 < int(x) <= len(cands) and (int(x) - 1) not in sel:
+                        sel.append(int(x) - 1)
+                docs = {str(c.get("doc_id") or "") for c in (_row_dict(chunks.get(h.chunk_id)) for h in cands)}
+                expand_docs = [str(d) for d in (data.get("expand_docs") or []) if str(d) in docs][:max(1, top_k_final)]
+                if sel:
+                    picked = [cands[i] for i in sel]
+                    rest = [h for i, h in enumerate(cands) if i not in set(sel)]
+                    for h in picked:
+                        h.why.append("llm_select")
+                    hits[:len(cands)] = picked + rest
+                st.note(usage=r.get("usage"), ms_llm=round(r.get("ms", 0)), selected=[cands[i].chunk_id for i in sel][:10],
+                        expand_docs=expand_docs, note=str(data.get("note") or "")[:200])
+                st.debug(after=[h.chunk_id for h in hits[:60]])
+                return expand_docs
+            except (LLMError, ValueError) as e:
+                st.note(error=str(e)[:200], fallback="리랭크 순위 유지")
+                return []
+
     # ---------------------------------------------------------------- 문서 단위 확장 (doc_expand)
-    def _doc_expand(self, store, q: str, final: List[Hit], chunks: Dict[str, Any], T: Any) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
+    def _doc_expand(self, store, q: str, final: List[Hit], chunks: Dict[str, Any], T: Any,
+                    prefer_docs: Optional[List[str]] = None) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
         """final 의 상위 문서들에서 아직 컨텍스트에 없는 청크를 질의 관련도로 점수화해 추가 후보를 고른다.
         반환: [(chunk_id, parent_chunk_id, score)], 진단 메타. 점수 = keyword(커버리지) | vector(부모 청크 대비 정규화 코사인) | hybrid."""
         import numpy as np
@@ -663,7 +902,11 @@ class QueryEngine:
             if c["doc_id"] not in parent_of:
                 parent_of[c["doc_id"]] = h.chunk_id
                 docs_order.append(c["doc_id"])
-        docs_order = docs_order[:top_docs]
+        # llm_after_rerank 의 expand_docs: 그 문서를 앞으로 당기고(top_docs 안에 반드시 들어오게) 통째로 읽는다(mode 무시).
+        force_full = {d for d in (prefer_docs or []) if d in parent_of}
+        if force_full:
+            docs_order = [d for d in docs_order if d in force_full] + [d for d in docs_order if d not in force_full]
+        docs_order = docs_order[:max(top_docs, len(force_full))]
         qv = None
         idx: Dict[str, int] = {}
         mat = None
@@ -702,7 +945,7 @@ class QueryEngine:
                 vs = None
                 if sim is not None:
                     vs = min(1.0, max(0.0, (sim / psim) if (psim and psim > 0) else sim))
-                if mode == "full":
+                if mode == "full" or d in force_full:
                     score = 1.0          # 점수로 거르지 않는다 — 문서 전체를 문서 순서대로
                 elif mode == "keyword" or vs is None:
                     score = kw
@@ -712,7 +955,7 @@ class QueryEngine:
                     score = w * vs + (1.0 - w) * kw
                 scored.append((round(score, 4), int(r["ordinal"] or 0), cid, round(kw, 3), None if vs is None else round(vs, 3)))
             cand_total += len(scored)
-            if mode == "full":
+            if mode == "full" or d in force_full:
                 # 근거가 나온 문서는 통째로 읽는다. 순서를 지키되 max_chunks · context_max_chars 로만 제한.
                 pick = sorted(scored, key=lambda x: x[1])[:max_chunks]
             else:
@@ -728,7 +971,8 @@ class QueryEngine:
         if need:
             chunks.update(store.get_chunks(need))
         return out, {"docs": len(docs_order), "candidates": cand_total, "added": len(out), "mode": mode, "vector": qv is not None,
-                     "min_score": min_score, "max_chunks": max_chunks, "per_doc": per_doc}
+                     "min_score": min_score, "max_chunks": max_chunks, "per_doc": per_doc,
+                     **({"llm_expand_docs": sorted(force_full)} if force_full else {})}
 
     # ---------------------------------------------------------------- 검색 라운드
     def _retrieve(self, prof: Profiler, q: str, q_search: str, qr: Optional[Dict[str, Any]], route_info: Dict[str, Any], weights: Dict[str, float],
@@ -749,16 +993,20 @@ class QueryEngine:
         k_fts, k_vec, k_gr = int(s.top_k_fts * cfg.k_mult), int(s.top_k_vector * cfg.k_mult), int(s.top_k_graph * cfg.k_mult)
         fts_snips: Dict[str, str] = {}
         syn = store.synonyms()
-        rule_alts: List[Tuple[str, float, str]] = list(qr["alt_queries"]) if qr else []
-        related: List[Tuple[str, float]] = [(txt, wgt * cfg.related_mult) for txt, wgt in (qr["related"] if qr else [])]
-        alt_all: List[Tuple[str, float, str]] = rule_alts + [(a, float(T.get("query_expand_w")), "llm") for a in (alt_llm if cfg.use_llm_alts else [])] + list(cfg.extra_queries)
+        # 규칙이 만든 대체 질의·관련어는 **어느 규칙이 만들었는지**(4번째/3번째 원소)를 함께 들고 다닌다.
+        # 그래야 나중에 "이 규칙이 실제로 답변 근거에 기여했나" 를 정확히 셀 수 있다 (llmwiki/ruleeffect.py).
+        rule_src: Dict[str, str] = {}
+        rule_alts: List[Tuple] = list(qr["alt_queries"]) if qr else []
+        related: List[Tuple] = [tuple([r[0], r[1] * cfg.related_mult] + list(r[2:])) for r in (qr["related"] if qr else [])]
+        alt_all: List[Tuple] = rule_alts + [(a, float(T.get("query_expand_w")), "llm") for a in (alt_llm if cfg.use_llm_alts else [])] + list(cfg.extra_queries)
         # 중복 제거
         seen = {q_search}
-        alts: List[Tuple[str, float, str]] = []
-        for txt, wgt, kind in alt_all:
+        alts: List[Tuple] = []
+        for a in alt_all:
+            txt = a[0]
             if txt and txt not in seen:
                 seen.add(txt)
-                alts.append((txt, wgt, kind))
+                alts.append(tuple(a))
         alts = alts[:6]
         # 채널 검색을 통째로 재생할 것인가 (융합·부스트·리랭크부터 다시 돌 때)
         lists_replay = rp.get("lists") if rp is not None else None
@@ -791,23 +1039,34 @@ class QueryEngine:
                     added = [cid for cid, _, _ in rrows if cid not in base_ids]
                     with prof.stage("expansion_profile") as st:
                         st.note(baseline_hits=len(rows), rule_hits=len(rrows), added_by_rules=len(added), added_ids=added[:8], fired=[f["matched"] for f in qr["fired"]])
-            for i, (aq, wgt, kind) in enumerate(alts):
+            for i, a in enumerate(alts):
+                aq, wgt = a[0], a[1]
                 arows = fts_search(store, aq, k_fts, syn, prof, stage_name="fts_search_alt")
                 lists["fts_alt%d" % (i + 1)] = [(cid, sc) for cid, sc, _ in arows]
                 w["fts_alt%d" % (i + 1)] = w.get("fts", 1.0) * wgt
-            for i, (rq, wgt) in enumerate(related[:3]):
+                if len(a) > 3:
+                    rule_src["fts_alt%d" % (i + 1)] = a[3]      # 이 리스트를 만든 규칙 (효과 집계용)
+            for i, rr in enumerate(related[:3]):
+                rq, wgt = rr[0], rr[1]
                 rrows = fts_search(store, rq, max(3, k_fts // 2), {}, prof, stage_name="fts_search_related")
                 lists["fts_rel%d" % (i + 1)] = [(cid, sc) for cid, sc, _ in rrows]
                 w["fts_rel%d" % (i + 1)] = w.get("fts", 1.0) * wgt
+                if len(rr) > 2:
+                    rule_src["fts_rel%d" % (i + 1)] = rr[2]
         else:
             prof.skipped("fts_search")
         if lists_replay is not None:
             pass
         elif t.vector:
-            lists["vector"] = vector_search(store, p.embedder, q_search, k_vec, prof)
-            for i, (aq, wgt, kind) in enumerate(alts[:3]):
-                lists["vector_alt%d" % (i + 1)] = vector_search(store, p.embedder, aq, k_vec, prof)
+            lists["vector"] = vector_search(store, p.embedder, q_search, k_vec, prof,
+                                            bool(getattr(t, "embed_query_cache", True)))
+            for i, a in enumerate(alts[:3]):
+                aq, wgt = a[0], a[1]
+                lists["vector_alt%d" % (i + 1)] = vector_search(store, p.embedder, aq, k_vec, prof,
+                                                                bool(getattr(t, "embed_query_cache", True)))
                 w["vector_alt%d" % (i + 1)] = w.get("vector", 1.0) * wgt
+                if len(a) > 3:
+                    rule_src["vector_alt%d" % (i + 1)] = a[3]
         else:
             prof.skipped("vector_search")
         graph_res: Dict[str, Any] = dict(graph_replay)
@@ -881,8 +1140,10 @@ class QueryEngine:
             hits = _rerun.hits_from(rp.data, "fused")
             prof.replayed("rrf_fuse", n=len(hits), top=[h.chunk_id for h in hits[:6]])
         else:
-            with prof.stage("rrf_fuse", rrf_k=s.rrf_k, method=method, weights=w, sources={n: len(v) for n, v in lists.items()}) as st:
-                hits, fmeta = _fusion.fuse(lists, w, s.rrf_k, method, T.get("fusion_multi_bonus"))
+            topk = _fusion.topk_map(T)      # 채널별 top-k 구간 가중 (<채널>_topk_n/_topk_w/_tail_w, 모두 기본이면 빈 dict)
+            with prof.stage("rrf_fuse", rrf_k=s.rrf_k, method=method, weights=w, sources={n: len(v) for n, v in lists.items()},
+                            topk=topk or None) as st:
+                hits, fmeta = _fusion.fuse(lists, w, s.rrf_k, method, T.get("fusion_multi_bonus"), topk=topk)
                 st.note(**fmeta, top=[(h.chunk_id, round(h.fused, 4), h.why) for h in hits[:6]])
                 st.debug(order=[h.chunk_id for h in hits[:60]])
         fused_order = [h.chunk_id for h in hits]
@@ -937,15 +1198,70 @@ class QueryEngine:
                     # filter 로 0건 → boost 로 완화 재적용은 다음 라운드(wide) 에서; 여기서는 통계만
                 st.note(**stats, top=[(h.chunk_id, round(h.fused, 4), h.boosts) for h in hits[:5]])
                 st.debug(order=[h.chunk_id for h in hits[:60]])
+        # ---- 문서 단위 접근 제어 (2026-09-19) ----
+        # 역할이 낮은 사용자에게는 그 문서를 **근거로 주지 않는다**. 부스트 뒤·리랭크 앞에 두는 이유:
+        #   · 융합·부스트 통계는 원래 후보 기준으로 남겨 "무엇이 걸러졌나" 를 볼 수 있게 하고,
+        #   · 리랭크·컨텍스트·답변·인용 어디에도 가려진 문서가 닿지 않게 한다 (뒤쪽 출구가 전부 이 아래에 있다).
+        acl_info: Dict[str, Any] = {"enabled": False}
+        af = None
+        try:
+            af = p.acl_filter()
+        except Exception as e:
+            acl_info = {"enabled": False, "error": str(e)[:160]}
+            prof.skipped("doc_acl", "판정기 생성 실패: %s" % str(e)[:80])
+        if af is not None and af.enabled:
+            with prof.stage("doc_acl", role=af.role) as st:
+                try:
+                    hits, removed = af.filter_hits(hits, chunks)
+                except Exception as e:
+                    # **열어 주지 않는다.** 판정이 깨지면 chunk_id 만으로 되짚어 보수적으로 거른다 —
+                    # 예외 한 번에 비공개 문서가 근거로 들어가는 길을 남기지 않기 위해서다.
+                    kept = [h for h in hits if af.doc_ok(str(getattr(h, "chunk_id", "") or "").rsplit("#", 1)[0])]
+                    removed, hits = len(hits) - len(kept), kept
+                    st.note(fallback=str(e)[:120])
+                acl_info = dict(af.summary(), removed=removed)
+                st.note(**acl_info)
+                st.debug(blocked=dict(list(af.blocked_docs.items())[:20]))
+            if acl_info.get("removed"):
+                chunks = {k: v for k, v in chunks.items()
+                          if af.chunk_ok(k, af.doc_id_of(v, k))}
+        elif af is not None:
+            prof.skipped("doc_acl", "규칙 없음" if af.role != "admin" else "admin")
         boost_order = [h.chunk_id for h in hits]
         if self.capture is not None and not self.rounds:
             self.capture.hits("boosted", hits)
             self.capture.put("boost_stats", stats)
         # ---- 리랭크 · 컨텍스트 ----
         n_cands = int(s.rerank_candidates * cfg.k_mult)
+        win = n_cands or max(s.top_k_final * 2, 10)     # 리랭크 후보 창 (external_inject · channel_inject 가 여기로 올린다)
+        # output_mode=fused|reranked 의 후보 수: output_candidates_n (0 = 리랭크 후보 수)
+        n_out = int(T.get("output_candidates_n") or 0) or win
+        empty_ctx = {"text": "", "citations": [], "chars": 0, "hits_used": [], "dropped": [], "neighbors": [], "doc_expand": []}
+        # 융합·부스트 직후 LLM 검토 (토글 llm_after_fusion, 역할 fusion) — fused 점수 자체를 바꾸므로
+        # **output_mode=fused 의 조기 반환보다 앞**에 둔다(주입과 달리 리랭크가 없어도 뜻이 있다).
+        # 재생 중(리랭크 결과가 저장돼 있으면)에는 그 효과가 이미 저장본에 들어 있으므로 다시 부르지 않는다 (rerun.STAGE_POINT 주석 참고).
+        if getattr(t, "llm_after_fusion", False) and (rp is None or rp.get("reranked") is None):
+            self._fusion_llm(prof, q_search, hits, chunks, T, win)
+        elif getattr(t, "llm_after_fusion", False):
+            prof.replayed("fusion_llm", note="리랭크 결과를 재생 — 융합 검토는 저장본에 이미 반영돼 있다")
+        else:
+            prof.skipped("fusion_llm", "토글 llm_after_fusion off")
+        if cfg.stop_after == "boost":
+            # output_mode=fused — 융합·부스트 결과를 그대로 돌려준다. 뒤 단계는 계산하지 않는다 (리랭크 전 순위를 보려는 것이므로 주입도 하지 않는다)
+            for name in ("external_inject", "channel_inject", "rerank", "doc_expand", "context"):
+                prof.skipped(name, "output_mode=fused")
+            final = hits[:n_out]
+            if self.capture is not None and not self.rounds:
+                self.capture.hits("final", final)
+                self.capture.put("ctx", empty_ctx)
+            R = {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": empty_ctx, "graph_res": graph_res, "fts_snips": fts_snips,
+                 "cfg": cfg, "boost_stats": stats, "expand": [], "expand_info": {}, "ext_chunks": ext_chunks, "inject": {},
+                 "fused_order": fused_order, "boost_order": boost_order, "rerank_before": [h.chunk_id for h in hits[:win]], "final_order": [h.chunk_id for h in final],
+                 "context_ids": [], "q_search": q_search, "rule_src": rule_src}
+            self.rounds.append(R)
+            return R
         if ext_chunks and int(T.get("external_rag_inject") or 0) > 0:
             # 외부 소스별 상위 n개를 리랭크 후보 창 안으로 (창 끝 요소 바로 위의 fused 로) — 최종 순위는 리랭커가 결정
-            win = n_cands or max(s.top_k_final * 2, 10)
             per_src: Dict[str, int] = {}
             moved: List[str] = []
             pos = {h.chunk_id: i for i, h in enumerate(hits)}
@@ -965,7 +1281,14 @@ class QueryEngine:
                 hits.sort(key=lambda h: -h.fused)
                 with prof.stage("external_inject", moved=moved, window=win) as st:
                     st.note(n=len(moved))
-        rerank_before = [h.chunk_id for h in hits[: (n_cands or max(s.top_k_final * 2, 10))]]
+        # 채널별 리랭크 창 보장 주입 (tuning channel_inject 'fts:2,vector:2,graph:1', §2.2) — 재생 중(리랭크 결과를 재생)이면 의미 없으므로 건너뛴다
+        inject_map = _fusion.parse_inject_map(T.get("channel_inject"))
+        inject_moved: Dict[str, List[str]] = {}
+        if inject_map and (rp is None or rp.get("reranked") is None):
+            inject_moved = _fusion.inject_channels(hits, lists, inject_map, win)
+            with prof.stage("channel_inject", inject=inject_map, window=win, moved=inject_moved) as st:
+                st.note(n=sum(len(v) for v in inject_moved.values()))
+        rerank_before = [h.chunk_id for h in hits[:win]]
         reranked_replay = rp.get("reranked") if rp is not None else None
         if reranked_replay is not None:
             hits = _rerun.hits_from(rp.data, "reranked")
@@ -980,13 +1303,38 @@ class QueryEngine:
             rl = p.llm_for("rerank")
             meta = store.doc_meta_map()
             doc_tokens = {d: "%s %s" % (m.get("ext_id") or "", m.get("doc_type") or "") for d, m in meta.items() if m.get("ext_id") or m.get("doc_type")}
-            hits = rerank(hits, chunks, q_search, rl, s.top_k_final, prof, s.role_llm("rerank")["effort"], use_llm=t.rerank_llm,
+            # output_mode=reranked 면 리랭크된 후보를 top_k_final 로 자르지 않고 n_out 개까지 그대로 본다 (rerank() 는 top_n 뒤의 리랭크 후보를 버린다)
+            top_n = max(s.top_k_final, n_out) if cfg.stop_after == "rerank" else s.top_k_final
+            hits = rerank(hits, chunks, q_search, rl, top_n, prof, s.role_llm("rerank")["effort"], use_llm=t.rerank_llm,
                           n_cands=n_cands, chunk_chars=s.rerank_chunk_chars, settings=s, doc_tokens=doc_tokens)
         else:
             prof.skipped("rerank")
+        # 리랭크 직후 LLM 선택 (토글 llm_after_rerank, 역할 select) — 컨텍스트에 넣을 청크 순서와 통째로 읽을 문서(expand_docs).
+        llm_expand_docs: List[str] = []
+        if getattr(t, "llm_after_rerank", False) and reranked_replay is None and cfg.stop_after != "rerank":
+            llm_expand_docs = self._rerank_review_llm(prof, q_search, hits, chunks, T, s.top_k_final)
+        elif getattr(t, "llm_after_rerank", False) and reranked_replay is not None:
+            prof.replayed("rerank_review_llm", note="리랭크 결과를 재생 — 선택은 저장본에 이미 반영돼 있다")
+        else:
+            prof.skipped("rerank_review_llm", "토글 llm_after_rerank off" if not getattr(t, "llm_after_rerank", False) else "output_mode=reranked — 리랭크 순위를 그대로 보여 준다")
         final = hits[: s.top_k_final]
         if self.capture is not None and not self.rounds:
             self.capture.hits("reranked", hits[: max(s.top_k_final * 3, 30)])
+        if cfg.stop_after == "rerank":
+            # output_mode=reranked — 리랭크 결과(리랭크 입력 전후)를 그대로 돌려준다. 문서 확장·컨텍스트는 계산하지 않는다
+            final = hits[:n_out]
+            for name in ("doc_expand", "context"):
+                prof.skipped(name, "output_mode=reranked")
+            if self.capture is not None and not self.rounds:
+                self.capture.hits("final", final)
+                self.capture.put("ctx", empty_ctx)
+            R = {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": empty_ctx, "graph_res": graph_res, "fts_snips": fts_snips,
+                 "cfg": cfg, "boost_stats": stats, "expand": [], "expand_info": {}, "ext_chunks": ext_chunks, "inject": inject_moved,
+                 "fused_order": fused_order, "boost_order": boost_order, "rerank_before": rerank_before, "final_order": [h.chunk_id for h in final],
+                 "context_ids": [], "q_search": q_search, "rule_src": rule_src}
+            self.rounds.append(R)
+            return R
+        if self.capture is not None and not self.rounds:
             self.capture.hits("final", final)
         # ---- 문서 단위 확장 ----
         extra: List[Tuple[str, str, float]] = []
@@ -995,7 +1343,7 @@ class QueryEngine:
             with prof.stage("doc_expand", top_docs=T.get("doc_expand_top_docs"), max_chunks=T.get("doc_expand_max_chunks"), min_score=T.get("doc_expand_min_score"),
                             mode=T.get("doc_expand_mode")) as st:
                 try:
-                    extra, expand_info = self._doc_expand(store, q_search, final, chunks, T)
+                    extra, expand_info = self._doc_expand(store, q_search, final, chunks, T, prefer_docs=llm_expand_docs)
                     st.note(docs=expand_info.get("docs"), candidates=expand_info.get("candidates"), added=expand_info.get("added"), vector=expand_info.get("vector"),
                             picked=[(cid, sc) for cid, _, sc in extra[:8]])
                     st.debug(per_doc=expand_info.get("per_doc"))
@@ -1004,15 +1352,24 @@ class QueryEngine:
                     extra, expand_info = [], {"error": str(e)[:200]}
         else:
             prof.skipped("doc_expand")
-        with prof.stage("context", max_chars=s.context_max_chars, trim=t.context_trim, dedupe=t.dedupe_hits, neighbors_extra=cfg.neighbors_extra) as st:
-            ctx = build_context(final, chunks, graph_res if t.graph else None, s.context_max_chars, query=q_search, trim=t.context_trim, dedupe=t.dedupe_hits,
-                                chunk_chars=s.context_chunk_chars, stage=st, store=store, neighbors=(T.get("context_neighbors") + cfg.neighbors_extra), extra=extra)
+        # 컨텍스트 상한은 **설정값과 모델 창 중 작은 쪽**이다 (llmwiki/models_catalog.context_budget).
+        # 창을 넘기면 프롬프트가 조용히 잘려 뒤쪽 근거가 사라지므로, 잘리기 전에 우리가 줄이고 그 사실을 남긴다.
+        from . import models_catalog as _mc
+        budget = _mc.context_budget(s, "answer")
+        with prof.stage("context", max_chars=budget["chars"], configured=budget["configured"],
+                        model_window=budget["window_tokens"], budget_limited=budget["limited"],
+                        trim=t.context_trim, dedupe=t.dedupe_hits, neighbors_extra=cfg.neighbors_extra) as st:
+            if budget["limited"]:
+                st.note(budget=budget["reason"])
+            ctx = build_context(final, chunks, graph_res if t.graph else None, budget["chars"], query=q_search, trim=t.context_trim, dedupe=t.dedupe_hits,
+                                chunk_chars=s.context_chunk_chars, stage=st, store=store, neighbors=(T.get("context_neighbors") + cfg.neighbors_extra), extra=extra,
+                                guard=bool(getattr(t, "context_guard", True)))
             st.note(chars=ctx["chars"], citations=len(ctx["citations"]), doc_expand_in_context=sum(1 for c in ctx["citations"] if c.get("kind") == "doc_expand"))
         if self.capture is not None and not self.rounds:
             self.capture.put("ctx", ctx)
         R = {"lists": lists, "weights": w, "hits": hits, "final": final, "chunks": chunks, "ctx": ctx, "graph_res": graph_res, "fts_snips": fts_snips,
-             "cfg": cfg, "boost_stats": stats, "expand": extra, "expand_info": expand_info, "ext_chunks": ext_chunks,
+             "cfg": cfg, "boost_stats": stats, "expand": extra, "expand_info": expand_info, "ext_chunks": ext_chunks, "inject": inject_moved,
              "fused_order": fused_order, "boost_order": boost_order, "rerank_before": rerank_before, "final_order": [h.chunk_id for h in final],
-             "context_ids": [c["chunk_id"] for c in ctx["citations"]], "q_search": q_search}
+             "context_ids": [c["chunk_id"] for c in ctx["citations"]], "q_search": q_search, "rule_src": rule_src}
         self.rounds.append(R)
         return R

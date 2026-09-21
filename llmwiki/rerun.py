@@ -84,6 +84,10 @@ STAGE_POINT: Dict[str, str] = {
     "rrf_fuse": "rrf_fuse",
     "boost": "boost", "external_inject": "boost",
     "rerank": "rerank", "rerank_llm": "rerank",
+    # 2026-09-18 RRF 뒤 LLM 두 단계. 둘 다 '리랭크부터' 에서 **다시 계산**된다 — `boosted` 저장본은 순수 부스트 결과이고
+    # fusion_llm 의 효과는 그 뒤의 `reranked`/`final` 저장본 안에 들어 있으므로, 문서 확장/컨텍스트부터 재실행할 때는
+    # 두 단계 모두 재생(replayed)으로 표시된다 (query_engine._fusion_llm / _rerank_review_llm 참고).
+    "fusion_llm": "rerank", "rerank_review_llm": "rerank",
     "doc_expand": "doc_expand",
     "context": "context", "evidence_compress": "context",
     "evidence_check": "answer_llm", "answer_llm": "answer_llm", "answer": "answer_llm",

@@ -1,0 +1,298 @@
+{
+ "checks": [
+  {
+   "check": "빌드",
+   "ok": true,
+   "detail": "\"비어 있는 채널: graph(entities=0) → `build graph` · doc_vector(doc_vectors=0) → `precompute run` 또는 `build vector`\", \"fix\": \"토글은 켜져 있는데 색인이 비어 있으면 그 채널은 늘 0건입니다 — 해당 채널만 다시 빌드하세요 (`build graph|vector`)\"}]\n"
+  },
+  {
+   "check": "서버 기동",
+   "ok": true,
+   "detail": "http://127.0.0.1:8879"
+  },
+  {
+   "check": "CLI stats --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "상태 docs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "상태 chunks",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "CLI stats --full --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "운영 통계 index.docs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 day — 묶음 이름",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 day — 구간 수",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 week — 묶음 이름",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 week — 구간 수",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 month — 묶음 이름",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "추세 month — 구간 수",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "묶음이 굵으면 기간도 넓다 (일 14일 < 월 365일)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "비교할 포렌식 기록을 만들었다 (2건)",
+   "ok": true,
+   "detail": "기록이 없으면 아래 비교가 빈 채로 통과한다"
+  },
+  {
+   "check": "문제 건만 — 기록 id 목록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "기본 보기에 정상 건(sufficient)이 섞이지 않는다",
+   "ok": true,
+   "detail": "문제만 보여 주기로 한 목록에 정상 건이 있다"
+  },
+  {
+   "check": "`only=all` 이면 전부 나온다 (문제 2 ≤ 전부 2)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "요약의 판정 건수는 **전체**를 센다",
+   "ok": true,
+   "detail": "요약 n=2 < 목록 2 — 최근 N건만 세고 있다"
+  },
+  {
+   "check": "CLI trial candidates --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "후보 질의 id 목록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "후보에 고를 재료가 붙어 있다 (시각·평가·판정·근거)",
+   "ok": true,
+   "detail": "무엇을 고를지 판단할 값이 없다 — 화면에 빈 칸만 뜬다"
+  },
+  {
+   "check": "판정이 실제로 채워진다",
+   "ok": true,
+   "detail": "verdict 가 전부 비어 있다 — 거르기(근거 약함/못 찾음)가 아무것도 못 고른다"
+  },
+  {
+   "check": "CLI inspect --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "해부 normalized",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "해부 tokens",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "해부 keywords",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "해부의 시간 범위",
+   "ok": true,
+   "detail": "시간 표현이 세 창구에서 같은 범위로 읽힌다"
+  },
+  {
+   "check": "CLI time --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "시간 from",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "시간 to",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "시간 kind",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "CLI search --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "검색 결과 chunk_id 목록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "검색 mode",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "거를 문서 유형을 골랐다",
+   "ok": true,
+   "detail": "tc_list"
+  },
+  {
+   "check": "유형 `tc_list` 필터 후 chunk_id 목록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "필터가 실제로 걸렀다 (전체 10 → 3)",
+   "ok": true,
+   "detail": "필터 결과가 비었거나 오히려 늘었다"
+  },
+  {
+   "check": "남은 행이 모두 유형 `tc_list` 다",
+   "ok": true,
+   "detail": "필터를 걸었는데 다른 유형이 섞여 있다"
+  },
+  {
+   "check": "CLI entity --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "엔티티 id (이름 `MDM9x-B1` 로 열었을 때)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "비교할 문서가 있다",
+   "ok": true,
+   "detail": "sample_corpus_modem/README.md"
+  },
+  {
+   "check": "문서 sample_corpus_modem/README.md 의 청크 수",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "MCP wiki_doc 이 같은 문서를 연다",
+   "ok": true,
+   "detail": "# sample_corpus_modem/README.md"
+  },
+  {
+   "check": "CLI graph-rules types --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "엔티티 유형 목록",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "설명할 용어가 있다 (query_rules.json)",
+   "ok": true,
+   "detail": "PDCCH"
+  },
+  {
+   "check": "CLI rules explain --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "용어 `PDCCH` 가 무엇으로 퍼지나",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "용어 `PDCCH` 의 정규화형",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "CLI query --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "인용 [C#] → chunk_id",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "답변 본문",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "result_type",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "output_mode=fused 의 result_type",
+   "ok": true,
+   "detail": "셋 다 candidates_fused 여야 한다"
+  },
+  {
+   "check": "Web 은 빈 term 을 400 으로 거절한다",
+   "ok": true,
+   "detail": "code=400"
+  },
+  {
+   "check": "MCP 도 빈 term 을 오류로 돌려준다",
+   "ok": true,
+   "detail": "{\"_error\": \"action=explain 에는 term(용어) 이 필요합니다\"}"
+  },
+  {
+   "check": "CLI 도 빈 용어를 0 이 아닌 코드로 거절한다",
+   "ok": true,
+   "detail": "exit=1"
+  }
+ ],
+ "failed": [],
+ "n": 58,
+ "ok": 58,
+ "sec": 4.8
+}

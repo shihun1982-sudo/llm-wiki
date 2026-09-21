@@ -1,5 +1,5 @@
 {
-  "_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다. 재시도: timeout_s(1회 실행 제한, 기본 300=5분) · retries(재시도 횟수, 기본 3) · retry_backoff_s · retry_on[timeout|exec|exit|empty]. 최종 실패는 질의 결과 llm_report / 빌드 alerts 에 보고되고 답변은 추출식으로 대체된다.",
+  "_comment": "Headless agent 명령 템플릿. {model} {prompt} {prompt_file} {project_root} {python} 치환. provider 는 headless:<이름>. command[0] 은 PATH 에서 찾는다(Windows 의 .cmd 셸 포함); 못 찾으면 절대 경로를 적는다. prompt_mode: stdin(기본; opencode/claude/codex 모두 파이프 입력을 프롬프트로 받음) | arg({prompt} 인자 — 프로세스 목록 노출·Windows 32K 한계) | file({prompt_file} 임시 파일). arg_max_chars(기본 30000): arg 모드에서 argv 총 길이가 넘으면 stdin(템플릿에 {prompt_file} 이 있으면 file)으로 자동 전환하고 결과/trace 에 prompt_mode_fallback 을 남긴다(WinError 206 방지); 0 = 가드 끔. 재시도: timeout_s(1회 실행 전체 제한, 기본 300=5분) · retries(기본 3) · retry_backoff_s · retry_on[timeout|exec|exit|empty|stall]. 무응답 대책: stall_timeout_s(마지막 출력 뒤 이만큼 조용하면 죽이고 재시도, 기본 60; 바이트 단위로 감지) · first_output_timeout_s(첫 출력까지, 기본 120) · keep_partial_on_timeout(멎기 전 받은 답을 쓸지, 기본 true) · failure_log_chars(실패 로그에 남길 stdout/stderr 꼬리, 기본 2000). 격리: env_passthrough(자식에게 넘길 환경변수 허용 목록, fnmatch 패턴 가능, \"*\" = 전부 = 안전하지 않음; .env 의 PAT/비밀번호는 기본으로 넘어가지 않는다) · env(항상 넘길 값) · inline_attach_chars(files_flag 없는 에이전트의 첨부 인라인 상한, 기본 60000). 최종 실패는 질의 결과 llm_report / 빌드 alerts 에 보고되고 답변은 추출식으로 대체된다. 설명: docs/BRINGUP_GUIDE.md §4.3",
   "opencode": {
     "desc": "OpenCode CLI (opencode run --format json). 모델은 provider/model 형식 (예 anthropic/claude-sonnet-4-5).",
     "command": [
@@ -11,7 +11,7 @@
       "{model}",
       "{prompt}"
     ],
-    "prompt_mode": "arg",
+    "prompt_mode": "stdin",
     "files_flag": "-f",
     "output": "ndjson",
     "text_paths": [
@@ -50,7 +50,26 @@
     "stall_timeout_s": 60,
     "first_output_timeout_s": 120,
     "keep_partial_on_timeout": true,
-    "failure_log_chars": 2000
+    "failure_log_chars": 2000,
+    "env_passthrough": [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+      "SYSTEMROOT",
+      "COMSPEC",
+      "LANG",
+      "LC_ALL",
+      "PYTHONIOENCODING",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY"
+    ],
+    "inline_attach_chars": 60000,
+    "arg_max_chars": 30000
   },
   "claude": {
     "desc": "Claude Code CLI headless (claude -p --output-format json).",
@@ -63,7 +82,7 @@
       "{model}",
       "{prompt}"
     ],
-    "prompt_mode": "arg",
+    "prompt_mode": "stdin",
     "files_flag": "",
     "output": "json",
     "text_paths": [
@@ -96,7 +115,26 @@
     "stall_timeout_s": 60,
     "first_output_timeout_s": 120,
     "keep_partial_on_timeout": true,
-    "failure_log_chars": 2000
+    "failure_log_chars": 2000,
+    "env_passthrough": [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+      "SYSTEMROOT",
+      "COMSPEC",
+      "LANG",
+      "LC_ALL",
+      "PYTHONIOENCODING",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY"
+    ],
+    "inline_attach_chars": 60000,
+    "arg_max_chars": 30000
   },
   "codex": {
     "desc": "OpenAI Codex CLI (codex exec --json).",
@@ -108,7 +146,7 @@
       "{model}",
       "{prompt}"
     ],
-    "prompt_mode": "arg",
+    "prompt_mode": "stdin",
     "files_flag": "",
     "output": "ndjson",
     "text_paths": [
@@ -142,7 +180,26 @@
     "stall_timeout_s": 60,
     "first_output_timeout_s": 120,
     "keep_partial_on_timeout": true,
-    "failure_log_chars": 2000
+    "failure_log_chars": 2000,
+    "env_passthrough": [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+      "SYSTEMROOT",
+      "COMSPEC",
+      "LANG",
+      "LC_ALL",
+      "PYTHONIOENCODING",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY"
+    ],
+    "inline_attach_chars": 60000,
+    "arg_max_chars": 30000
   },
   "mock": {
     "desc": "테스트용 목업 에이전트 (네트워크 없음). 표준입력 프롬프트 → ndjson 이벤트. {python} = 현재 인터프리터(이식성).",
@@ -184,6 +241,25 @@
     "stall_timeout_s": 60,
     "first_output_timeout_s": 120,
     "keep_partial_on_timeout": true,
-    "failure_log_chars": 2000
+    "failure_log_chars": 2000,
+    "env_passthrough": [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+      "SYSTEMROOT",
+      "COMSPEC",
+      "LANG",
+      "LC_ALL",
+      "PYTHONIOENCODING",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY"
+    ],
+    "inline_attach_chars": 60000,
+    "arg_max_chars": 30000
   }
 }

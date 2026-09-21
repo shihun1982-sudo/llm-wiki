@@ -1,7 +1,7 @@
 # REQUEST HISTORY — 지난 요청 목록과 "그때 그 답" 다시 보기
 
 > 대상: 위키를 쓰는 사람(내가 뭘 물어봤더라)과 운영자(누가 무엇을 돌리고 있나).
-> 설계 배경: [IMPLEMENTATION_PLAN_0916.md](IMPLEMENTATION_PLAN_0916.md) §1 · 구현 `llmwiki/store.py`, `llmwiki/web/server.py`
+> 설계 배경: [IMPLEMENTATION_PLAN_0916.md](history/2026-09-16/IMPLEMENTATION_PLAN_0916.md) §1 · 구현 `llmwiki/store.py`, `llmwiki/web/server.py`
 
 ## 0. 한 장 요약
 

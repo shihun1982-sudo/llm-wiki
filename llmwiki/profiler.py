@@ -36,6 +36,26 @@ def _tl_counters() -> Dict[str, float]:
     return c
 
 
+def note_current(**kw: Any) -> bool:
+    """**지금 열려 있는 단계**에 메모를 남긴다 (없으면 조용히 무시, 반환 False).
+
+    왜 필요한가 (2026-09-20): 앙상블은 역할 11개 어디에나 켤 수 있는데, 그 사실을 trace 에 남기려면
+    LLM 을 부르는 **모든 자리**(answer·rerank·extract·summary·review·expand·verify·forensic·fusion·select)
+    에 같은 코드를 넣어야 했다. 한 자리만 빠뜨려도 그 역할은 "앙상블인지 알 수 없는" 상태가 된다 —
+    이 저장소에서 반복해 겪은 유형이다. 그래서 **프로바이더 한 곳**에서 지금 단계에 직접 적게 한다.
+
+    스레드 로컬이라 요청마다 격리된다(`Profiler.stage` 가 진입/이탈에서 세우고 되돌린다).
+    """
+    st = getattr(_TL, "stage", None)
+    if st is None:
+        return False
+    try:
+        st.note(**kw)
+        return True
+    except Exception:
+        return False
+
+
 def count(key: str, n: float = 1) -> None:
     c = _tl_counters()
     c[key] = c.get(key, 0) + n
@@ -198,6 +218,8 @@ class Profiler:
         with self._lock:
             self._stack[-1].children.append(st)
             self._stack.append(st)
+        prev_tl = getattr(_TL, "stage", None)
+        _TL.stage = st                    # 깊은 곳(프로바이더)에서 지금 단계에 메모를 남길 수 있게 (note_current)
         _pg = None
         try:
             try:
@@ -212,6 +234,7 @@ class Profiler:
                 st.logs.append(traceback.format_exc()[-800:])
             raise
         finally:
+            _TL.stage = prev_tl
             st.close()
             with self._lock:
                 if self._stack and self._stack[-1] is st:

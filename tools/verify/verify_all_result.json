@@ -1,6 +1,6 @@
 {
- "ts": 1789592087.0333822,
- "when": "2026-09-17 05:54",
+ "ts": 1789869748.824285,
+ "when": "2026-09-20 11:02",
  "rows": [
   {
    "key": "unit",
@@ -8,10 +8,10 @@
    "argv": "-m unittest discover -s tests",
    "ok": true,
    "code": 0,
-   "passed": 240,
-   "total": 240,
-   "seconds": 107.0,
-   "tail": "  return max(0.0, self.ms - sum(c.ms for c in self.children))\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n.\n----------------------------------------------------------------------\nRan 240 tests in 106.715s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=952, family=2, type=1, proto=0, laddr=('127.0.0.1', 57280)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=364, family=2, type=1, proto=0, laddr=('127.0.0.1', 57285)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=864, family=2, type=1, proto=0, laddr=('127.0.0.1', 52788)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2456, family=2, type=1, proto=0, laddr=('127.0.0.1', 59242)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=648, family=2, type=1, proto=0, laddr=('127.0.0.1', 59303)>"
+   "passed": 738,
+   "total": 738,
+   "seconds": 167.8,
+   "tail": ".\n----------------------------------------------------------------------\nRan 738 tests in 167.243s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=924, family=2, type=1, proto=0, laddr=('127.0.0.1', 56077)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=920, family=2, type=1, proto=0, laddr=('127.0.0.1', 56082)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1164, family=2, type=1, proto=0, laddr=('127.0.0.1', 49426)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1564, family=2, type=1, proto=0, laddr=('127.0.0.1', 49656)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2124, family=2, type=1, proto=0, laddr=('127.0.0.1', 49670)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2380, family=2, type=1, proto=0, laddr=('127.0.0.1', 49729)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2940, family=2, type=1, proto=0, laddr=('127.0.0.1', 49746)>"
   },
   {
    "key": "stress",
@@ -21,19 +21,19 @@
    "code": 0,
    "passed": 9,
    "total": 9,
-   "seconds": 23.9,
-   "tail": "..C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 429: 'Too Many Requests'>\n  _warnings.warn(self.warn_message, ResourceWarning)\nC:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 503: 'Service Unavailable'>\n  _warnings.warn(self.warn_message, ResourceWarning)\n.C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 499: ''>\n  _warnings.warn(self.warn_message, ResourceWarning)\n..\n----------------------------------------------------------------------\nRan 9 tests in 23.734s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=644, family=2, type=1, proto=0, laddr=('127.0.0.1', 59383)>"
+   "seconds": 24.2,
+   "tail": "..C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 429: 'Too Many Requests'>\n  _warnings.warn(self.warn_message, ResourceWarning)\nC:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 503: 'Service Unavailable'>\n  _warnings.warn(self.warn_message, ResourceWarning)\n.C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 499: ''>\n  _warnings.warn(self.warn_message, ResourceWarning)\n..\n----------------------------------------------------------------------\nRan 9 tests in 24.038s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=676, family=2, type=1, proto=0, laddr=('127.0.0.1', 49827)>"
   },
   {
    "key": "docs",
    "name": "문서 ↔ 코드 정합",
    "argv": "tools/verify/verify_docs.py",
-   "ok": true,
-   "code": 0,
+   "ok": false,
+   "code": 1,
    "passed": null,
    "total": null,
-   "seconds": 0.1,
-   "tail": "문서 35개 · 검사: 링크 224 · CLI 79 · 설정 6 · 파일 333 · API 56 · 코드→문서 참조 35\n\n요약: 어긋남 0 · 없는 문서 참조 0 · 고아 문서 0\n\nRESULT OK"
+   "seconds": 0.3,
+   "tail": "어긋난 곳 3건\n\n  SYSTEM_ARCHITECTURE.md\n    [수치] <!--live:tests--> 옆 숫자가 737 인데 지금은 738 다 (지금을 설명하는 자리라 고쳐야 한다)\n    [수치] <!--live:tests--> 옆 숫자가 737 인데 지금은 738 다 (지금을 설명하는 자리라 고쳐야 한다)\n\n  TESTING_GUIDE.md\n    [수치] <!--live:tests--> 옆 숫자가 737 인데 지금은 738 다 (지금을 설명하는 자리라 고쳐야 한다)\n\n요약: 어긋남 3 · 없는 문서 참조 0 · 고아 문서 0\n\nRESULT PROBLEMS"
   },
   {
    "key": "align",
@@ -44,7 +44,62 @@
    "passed": null,
    "total": null,
    "seconds": 0.1,
-   "tail": "임베딩 현황                   `embed`        `/api/embed/report`        –                〃\n사전 계산                    `precompute`   `/api/precompute`          –                〃\n워처                       `watch`        `/api/watch`               –                〃\n유지보수                     `maintenance`  `/api/maintenance`         –                〃\n협업 채팅·게시판                –              `/api/collab`              –                Web 전용 부수 기능 (토글 collab)\n서버 기동                    `serve`        –                          –                명령 자체가 서버를 띄운다\nMCP 서버 기동·점검             `mcp`          –                          –                〃\n\n기능 47개 · CLI 명령 44 · Web 경로 92 · MCP 도구 14\n세 창구 모두 제공: 13개 · MCP 는 읽기 전용이라 의도적으로 뺀 것: 33개\n\nRESULT OK"
+   "tail": "협업 채팅·게시판                –              `/api/collab`              –                Web 전용 부수 기능 (토글 collab)\n계정별 화면 프로파일 (테마·토글·고정 탭· –              `/api/profile`             –                Web 전용 — 저장 대상이 **그 사람의 화면 상태**라 C\n테마 목록                    –              `/api/themes`              –                Web 전용 — `static/themes/themes.jso\n화면에서 CLI 실행              –              `/api/cli`                 –                Web 관리 › 콘솔. **터미널을 못 여는 사람**(원격·공\n서버 기동                    `serve`        –                          –                명령 자체가 서버를 띄운다\nMCP 서버 기동·점검             `mcp`          –                          –                〃\n\n기능 77개 · CLI 명령 48 · Web 경로 112(표에 기재 98) · MCP 도구 20\n세 창구 모두 제공: 23개 · MCP 는 읽기 전용이라 의도적으로 뺀 것: 53개\n전수 대조: CLI 48/48 · Web 112/112 · MCP 20/20 가 표에 들어 있다\n\nRESULT OK"
+  },
+  {
+   "key": "tri_surface",
+   "name": "세 창구 동작 동등성 (CLI 프로세스 · Web · MCP)",
+   "argv": "tools/verify/verify_tri_surface.py --port 8879",
+   "ok": true,
+   "code": 0,
+   "passed": 54,
+   "total": 54,
+   "seconds": 4.8,
+   "tail": "\n[12] 요청 단위 오버라이드 (output_mode=fused)\n  OK   output_mode=fused 의 result_type                      셋 다 candidates_fused 여야 한다\n\n[13] 실패 정렬 — 빈 용어는 세 창구가 모두 거절해야 한다\n  OK   Web 은 빈 term 을 400 으로 거절한다                           code=400\n  OK   MCP 도 빈 term 을 오류로 돌려준다                              {\"_error\": \"action=explain 에는 term(용어) 이 필요합니다\"}\n  OK   CLI 도 빈 용어를 0 이 아닌 코드로 거절한다                          exit=1\n\n검사 54건 · 통과 54 · 실패 0 · 4.7s\n\nRESULT OK"
+  },
+  {
+   "key": "stage_align",
+   "name": "단계 정렬 (코드 ↔ 레지스트리 ↔ 라벨 ↔ 손잡이)",
+   "argv": "tools/verify/verify_stage_align.py",
+   "ok": true,
+   "code": 0,
+   "passed": 16,
+   "total": 16,
+   "seconds": 0.1,
+   "tail": "OK   STAGE_ROLES 의 단계 키가 실재한다                                 없는 단계: 없음\n\n== 8. 시간 제한 표가 모든 trace 이름을 덮는가\nOK   trace 이름 86개 모두 시간 제한을 안다                                제한을 모르는 이름: 없음\n\n== 9. 프리셋이 실재하는 키만 건드리는가\nOK   프리셋이 실재하는 키만 건드린다                                        알 수 없는 키: 없음\n\n검사 16개 중 16개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_stage_align_result.json\n\nRESULT OK"
+  },
+  {
+   "key": "settings_sync",
+   "name": "설정 UI ↔ 파일 ↔ 서버 양방향",
+   "argv": "tools/verify/verify_settings_sync.py --port 8934",
+   "ok": true,
+   "code": 0,
+   "passed": 64,
+   "total": 64,
+   "seconds": 2.6,
+   "tail": "| fill-defaults | reload | fill-defaults 뒤 서버가 파일을 읽는다 | OK |\n| tuning | Settings → Pipeline | 튜닝 저장이 Pipeline 데이터(/api/architecture)에 바로 보인다 | OK |\n| tuning | Settings → Pipeline | config 원천 튜닝 키도 Pipeline 데이터에 보인다 | OK |\n| config | Settings → Pipeline | config 저장이 Pipeline 데이터에 바로 보인다 | OK |\n| models | Settings → 시간 제한 | 역할 타임아웃 변경이 단계 시간 제한에 반영된다 | OK |\n| models | Settings → Pipeline | 같은 값이 Pipeline 단계 표에도 있다 | OK |\n================================================================================================\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_settings_sync_result.json\n\n검사 64개 중 64개 통과\n\nRESULT OK"
+  },
+  {
+   "key": "llm_switch",
+   "name": "LLM 연결 전환 (API ↔ headless, 세 창구)",
+   "argv": "tools/verify/verify_llm_switch.py --port 8973",
+   "ok": true,
+   "code": 0,
+   "passed": 18,
+   "total": 18,
+   "seconds": 5.2,
+   "tail": "OK   B) headless · CLI query                              answer provider=headless:mock\nOK   B) headless · CLI provider 일치                        headless ⊂ 'headless:mock'\nOK   B) headless · Web /api/query                         provider=headless:mock\nOK   B) headless · Web provider 일치                        headless ⊂ headless:mock\nOK   B) headless · MCP wiki_query                         (mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [C1]  판정: sufficient \nOK   B) headless · MCP provider 일치                        \"name\": \"headless:mock\",, \"name\": \"headless:mock\",, \"provider\": \"headless:mock\",\nOK   C) 역할별 전환: answer 만 headless                         answer='headless:mock' rerank='mock'\nOK   D) 되돌리기: 다시 API 모드                                   answer='mock'\n\n검사 18개 중 18개 통과 · 실패 0개\n\nRESULT OK"
+  },
+  {
+   "key": "build_load",
+   "name": "빌드 중 서비스 (30명 동시 · 채널별)",
+   "argv": "tools/verify/verify_build_load.py --port 8975 --users 30",
+   "ok": true,
+   "code": 0,
+   "passed": 26,
+   "total": 26,
+   "seconds": 17.5,
+   "tail": "── 요약 (30명 동시 · 빌드가 도는 구간 기준) ──\n  시나리오               빌드(s)     질의     거절     실패   p50(ms)   p95(ms)   max(ms)\n  증분 빌드                0.3    105      0      0      21.9      60.0      90.9\n  채널 빌드 fts            0.3     86      0      0      27.2      87.6     111.6\n  채널 빌드 vector         0.3    108      0      0      19.2      60.7     167.5\n  채널 빌드 graph          0.6    176      0      0      23.2     111.4     289.0\n  전체 리빌드               0.7     22      0      0     570.1     632.1     649.5\n  ※ max 가 빌드 시간에 가까우면 그 빌드가 **읽기를 막고 있다**는 뜻이다 (배타 락).\n\n검사 26개 중 26개 통과 · 실패 0개\n\nRESULT OK"
   },
   {
    "key": "cli",
@@ -52,10 +107,10 @@
    "argv": "tools/verify/verify_cli.py",
    "ok": true,
    "code": 0,
-   "passed": 222,
-   "total": 222,
-   "seconds": 63.0,
-   "tail": "OK  schedule remove digest                     code=0   166ms  removed\nOK  server status (서버 없음)                      code=1  4237ms  ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했\nOK  server cancel (인자 없음)                      code=1   160ms  usage: server cancel <token>\nOK  server limits (서버 없음)                      code=1  2201ms  ERROR 599: 서버에 연결할 수 없습니다 (http://127.0.0.1:8899): <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했\nOK  --log-level DEBUG                          code=0   208ms  Q: ISSUE-2001 원인\nOK  logs grep DEBUG                            code=0   228ms  2026-09-17 05:53:47 INFO    query  457a5478cc38 query start {\"run_id\": \"457a5478cc38\"}\nOK  config reset (no --yes)                    code=4   149ms  !! 파괴적 작업: config.json 을 기본값으로 덮어쓰기\nOK  config reset --yes                         code=0   151ms  config reset\nOK  help                                       code=0    73ms  usage: llmwiki [-h] [--user CLI_USER] [--password CLI_PASSWORD]\nOK  query --help                               code=0    69ms  usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]\nOK  server --help                              code=0    67ms  usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]\nOK  schedule --help                            code=0    69ms  usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
+   "passed": 361,
+   "total": 361,
+   "seconds": 161.6,
+   "tail": "OK  models ensemble show answer (반영)           code=0   157ms  answer    ensemble=ON  wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  query (앙상블 켠 상태)                           code=0   206ms  {\nOK  models ensemble set answer --enabled false code=0   158ms  saved llm_roles.answer.ensemble: enabled=False members=['mock/mock-a×1.5', 'mock/mock-b×1.0'] aggregator=(첫 멤버\nOK  models ensemble show answer (끔)            code=0   156ms  answer    ensemble=off wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  rerun --points                             code=0   158ms  plan         계획부터 (질의 규칙 · 라우터 · 질의 확장)\nOK  rerun --list                               code=0   159ms  #408        74.1 KB  09-20 10:31\nOK  config reset (no --yes)                    code=4   158ms  !! 파괴적 작업: config.json 을 기본값으로 덮어쓰기\nOK  config reset --yes                         code=0   158ms  config reset\nOK  help                                       code=0    73ms  usage: llmwiki [-h] [--version] [--user CLI_USER] [--password CLI_PASSWORD]\nOK  query --help                               code=0    72ms  usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]\nOK  server --help                              code=0    71ms  usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]\nOK  schedule --help                            code=0    71ms  usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
   },
   {
    "key": "web",
@@ -63,10 +118,10 @@
    "argv": "tools/verify/verify_web.py",
    "ok": true,
    "code": 0,
-   "passed": 307,
-   "total": 307,
-   "seconds": 12.4,
-   "tail": "OK  admin schedule remove                    POST /api/schedule                 200  {\"ok\": true, \"tasks\": \"…\"}\nOK  admin schedule 잘못된 작업 → 400              POST /api/schedule                 400  {\"error\": \"cron 은 5필드: 분 시 일 월 요일 (예 '0 3 * * *')\"}\nOK  버스트용 제한 완화                               POST /api/admin/server             200  {\"ok\": true, \"limits\": \"…\"}\nOK  동시 질의 20건 (게스트)                          POST /api/query ×20                200  20/20 OK\nOK  admin 전체 빌드 시작(취소용)                      POST /api/build                    200  {\"job\": \"248c0222\"}\nOK  admin 작업 취소 (DELETE /api/jobs)           DELETE /api/jobs/248c0222          200  {\"ok\": true, \"token\": \"248c0222\", \"status\": \"running\"}\nOK  취소된 작업 상태                                GET /api/jobs/<id>                 cancelled  cancelled by kh82.kim: user request\nOK  취소 후 전체 빌드 정상                            POST /api/build                    200  {\"job\": \"1659cdb3\"}\nOK  취소 후 빌드 복구                               GET /api/jobs/<id>                 done  \nOK  취소 후 질의 정상                               POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  csrf origin → 403                        POST /api/query                    403  {\"error\": \"cross-origin 요청 차단 (Origin http://evil.example)\", \"status\": 403}\nOK  admin logout                             POST /api/auth/logout              200  {\"ok\": true}"
+   "passed": 379,
+   "total": 379,
+   "seconds": 39.8,
+   "tail": "OK  guest query overrides.answer_mode=best_effort → result_type=best_effort POST /api/query                    200  result_type=best_effort answer_llm.meta.answer_mode=best_effort\nOK  class1 query overrides.openai_base_url → 403 (화이트리스트) POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: openai_base_url — URL·헤더·경로·서버 운영 설정은 admin 이 Sett\nOK  guest query overrides.corpus_dirs → 403  POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: corpus_dirs — URL·헤더·경로·서버 운영 설정은 admin 이 Settings\nOK  viewer query overrides.llm_roles.answer.base_url → 403 POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: llm_roles.answer.base_url — URL·헤더·경로·서버 운영 설정은 ad\nOK  viewer query overrides.llm_roles.answer.model 허용 POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  admin query overrides.openai_base_url 허용 POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  guest rerun overrides.openai_base_url → 403 POST /api/query/rerun              403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: openai_base_url — URL·헤더·경로·서버 운영 설정은 admin 이 Sett\nOK  mcp tools/list: wiki_sweep · wiki_rules · wiki_graph_profile POST /mcp                          200  tools=21\nOK  mcp wiki_query output_mode=fused → structuredContent.candidates POST /mcp                          200  {\"jsonrpc\": \"2.0\", \"id\": 42, \"result\": \"…\"}\nOK  viewer logout (v1)                       POST /api/auth/logout              200  {\"ok\": true}\nOK  csrf origin → 403                        POST /api/query                    403  {\"error\": \"cross-origin 요청 차단 (Origin http://evil.example)\", \"status\": 403}\nOK  admin logout                             POST /api/auth/logout              200  {\"ok\": true}"
   },
   {
    "key": "mcp",
@@ -74,10 +129,10 @@
    "argv": "tools/verify/verify_mcp.py --quick",
    "ok": true,
    "code": 0,
-   "passed": 92,
-   "total": 92,
-   "seconds": 8.0,
-   "tail": "  OK   재귀 방지: 하위 프로세스는 페더레이션 안 함                      []\n  OK   재귀 방지: 하위에서 중계 호출 거부                           federated tool mock__search is not available through a federated call (recursion guard)\n\n[8] 자가 점검 명령\n  OK   mcp --doctor --json (심어 둔 결함만 오류로)             ok=False · 오류 ['플러그인'] · 경고 0 · 도구 16\n  OK   doctor: 플러그인 오류 검출                             오류: [{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)\n  OK   doctor: 도구 목록에 확장 포함                           16\n  OK   doctor: 페더레이션 도구 보고                            \n  OK   mcp --doctor (사람이 읽는 출력)                       ['MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)']\n  OK   mcp --client-config (stdio/http/브리지)           ['_how', 'stdio_claude_code', 'stdio_json', 'http_claude_code', 'http_json', 'bridge_json']\n\nMCP OK  92/92 통과"
+   "passed": 129,
+   "total": 129,
+   "seconds": 6.6,
+   "tail": "  OK   재귀 방지: 하위 프로세스는 페더레이션 안 함                      []\n  OK   재귀 방지: 하위에서 중계 호출 거부                           federated tool mock__search is not available through a federated call (recursion guard)\n\n[8] 자가 점검 명령\n  OK   mcp --doctor --json (심어 둔 결함만 오류로)             ok=False · 오류 ['플러그인'] · 경고 0 · 도구 22\n  OK   doctor: 플러그인 오류 검출                             오류: [{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)\n  OK   doctor: 도구 목록에 확장 포함                           22\n  OK   doctor: 페더레이션 도구 보고                            \n  OK   mcp --doctor (사람이 읽는 출력)                       ['MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)']\n  OK   mcp --client-config (stdio/http/브리지)           ['_how', 'stdio_claude_code', 'stdio_json', 'http_claude_code', 'http_json', 'bridge_json']\n\nMCP OK  129/129 통과"
   },
   {
    "key": "wiring",
@@ -88,9 +143,130 @@
    "passed": null,
    "total": null,
    "seconds": 0.1,
-   "tail": "corpus.js          refs= 51 created=  0 missing=- balanced=True\nevolve.js          refs= 17 created=  0 missing=- balanced=True\n   imbalance: {'(': 238, ')': 240, '{': 53, '}': 54, '[': 14, ']': 14}\nknowledge.js       refs= 20 created=  0 missing=- balanced=False\nobservability.js   refs=101 created= 17 missing=- balanced=True\n   imbalance: {'(': 285, ')': 287, '{': 52, '}': 52, '[': 12, ']': 12}\nquality.js         refs= 31 created=  0 missing=- balanced=False\n   imbalance: {'(': 154, ')': 157, '{': 104, '}': 105, '[': 23, ']': 23}\nsettings.js        refs=151 created= 42 missing=- balanced=False\nJS 가 부르는 API 경로: 86 | 서버에 없는 경로: -\nLW 헬퍼 구조분해 누락: -\nRESULT OK"
+   "tail": "   imbalance: {'(': 605, ')': 607, '{': 109, '}': 110, '[': 53, ']': 53}\nknowledge.js       refs= 56 created=  0 missing=- balanced=False\nobservability.js   refs=105 created= 15 missing=- balanced=True\npipeline.js        refs= 39 created=  0 missing=- balanced=True\n   imbalance: {'(': 484, ')': 485, '{': 96, '}': 96, '[': 27, ']': 27}\nquality.js         refs= 42 created=  1 missing=- balanced=False\n   imbalance: {'(': 317, ')': 321, '{': 208, '}': 209, '[': 46, ']': 46}\nsettings.js        refs=197 created= 55 missing=- balanced=False\nJS 가 부르는 API 경로: 105 | 서버에 없는 경로: -\nLW 헬퍼 구조분해 누락: -\n탭에 매인 CSS 인데 JS 가 렌더: -\nRESULT OK"
+  },
+  {
+   "key": "browser",
+   "name": "브라우저 렌더",
+   "argv": "tools/verify/verify_browser.py --port 8901 --cdp 9401",
+   "ok": true,
+   "code": 0,
+   "passed": null,
+   "total": null,
+   "seconds": 24.7,
+   "tail": "  \"has_roles-show-policy\": true,\n  \"has_build-external\": true\n },\n \"login\": {\n  \"dom_len\": 125942,\n  \"console_lines\": 3,\n  \"errors\": []\n },\n \"tabs_checked\": 36\n}\n정적 그대로인 탭(빈 목록이거나 loader 가 그릴 내용이 없음): ask/debug\nBROWSER OK"
+  },
+  {
+   "key": "responsive",
+   "name": "창 크기 대응 (폭 5종)",
+   "argv": "tools/verify/verify_responsive.py --port 8904",
+   "ok": true,
+   "code": 0,
+   "passed": 30,
+   "total": 30,
+   "seconds": 20.1,
+   "tail": "| 1920 | ask/query | 1896 | 0 | 0 | 0.85 | OK |\n| 1920 | pipeline/pipeline | 1896 | 0 | 0 | 0.85 | OK |\n| 1920 | settings/models | 1896 | 0 | 1 | 0.85 | OK |\n| 1920 | settings/security | 1896 | 0 | 0 | 0.85 | OK |\n| 1920 | observability/requests | 1896 | 0 | 0 | 0.85 | OK |\n| 1920 | observability/server | 1896 | 0 | 0 | 0.85 | OK |\n==========================================================================================\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_responsive_result.json\n\n검사 30개 중 30개 통과\n\nRESULT OK"
+  },
+  {
+   "key": "buttons",
+   "name": "버튼 전수",
+   "argv": "tools/verify/verify_buttons.py --port 8902 --cdp 9402",
+   "ok": true,
+   "code": 0,
+   "passed": 135,
+   "total": 135,
+   "seconds": 424.9,
+   "tail": "OK   query      채팅 보내기 → 말풍선           fetch=7  \nOK   query      게시 대화상자 열기             fetch=4  \nOK   query      게시 대화상자에 작업 목록         fetch=4  \nOK   query      게시 대화상자 닫기             fetch=3  \nOK   query      게시판 열기                 fetch=6  \nOK   query      게시판으로 이동               fetch=5  \nOK   query      게시판 새로고침               fetch=5  \n\n버튼 135개 중 135개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_buttons_result.json\n\nRESULT OK"
+  },
+  {
+   "key": "security_ui",
+   "name": "보안 · 사용자 화면",
+   "argv": "tools/verify/verify_security_ui.py --port 8903 --cdp 9403",
+   "ok": true,
+   "code": 0,
+   "passed": 58,
+   "total": 58,
+   "seconds": 140.1,
+   "tail": "==============================================================================\n  색인 DB 복사 중 (520 MB)…\n  로그인(verify.plain): HTTP 200\nOK   사용자 추가 폼이 감춰짐                      fetch=4  \nOK   왜 못 쓰는지 화면에 표시                     fetch=3  \nOK   API 키 영역은 비어 있음 (발급 버튼 없음)         fetch=3  \nOK   내 비밀번호 변경은 그대로 쓸 수 있다              fetch=4  알림: 비밀번호 변경됨\n\n검사 58개 중 58개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_security_ui_result.json\n\nRESULT OK"
+  },
+  {
+   "key": "rerun_ui",
+   "name": "단계 재실행 · 작업 상세",
+   "argv": "tools/verify/verify_rerun_ui.py --port 8905 --cdp 9405",
+   "ok": true,
+   "code": 0,
+   "passed": 27,
+   "total": 27,
+   "seconds": 44.1,
+   "tail": "OK   토글마다 효과 배지가 붙는다                              켜면 무엇이 좋아지고 무엇을 내주는지\nOK   묶음마다 단계 배지와 한 줄 설명                           \nOK   '기타' 로 밀린 토글이 없다                             모든 토글이 제 묶음에 들어가 있어야 한다\nOK   품질↑ 필터가 실제로 걸러 낸다                            \nOK   걸러진 것은 모두 품질이 좋아지는 토글                        \nOK   이름 검색이 함께 걸린다                                \nOK   '전체' 로 되돌리면 다 보인다                            \nOK   게시 대화상자가 화면 가운데 덮개로 뜬다                       덮개는 .modal-overlay, 카드는 .modal-box — 역할이 섞이면 안 된다\n\n검사 27개 중 27개 통과 · 실패 0개\n\nRESULT OK"
+  },
+  {
+   "key": "collab",
+   "name": "협업 다중 접속 (10명)",
+   "argv": "tools/verify/verify_collab_many.py --people 10 --port 8906 --cdp 9406",
+   "ok": true,
+   "code": 0,
+   "passed": 20,
+   "total": 20,
+   "seconds": 31.9,
+   "tail": "  스크린샷: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_10.png\n  OK   10명이 동시에 움직이는 동안 오류 없음                               []\n  OK   서버가 10명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)                people=11 · 경과 13.1s\n  OK   협업 부하 중에도 RAG 질의가 정상                                 0.10s\n  OK   협업 부하 중에도 MCP tools/list 정상                          도구 20개 · 0.02s\n  OK   협업 부하 중에도 MCP wiki_query 정상                          0.06s\n  OK   본체 확인 중 협업 오류 없음                                     []\n  OK   협업 호출이 활동 목록(읽기 슬롯)에 쌓이지 않는다                         running=0 queued=0\n  OK   변화가 없으면 접속자 목록을 생략한다 (폴링 대역 절감)                      8.5KB → 0.2KB (97% 절감)\n  OK   누가 움직이면 목록을 다시 보낸다                                   people=11 rev 655→657\n\nCOLLAB OK  20/20 통과"
+  },
+  {
+   "key": "act_load",
+   "name": "작업 상세 로딩 시간",
+   "argv": "tools/verify/verify_act_detail_load.py --port 8909 --cdp 9409",
+   "ok": true,
+   "code": 0,
+   "passed": 7,
+   "total": 7,
+   "seconds": 18.2,
+   "tail": "OK   최근 완료 항목이 2개 이상                                3개\nOK   ① 처음 열기 — 로딩 문구가 사라진다                          0.5s · RX DMA 드라이버의 code map querylocal q-mu95kc7i6pfb0k ↩ Ask 화면에서 열기 📄 요청 프\nOK   ① 채워지는 데 10초 미만                                0.5s\n      표본: 0.0s RX DMA 드라이버의 code map querylocal q-mu95kc7i6pf | 0.5s RX DMA 드라이버의 code map querylocal q-mu95kc7i6pf\nOK   ② 닫았다 다시 열기 — 다시 채워진다                          0.5s\nOK   ③ 빠르게 다른 항목 클릭 — 멈추지 않는다                       0.5s · ISSUE-2001 의 원인과 수정 CL 은? querylocal q-mu95kanb31xn6n ↩ Ask 화면에서 열기 📄 \nOK   ③ 마지막으로 누른 항목의 상세가 남는다                         True\nOK   JS 오류 없음                                       []\n\n검사 7개 중 7개 통과 · 실패 0개\n\nRESULT OK"
+  },
+  {
+   "key": "schedule_ui",
+   "name": "스케줄 화면",
+   "argv": "tools/verify/verify_schedule_ui.py --port 8910 --cdp 9410",
+   "ok": true,
+   "code": 0,
+   "passed": 14,
+   "total": 14,
+   "seconds": 19.5,
+   "tail": "OK   동작 설정이 저장된다                                  {\"type\": \"maintenance\", \"action\": \"wal_checkpoint\"}\nOK   GET /api/schedule 에 보인다                      tasks=['incremental-build', 'nightly-full-build', 'fetch-notice', 'mcp-ingest', 'weekly-digest', 'we\nOK   '지금 실행' 이 돌고 이력에 남는다                         \nOK   행의 '끄기' 가 파일에 반영된다                           버튼=끄기 → enabled=False\nOK   '켜기' 로 되돌아온다                                 enabled=True\nOK   삭제하면 표에서 사라진다                                \nOK   이름 없이 저장하면 안내가 뜬다                            이름을 입력하세요\nOK   JS 오류 없음                                     []\n\n검사 14개 중 14개 통과 · 실패 0개\n\nRESULT OK"
+  },
+  {
+   "key": "timeout",
+   "name": "타임아웃 · 취소 내성",
+   "argv": "tools/verify/verify_timeouts.py --port 8907",
+   "ok": true,
+   "code": 0,
+   "passed": 47,
+   "total": 47,
+   "seconds": 141.7,
+   "tail": "OK   server.json timeouts.job_s = 172800                172800\nOK   server.json concurrency.write_wait_timeout_s = 172800 172800\nOK   setup/server.example.json timeouts.job_s = 172800  172800\nOK   config.json build_lock_timeout = 172800            172800\nOK   config.json build_lock_stale_s = 172800            172800\nOK   setup/config.example.json build_lock_stale_s = 172800 172800\nOK   read_wait_timeout_s 는 짧게 유지된다 (빌드가 아니라 질의의 수명)     900초\n\n검사 47개 중 47개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_timeouts_result.json\n\nRESULT OK"
+  },
+  {
+   "key": "soak",
+   "name": "다중 클라이언트 혼합 부하",
+   "argv": "tools/verify/verify_soak.py --port 8971 --seconds 60 --clients 16",
+   "ok": true,
+   "code": 0,
+   "passed": 10,
+   "total": 10,
+   "seconds": 87.4,
+   "tail": "OK   예상 밖 오류(5xx·연결실패) 0건                             요청 5852건 · 200=5852 · 거절(429/503)=0 · 5xx=0\nOK   정상 처리된 요청이 있다                                    200 5852건 · 창구별 {\"web:poll\": 388, \"mcp:query\": 1872, \"mcp:list\": 1872, \"web:search\": 1418, \"cli:search\": 84, \"\nOK   p95 지연이 60초 미만                                   p50=17ms p95=934ms max=24095ms\nOK   부하 뒤 health 통과                                   HTTP 200 fails=0 warn=2\nOK   부하 뒤 색인 무결성                                      HTTP 200 orphans=없음\nOK   부하 뒤 실행 중 작업이 남지 않음                              running=0 queued=0\nOK   부하 뒤 정상 질의가 된다                                   HTTP 200\n\n검사 10개 중 10개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_soak_result.json\n\nRESULT OK"
+  },
+  {
+   "key": "monkey",
+   "name": "무작위 입력 내성",
+   "argv": "tools/verify/verify_monkey.py",
+   "ok": true,
+   "code": 0,
+   "passed": null,
+   "total": null,
+   "seconds": 869.1,
+   "tail": "\n요청 1205건 / 622초 (2 req/s)\n상태 코드: 200×462, 503×232, 404×163, 400×146, conn-err×142, 501×47, 405×13\n정상 처리·정상 거절: 1016 / 500 오류: 0 / 연결 실패: 142\n폭격 중 정상 질의: 0/41 성공, 지연 0.0~180.0s\n30초 초과 요청 152건 (예: [(60.0, 'GET', '/api/health'), (60.0, 'POST', '/api/cli'), (60.0, 'POST', '/api/prompts')])\n사후 확인: 서버 살아 있음 · 정상 질의 FAIL code=-1 (180.0s)\n결함 후보 0건: -\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_monkey_result.json\n  참고: 폭격 직후 정상 질의가 -1 로 거절됐습니다 — 대기열이 빠지는 중이면 정상입니다.\n\nRESULT OK"
   }
  ],
- "ok": true,
+ "ok": false,
  "python": "3.14.7"
 }

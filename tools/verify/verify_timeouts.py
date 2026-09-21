@@ -133,6 +133,114 @@ def main(argv=None) -> int:
         rec(res.get("answer_mode") == "llm", "재시도가 성공해 LLM 답변으로 끝났다", "mode=%s" % res.get("answer_mode"))
         srv.stop()
 
+        # ================= 1.5 timeout·retry 손잡이가 세 창구에서 **같은 뜻인가** (2026-09-19) =================
+        # 왜: 기존 검사는 "서버가 재시도하고 버틴다" 는 **동작**만 봤다. 운영자가 실제로 묻는 것은
+        # "그 값을 Web·CLI·MCP 어디서 보고 바꿀 수 있나, 그리고 셋이 같은 뜻인가" 다.
+        # LLM 을 **항상 실패**시키면 incident 에 `max_attempts` 가 남는다 = 1 + retries.
+        # 같은 overrides 를 Web 과 MCP 로 보내 그 숫자가 같은지 본다 — 숫자가 다르면 같은 손잡이가 아니다.
+        print("\n[1.5] timeout·retry 손잡이의 세 창구 정합")
+        # 회로 차단은 (프로바이더, 모델) 단위로 **요청을 넘어** 공유된다 — 첫 질의의 실패로 회로가 열리면
+        # 다음 질의는 시도조차 하지 않아(max_attempts=0) 재시도 횟수를 잴 수 없다. 여기서는 재시도만 보고 싶으므로
+        # 회로를 사실상 끈다(§2 가 회로 차단 자체를 따로 확인한다).
+        if not srv.start(LLMWIKI_MOCK_FAIL="timeout", LLMWIKI_LLM_CIRCUIT_FAILURES="100000",
+                         LLMWIKI_LLM_RETRY_BACKOFF_S="0.01", LLMWIKI_LLM_RETRY_BACKOFF_MAX_S="0.05"):
+            return rec(False, "서버 기동") or 1
+
+        def attempts_web(retries):
+            _st, _j = srv.post("/api/query", {"q": Q, "log": False, "overrides": {"llm_retries": retries}})
+            fs = (((_j or {}).get("result") or {}).get("llm_report") or {}).get("failures") or []
+            ans = [f.get("max_attempts") for f in fs if f.get("role") == "answer"]
+            return ans[0] if ans else None
+
+        def attempts_mcp(retries):
+            _st, _j = srv.post("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                        "params": {"name": "wiki_query",
+                                                   "arguments": {"question": Q, "overrides": {"llm_retries": retries}}}})
+            sc = ((_j or {}).get("result") or {}).get("structuredContent") or {}
+            fs = (sc.get("llm_report") or {}).get("failures") or []
+            ans = [f.get("max_attempts") for f in fs if f.get("role") == "answer"]
+            return ans[0] if ans else None
+
+        w0, w2 = attempts_web(0), attempts_web(2)
+        rec(w0 == 1 and w2 == 3, "Web: overrides.llm_retries 가 실제 시도 횟수를 바꾼다", "retries=0→%s · retries=2→%s (기대 1·3)" % (w0, w2))
+        m0, m2 = attempts_mcp(0), attempts_mcp(2)
+        rec(m0 == 1 and m2 == 3, "MCP: 같은 overrides 가 같은 시도 횟수를 만든다", "retries=0→%s · retries=2→%s" % (m0, m2))
+        rec(w0 == m0 and w2 == m2, "Web 과 MCP 가 **같은 값**을 돌려준다", "web=(%s,%s) mcp=(%s,%s)" % (w0, w2, m0, m2))
+        # MCP 응답에 실패 보고가 실려야 붙은 LLM 이 원인을 읽는다 (예전에는 기본 모드에 structuredContent 가 없었다)
+        _st, _j = srv.post("/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                    "params": {"name": "wiki_query", "arguments": {"question": Q}}})
+        msc = ((_j or {}).get("result") or {}).get("structuredContent") or {}
+        rec(bool((msc.get("llm_report") or {}).get("summary")), "MCP 구조화 결과에 llm_report 가 실린다",
+            "; ".join(((msc.get("llm_report") or {}).get("summary") or []))[:80])
+        # 역할 단위 정책도 같은 이름이어야 한다 (llm_roles.<role>.timeout_s / retries)
+        _st, _j = srv.post("/api/query", {"q": Q, "log": False, "overrides": {"llm_roles": {"answer": {"retries": 1}}}})
+        fs = (((_j or {}).get("result") or {}).get("llm_report") or {}).get("failures") or []
+        rr = [f.get("max_attempts") for f in fs if f.get("role") == "answer"]
+        rec(rr and rr[0] == 2, "역할 단위 llm_roles.answer.retries 도 걸린다", "max_attempts=%s (기대 2)" % (rr[0] if rr else None))
+        # timeout 은 incident 에 그대로 남는다 — 세 창구가 같은 초 단위를 쓴다는 증거
+        _st, _j = srv.post("/api/query", {"q": Q, "log": False, "overrides": {"llm_timeout": 7}})
+        fs = (((_j or {}).get("result") or {}).get("llm_report") or {}).get("failures") or []
+        ts = [f.get("timeout_s") for f in fs if f.get("role") == "answer"]
+        rec(ts and abs(float(ts[0] or 0) - 7) < 0.01, "overrides.llm_timeout 이 incident 의 timeout_s 로 보인다", "timeout_s=%s" % (ts[0] if ts else None))
+        # 같은 손잡이가 **철자에 따라 권한이 다르면** 안 된다 (전역 llm_circuit_failures 는 admin, 역할 철자도 admin)
+        if ROOT not in sys.path:
+            sys.path.insert(0, ROOT)
+        from llmwiki import auth as _auth
+        pairs = [("llm_circuit_failures", "circuit_failures"), ("llm_circuit_cooldown_s", "circuit_cooldown_s"),
+                 ("llm_timeout", "timeout_s"), ("llm_retries", "retries"), ("llm_budget_s", "budget_s")]
+        bad = [(g, r) for g, r in pairs
+               if (g in _auth.OVERRIDE_SAFE_KEYS) != (r in _auth.OVERRIDE_ROLE_ATTRS)]
+        rec(not bad, "전역 철자와 역할 철자의 권한 등급이 같다", "어긋남: %s" % (bad or "없음"))
+
+        # --- CLI 축: `query --set` 이 Web/MCP 의 overrides 와 같은 길인가 ---
+        cenv = dict(env, LLMWIKI_MOCK_FAIL="timeout", LLMWIKI_LLM_CIRCUIT_FAILURES="100000",
+                    LLMWIKI_LLM_RETRY_BACKOFF_S="0.01", LLMWIKI_LLM_RETRY_BACKOFF_MAX_S="0.05",
+                    PYTHONIOENCODING="utf-8")
+
+        def attempts_cli(retries):
+            r = subprocess.run([PY, "-m", "llmwiki", "query", Q, "--no-log", "--json", "--set", "llm_retries=%d" % retries],
+                               cwd=ROOT, env=cenv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+            try:
+                d = json.loads(r.stdout[r.stdout.index("{"):])
+            except Exception:
+                return None
+            fs = ((d.get("result") or {}).get("llm_report") or {}).get("failures") or []
+            a = [f.get("max_attempts") for f in fs if f.get("role") == "answer"]
+            return a[0] if a else None
+        c0, c2 = attempts_cli(0), attempts_cli(2)
+        rec(c0 == 1 and c2 == 3, "CLI: `query --set llm_retries=` 가 같은 시도 횟수를 만든다", "retries=0→%s · retries=2→%s" % (c0, c2))
+        rec(c0 == w0 and c2 == w2 and c0 == m0 and c2 == m2,
+            "**세 창구가 같은 값** (Web=CLI=MCP)", "web=(%s,%s) cli=(%s,%s) mcp=(%s,%s)" % (w0, w2, c0, c2, m0, m2))
+        # 권한이 낮은 실행자는 CLI 에서도 금지 키를 못 쓴다 (Web/MCP 와 같은 화이트리스트)
+        # security.json 을 잠깐 바꿔 본다 — **원본을 그대로 되돌린다**. 되돌리지 않으면 뒤 구간이
+        # 401 을 받아 엉뚱한 실패로 보인다 (2026-09-19 이 검사를 넣다가 실제로 겪었다).
+        sec_p = os.path.join(tmp, "security.json")
+        _orig_sec = None
+        if os.path.exists(sec_p):
+            with open(sec_p, "rb") as _f:
+                _orig_sec = _f.read()
+        try:
+            _sec = json.loads(_orig_sec.decode("utf-8")) if _orig_sec else {}
+        except Exception:
+            _sec = {}
+        _sec.setdefault("cli", {})["default_role"] = "viewer"
+        with open(sec_p, "w", encoding="utf-8") as _f:
+            json.dump(_sec, _f, ensure_ascii=False)
+        try:
+            r = subprocess.run([PY, "-m", "llmwiki", "query", "x", "--no-log", "--set", "openai_base_url=http://attacker/v1"],
+                               cwd=ROOT, env=cenv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            out = (r.stdout or "") + (r.stderr or "")
+            rec(r.returncode == 5 and "허용되지 않는 키" in out, "CLI: 낮은 역할은 금지 키를 못 쓴다 (Web/MCP 와 같은 이유 메시지)",
+                "code=%s %s" % (r.returncode, out.strip().splitlines()[0][:90] if out.strip() else ""))
+        finally:
+            if _orig_sec is None:
+                if os.path.exists(sec_p):
+                    os.remove(sec_p)
+            else:
+                with open(sec_p, "wb") as _f:
+                    _f.write(_orig_sec)
+        srv.stop()
+
         # ================= 2. LLM 이 계속 실패 → 500 이 아니라 추출식 답변 + 실패 보고 =================
         print("\n[2] LLM 계속 실패 → 서비스는 계속된다 (추출식 대체 + 보고)")
         if not srv.start(LLMWIKI_MOCK_FAIL="timeout"):
@@ -278,6 +386,44 @@ def main(argv=None) -> int:
         rec(st == 200 and "result" in (j or {}), "LLM 이 죽어도 MCP 도구는 결과를 돌려준다", "HTTP %s keys=%s" % (st, sorted((j or {}).keys())))
         st2, j2 = srv.post("/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, timeout=60)
         rec(st2 == 200 and (j2 or {}).get("result"), "도구 목록은 영향을 받지 않는다", "HTTP %s" % st2)
+        srv.stop()
+
+        # ================= 7. 빌드 관련 제한은 48시간, 그리고 화면이 그 값을 읽어 온다 =================
+        # 빌드가 시간 제한에 끊기는 사고는 몇 시간 뒤에야 드러나므로 재현이 어렵다. 값 자체를 계약으로 고정한다.
+        print("\n[7] 빌드 시간 제한(48시간) 과 /api/limits")
+        H48 = 172800
+        if not srv.start():
+            return rec(False, "서버 기동") or 1
+        sl, lj = srv.get("/api/limits")
+        rec(sl == 200 and isinstance(lj, dict) and lj.get("stages"), "GET /api/limits 가 단계별 제한을 준다",
+            "HTTP %s · 단계 %d개" % (sl, len((lj or {}).get("stages") or {})))
+        tr = (lj or {}).get("trace") or {}
+        rec(bool(tr.get("answer_llm")) and bool(tr.get("fts_search")),
+            "trace 노드 이름으로 제한을 찾을 수 있다 (실측 ms 옆 '≤ 제한')",
+            "answer_llm=%s" % json.dumps((tr.get("answer_llm") or [{}])[0].get("label"), ensure_ascii=False))
+        bl = {x["key"]: x["s"] for x in ((lj or {}).get("flows") or {}).get("build") or []}
+        for key in ("timeouts.job_s", "concurrency.write_wait_timeout_s", "build_lock_timeout", "build_lock_stale_s"):
+            v = bl.get(key)
+            rec(v is not None and (v == 0 or v >= H48), "빌드 제한 %s 가 48시간 이상(또는 무제한)" % key, "%s초" % v)
+        # 배포되는 파일에도 같은 값이 들어 있어야 한다 (코드 기본값만 고쳐 두면 복사해 간 폴더에서 어긋난다)
+        for rel, path, want in (("server.json", ("timeouts", "job_s"), H48),
+                                ("server.json", ("concurrency", "write_wait_timeout_s"), H48),
+                                ("setup/server.example.json", ("timeouts", "job_s"), H48),
+                                ("config.json", ("build_lock_timeout",), H48),
+                                ("config.json", ("build_lock_stale_s",), H48),
+                                ("setup/config.example.json", ("build_lock_stale_s",), H48)):
+            try:
+                d = json.load(open(os.path.join(ROOT, rel.replace("/", os.sep)), encoding="utf-8"))
+                for p in path:
+                    d = d[p]
+            except Exception as e:
+                d = "읽기 실패: %s" % e
+            rec(d == want or d == 0, "%s %s = %d" % (rel, ".".join(path), want), "%s" % d)
+        # read_wait_timeout_s 는 **질의**의 수명이므로 같이 올리면 안 된다 (전체 재빌드 동안 스레드가 쌓인다)
+        rw = ((json.load(open(os.path.join(ROOT, "server.json"), encoding="utf-8")).get("concurrency") or {})
+              .get("read_wait_timeout_s"))
+        rec(rw is not None and 0 < float(rw) <= 3600,
+            "read_wait_timeout_s 는 짧게 유지된다 (빌드가 아니라 질의의 수명)", "%s초" % rw)
         srv.stop()
 
         bad = [r for r in ROWS if not r["ok"]]

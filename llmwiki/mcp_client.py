@@ -27,8 +27,10 @@ mcp_sources.json 으로 서버 실행 방법과 tool 매핑을 선언한다. 실
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
+import queue
 import subprocess
 import sys
 import threading
@@ -232,14 +234,73 @@ def _dig(obj: Any, path: str) -> Any:
 
 
 class MCPClient:
-    """stdio JSON-RPC 2.0 클라이언트 (줄 단위 JSON). 우리 mcp.py 서버와 대칭."""
+    """stdio JSON-RPC 2.0 클라이언트 (줄 단위 JSON). 우리 mcp.py 서버와 대칭.
+
+    **리더 스레드**로 읽는다 (2026-09-19). 예전에는 `request()` 가 락을 잡은 채 `stdout.readline()` 을
+    직접 블로킹으로 돌았고 `stderr` 는 세션 내내 비우지 않았다. 그래서 두 가지가 깨져 있었다:
+
+      1. `timeout_s` 가 **동작하지 않았다** — 자식이 아무것도 내보내지 않으면 `readline()` 안에서 영원히 멈춘다
+         (마감 시각은 줄과 줄 사이에서만 검사됐다).
+      2. 자식이 stderr 에 파이프 버퍼(수십 KB)보다 많이 쓰면 자식이 write 에서 막히고, 우리는 stdout 을 기다려
+         **양쪽이 서로를 기다리는 교착**이 됐다. 로그를 많이 찍는 남의 MCP 서버를 붙이면 그대로 걸린다.
+
+    지금은 stdout·stderr 각각 daemon 스레드가 계속 비우고, `request()` 는 큐에서 timeout 으로 꺼낸다.
+    서버가 우리에게 보낸 요청(id 있는 method)에는 -32601 로 즉답해 상대가 멈추지 않게 한다.
+    """
 
     def __init__(self, name: str, cfg: Dict[str, Any]):
         self.name, self.cfg = name, cfg
         self.proc: Optional[subprocess.Popen] = None
         self._id = 0
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()          # 보내기(stdin)·id 발번 직렬화
+        self._write_lock = threading.Lock()
         self.tools: List[Dict[str, Any]] = []
+        self._q: "queue.Queue[Dict[str, Any]]" = queue.Queue()   # 응답(id 있는 것)만
+        self._errbuf: "collections.deque[str]" = collections.deque(maxlen=200)
+        self._threads: List[threading.Thread] = []
+        self._closed = threading.Event()
+
+    # ---- 리더 스레드 ----
+    def _read_stdout(self) -> None:
+        f = self.proc.stdout if self.proc else None
+        if f is None:
+            return
+        for line in iter(f.readline, ""):
+            if self._closed.is_set():
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except Exception:
+                self._errbuf.append("non-JSON stdout: " + line[:200])
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("id") is not None and ("result" in msg or "error" in msg):
+                self._q.put(msg)                      # 우리 요청의 응답
+            elif msg.get("method") and msg.get("id") is not None:
+                # 서버 → 클라이언트 요청: 우리는 어떤 것도 제공하지 않는다. 즉답하지 않으면 상대가 기다린다.
+                try:
+                    self._send({"jsonrpc": "2.0", "id": msg["id"],
+                                "error": {"code": -32601, "message": "client does not implement %s" % msg.get("method")}})
+                except Exception:
+                    pass
+            # 알림(id 없음)은 무시한다
+        self._q.put({"__eof__": True})
+
+    def _read_stderr(self) -> None:
+        f = self.proc.stderr if self.proc else None
+        if f is None:
+            return
+        for line in iter(f.readline, ""):
+            if self._closed.is_set():
+                break
+            self._errbuf.append(line.rstrip()[:300])
+
+    def stderr_tail(self, n: int = 5) -> str:
+        return " | ".join(list(self._errbuf)[-n:])
 
     def start(self) -> "MCPClient":
         ctx = {"project_root": ROOT, "python": sys.executable}
@@ -252,44 +313,58 @@ class MCPClient:
         cwd = _subst(self.cfg.get("cwd") or "", ctx) or None
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                      encoding="utf-8", errors="replace", cwd=cwd if cwd and os.path.isdir(cwd) else None, env=env, bufsize=1)
+        # 파이프를 계속 비우는 리더 스레드 — 이것이 없으면 자식의 stderr 가 차서 교착된다 (클래스 주석 참고)
+        for fn, nm in ((self._read_stdout, "out"), (self._read_stderr, "err")):
+            t = threading.Thread(target=fn, name="mcp-%s-%s" % (self.name, nm), daemon=True)
+            t.start()
+            self._threads.append(t)
         r = self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "llmwiki", "version": "0.3"}})
         self.notify("notifications/initialized", {})
         self.tools = (self.request("tools/list", {}).get("result") or {}).get("tools") or []
         return self
 
     def _send(self, msg: Dict[str, Any]) -> None:
-        assert self.proc and self.proc.stdin
-        self.proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        self.proc.stdin.flush()
+        if not (self.proc and self.proc.stdin):
+            raise RuntimeError("source %s: not started" % self.name)
+        with self._write_lock:
+            self.proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            self.proc.stdin.flush()
 
     def notify(self, method: str, params: Dict[str, Any]) -> None:
-        with self._lock:
-            self._send({"jsonrpc": "2.0", "method": method, "params": params})
+        self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        assert self.proc and self.proc.stdout
+        """보내고 **큐에서** 응답을 기다린다 — 기다림은 항상 `timeout_s` 안에서 끝난다.
+
+        한 번에 한 요청만 보낸다(`_lock`). 여러 스레드가 섞여 쓰면 id 짝이 큐에서 엇갈릴 수 있고,
+        외부 소스 호출은 원래 요청 하나당 한 번이라 직렬화가 비용이 되지 않는다.
+        """
+        if not (self.proc and self.proc.stdout):
+            raise RuntimeError("source %s: not started" % self.name)
+        timeout = float(self.cfg.get("timeout_s") or 60)
         with self._lock:
             self._id += 1
             mid = self._id
             self._send({"jsonrpc": "2.0", "id": mid, "method": method, "params": params})
-            deadline = time.time() + float(self.cfg.get("timeout_s") or 60)
-            while time.time() < deadline:
-                line = self.proc.stdout.readline()
-                if not line:
-                    err = (self.proc.stderr.read() if self.proc.stderr else "")[:300]
-                    raise RuntimeError("source %s: server closed (%s)" % (self.name, err))
-                line = line.strip()
-                if not line:
-                    continue
+            deadline = time.time() + timeout
+            while True:
+                left = deadline - time.time()
+                if left <= 0:
+                    raise RuntimeError("source %s: timeout(%.0fs) waiting %s%s"
+                                       % (self.name, timeout, method, (" · stderr: " + self.stderr_tail()) if self._errbuf else ""))
                 try:
-                    msg = json.loads(line)
-                except Exception:
+                    msg = self._q.get(timeout=min(left, 1.0))
+                except queue.Empty:
+                    if self.proc and self.proc.poll() is not None:     # 자식이 죽었다
+                        raise RuntimeError("source %s: server exited (%s) %s" % (self.name, self.proc.returncode, self.stderr_tail()))
                     continue
-                if msg.get("id") == mid:
-                    if "error" in msg:
-                        raise RuntimeError("source %s: %s" % (self.name, msg["error"]))
-                    return msg
-            raise RuntimeError("source %s: timeout waiting %s" % (self.name, method))
+                if msg.get("__eof__"):
+                    raise RuntimeError("source %s: server closed (%s)" % (self.name, self.stderr_tail()))
+                if msg.get("id") != mid:
+                    continue        # 지난 요청의 늦은 응답 — 버린다
+                if "error" in msg:
+                    raise RuntimeError("source %s: %s" % (self.name, msg["error"]))
+                return msg
 
     def call_tool(self, name: str, args: Dict[str, Any]) -> Any:
         r = self.request("tools/call", {"name": name, "arguments": args})
@@ -307,6 +382,7 @@ class MCPClient:
             return {"text": joined}
 
     def close(self) -> None:
+        self._closed.set()
         if self.proc:
             try:
                 self.proc.stdin.close()  # type: ignore
@@ -317,7 +393,20 @@ class MCPClient:
                     self.proc.kill()
                 except Exception:
                     pass
+            for f in (self.proc.stdout, self.proc.stderr):   # 리더 스레드가 쥐고 있던 파이프까지 닫는다
+                try:
+                    if f:
+                        f.close()
+                except Exception:
+                    pass
             self.proc = None
+        # 리더 스레드는 daemon 이고 파이프가 닫히면 스스로 끝난다 — 잠깐만 기다려 준다
+        for t in self._threads:
+            try:
+                t.join(timeout=1)
+            except Exception:
+                pass
+        self._threads = []
 
     def __enter__(self) -> "MCPClient":
         return self.start()

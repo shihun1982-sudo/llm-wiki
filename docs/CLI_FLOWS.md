@@ -67,7 +67,20 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 |---|---|---|
 | `run_id` | `Profiler` 생성 시 12자리 hex (`profiler._new_run_id`). build/query/eval/search/wiki 등 요청마다 1개 | `logs/*.log` 모든 줄과 `requests` 행에 기록. `logs grep --run <run_id>` |
 | `request_id` | `store.log_request()` 가 반환하는 `requests` 테이블 autoincrement | `requests show <id>`, `forensic <id>`, `logs grep --request <id>` (→ run_id 로 변환해 grep) |
-| `query_id` | `store.log_query()` 의 `query_log` id. `log=True` 이고 `evolve_capture` 토글이 켜진 질의만 | `evolve feedback <query_id> +1|-1` |
+| `query_id` | `store.log_query()` 의 `query_log` id. `log=True` 이고 `evolve_capture` 토글이 켜진 질의만 | `evolve feedback <query_id> +1|-1`, `requests queries` |
+
+**질의 로그에는 '누가' 도 남는다** (2026-09-19). `query_log` 행마다 `user` · `role` · `origin`(web/api/cli/mcp/schedule) · `via`(로그인 방법) · `ip` · `agent` · `request_id` 가 함께 기록된다.
+값은 진행 레지스트리의 클라이언트 정보(`store.current_actor()`)에서 오고, Web·CLI·MCP 어느 창구로 들어온 질의든 같은 모양으로 남는다. 예전 행은 빈 값이며 마이그레이션으로 컬럼만 추가된다.
+
+```
+python -m llmwiki requests queries --limit 20            # 질의 로그 (사용자·창구 포함)
+python -m llmwiki requests queries --user kh82.kim       # 이 사람 질의만
+python -m llmwiki requests queries --origin mcp --q PDCCH
+python -m llmwiki requests users                         # 사용자별 질의 수 · 👍/👎 · 마지막 시각
+```
+
+Web 에서는 Observability › 질의·로그의 **사용자** 열이다. 이름에 마우스를 올리면 역할·창구·로그인 방법·IP·에이전트가 나오고, 누르면 그 사용자 질의만 걸러진다.
+IP·에이전트는 admin 에게만 보이고, 사용자 id 는 `server.json` 의 `monitor.show_user_to_viewer` 가 `false` 면 본인 것 외에는 `(비공개)` 로 가려진다 (진행 중 작업 목록과 같은 규칙). 사용자별 집계 `GET /api/query_users` 는 항상 admin 전용이다.
 
 `build`, `query`(캐시 히트 포함), `eval`(질문마다 1건 + eval 자체 1건), `trial run`(질문마다), `precompute run`, `fusion compare` 가 모두 requests 를 남긴다. `keep_requests`(기본 2000) 초과분은 자동 삭제되며 `maintenance purge_requests` 로 비울 수 있다. `search` 는 requests 를 남기지 않고 logs 만 남긴다.
 
@@ -84,9 +97,20 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `build status` | 락/마지막 빌드/임베딩 진행률 | `--json` | kv(last_build, embed_progress), build.lock |
 | `build verify [--fix]` | 색인 정합성 검사 | `--fix` | 읽기 (fix 시 댕글링·고아·n_chunks·stale 위키 정리) |
 | `query "질문" [--k N] [--no-log] [--no-doc-expand]` | 하이브리드 검색 + 답변 (리랭크 후 `doc_expand` 단계가 같은 문서의 관련 청크를 추가; LLM 실패 시 `llm_report`) | 토글, `--trace`, `--json`, `--preset`, `--debug` | query_log, requests(hits_brief 포함), episodes, forensics, proposals, answer_cache(precompute 시) |
-| `search fts|vector|graph "질문" [--k]` | 단일 채널 디버그 | `--json` | 읽기, logs 만 |
+| `query … --answer-mode grounded|best_effort` · `query … --output answer|fused|reranked|context` | **답변 모드**(best_effort = 근거 부족해도 `[C#]`+`[BK]` 로 답) · **출력 모드**(융합 뒤 / 리랭크 뒤 후보 표, 컨텍스트 블록까지만 — 답변 LLM 생략, `--json` 이면 `candidates/lists/stages` 또는 `context/refs`) — ANSWER_MODES.md | `--json` | requests(result_type 기록) |
+| `sweep run <request_id|last> --key K (--range a:b:s | --values v1,v2) [--repeats N] [--from POINT] [--query "…"] [--log]` · `sweep list|show <id>|compare <id>|keys` | **파라미터 스윕** — 값마다 저장된 중간 결과로 그 키의 단계부터만 재실행 → 단계×값 표(기준 = 첫 성공 값). `sweep keys` 가 스윕 가능한 키 목록(type/min/max/choices/재시작점), `--query` 는 기준 요청이 없을 때 새 질의 1회로 기준을 만든다 — SWEEP.md | `--json`, `--n` | `data/sweeps/sw_<id>.json`(보관 `sweep_keep`), data/reruns, requests(`--log` 시) |
+| `graph profile [--json] [--eval] [--compare] [--out FILE]` | **그래프 진단 프로파일** — 규모·연결성(성분/고립/허브)·문서 커버리지·품질 신호·규칙 기여(죽은 규칙)·질의 활용·제안, `--compare` 는 직전 실행과 diff, `--eval` 은 그래프 채널만 hit@k — GRAPH_PROFILE.md | `--json` | `data/graph_profiles/gp_<ts>.json`(보관 `graph_profile_keep`) |
+| `rules explain <용어>` · `rules lint` | 이 말이 어느 유형(acronym/synonym 양방향 · alias/related/exclude 일방)·어느 방향으로 무엇을 끌어오나 — QUERY_RULES.md | `--json` | 읽기 |
+| `logs status [--json]` | `logs/` 총량·상한(`log_total_max_mb`)·동작(`log_limit_action`)·지운 목록 — LOG_QUOTA.md | | 읽기 (action 적용 시 오래된 백업 삭제) |
+| `config doc` | **설정 레퍼런스 생성** — 코드의 설정·토글·튜닝 레지스트리에서 `docs/CONFIG_REFERENCE.md` 를 만든다(`tuning doc` · `arch doc` 과 같은 방식). 키를 추가했으면 이것도 다시 돌린다 | | docs/CONFIG_REFERENCE.md |
+| `config fill-defaults [--tuning] [--rules] [--all] [--examples] [--dry-run]` · `config env` · `config reload [--env]` | **모든 키를 기본값으로 파일에 명시**(있는 값 유지; `--examples` 는 setup/*.example.* 도) · `.env` 키 이름·설정 여부·마스킹 값·출처·활성 `LLMWIKI_*` 오버라이드 표 · config.json(+`--env` 면 .env 도) 다시 읽기. 셋 모두 **admin** 등급(`config show|paths` 만 read) — SETTINGS_SYNC.md | `--dry-run`, `--json` | config.json, tuning.json, query_rules.json, data/rules.json, setup/*.example.* / os.environ |
+| `models test --catalog [--live]` · `models ensemble show|set <role> [--member N k=v …] [--aggregator …] [--wait all|timeout] [--off]` | 카탈로그(models.json) enabled 모델 **전부** 연결 테스트 · 역할 단위 **앙상블**(멤버 ≤3·대기 정책·취합기) — ENSEMBLE.md | `--json` | 읽기 · config.json(llm_roles.<role>.ensemble) |
+| (전역) `--version` | 버전 (= `llmwiki/__init__.py __version__` = RELEASE_NOTES.md 맨 위 절 = `/api/status.version` = MCP serverInfo.version) | | 없음 |
+| `search <채널> "질문" [--k] [--mode or\|and\|rrf] [--require …] [--exclude …] [--doc-types issue,cl]` | 채널 검색. 채널은 하나(`fts`) 또는 콤마 조합(`fts,vector`) 또는 `all`. 행마다 **어느 채널이 몇 위로 찾았는지**가 붙는다. `--doc-types` 는 여기서 **거르는** 조건이다(`query` 의 doc_types 는 가중치) — Web Ask › 채널 검색의 유형 칩 · MCP `wiki_search(doc_types=)` 와 같은 엔진 | `--json` | 읽기, logs 만 |
+| `inspect "질문"` | **질의 해부 (LLM 없음)**: 토큰화·키워드·불용어, 규칙 확장, 시간 표현 범위, 채널 라우팅 가중치, 고정 근거 | `--json` | 읽기 |
 | `eval [--k 5] [--matrix] [--questions F]` | 회귀 평가 hit@k/MRR | 토글 | requests |
-| `trial run|list|compare|report|show` | 설정 전후 회귀 비교 | `--name --preset --set k=v --questions --note --md` | trials, requests |
+| `trial run|candidates|list|compare|report|show` | 설정 전후 회귀 비교. **`candidates`** 는 비교에 쓸 **과거 질의 후보**를 번호·시각·👍/👎·근거 못 찾음과 함께 보여 주고, **`run --pick 773,772`** 로 그중 고른 것만 돌린다(Web 의 `질의 고르기…` 와 같다). **`--source evalset\|queries`** 로 문항 원천을 고른다 — `queries` 는 **실제 질의 이력**에서 뽑는다(`--days --limit --only negative\|feedback\|insufficient`). 비교는 단계별 표(질의 1건당 ms·토큰·호출수, 달라진 단계 우선)와 "이 지표는 왜 못 내는가" 를 함께 낸다. **정답이 없는 문항이면 hit@k·MRR·term 을 `—`(채점 불가)로 낸다 — 0 이 아니다**; `list` 는 **원천** 칸을 함께 보여 준다 — EVAL_TRIAL.md §5 | `--name --preset --set k=v --questions --note --md --source --days --limit --only` | trials, requests |
+| `evolve show <id>` | **제안 한 건의 설명** — 무엇이 · 어느 파일에서 · 어떻게(before/after) · 영향 · 리빌드가 드는가 · **왜 적용할 수 없는가**. `evolve status` 의 `[X]` 표시가 붙은 줄이 그것이다. Web 제안 카드 · MCP `wiki_evolve(id=)` 와 같은 모듈 — EVOLVE.md §1.5 | `--json` | 읽기 |
 | `graph [--limit] [--community] [--provenance] [--types]` | 그래프 요약/내보내기 | `--json` | 읽기 |
 | `entity <name|e:id>` | 엔티티 상세 | `--json` | 읽기 (doc_refs 없으면 계산·저장) |
 | `corpus lint|types|schema|example|lint-file|stats` | 문서 계약(front matter) | `--all --limit` | doc_meta, kv(lint_summary), schemas/ |
@@ -94,7 +118,7 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `rules show|add|remove|test|stats|path` | 규칙 기반 질의 확장 사전 | | query_rules.json |
 | `pin list|add|remove|test` | 고정 근거 | `--doc --chunk --query --keywords --always --doc-types --weight --note` | pins.json |
 | `precompute run|status|clear|doc-vectors` | 답변 사전 계산 캐시 | `--from-log --stale` | answer_cache, doc_vectors, requests |
-| `forensic last|list|summary|<request_id> [--llm]` | 질의 포렌식 진단 | `--limit` | forensics |
+| `forensic last|list|summary|<request_id> [--llm]` | 질의 포렌식 진단. **`list` 의 기본은 문제 건만** (`--only problems`) — 기록의 대부분은 정상 건이라 전부 보여 주면 볼 이유가 있는 줄이 묻힌다. `--only all` 은 전부, `--only weak,insufficient` 는 판정 지정, `--q <말>` 은 질의문 검색. 맨 윗줄에 **판정별 전체 건수**(목록 상한과 무관) — FORENSIC.md §1.1 | `--only --q --limit --json` | forensics |
 | `forensic expect <request_id|last> --doc … --term … [--chunk …] [--note …] [--propose]` | **기대 결과 포렌식** — 기대 문서/용어가 어느 단계에서 탈락했는지 + 수정안 (FORENSIC.md) — §3.34 | `--json` | forensics(origin=expectation), episodes, (--propose) proposals |
 | `analyze <request_id|last> [--focus quality|speed|tokens] [--print] [--out 파일]` · `query … --analyze [--focus] [--print-analysis]` | **상세 분석 리포트** — 설정 스냅샷·단계 타임라인·검색 상세·답변 판정·세 렌즈 소견과 조절점을 `logs/analysis/req_<id>.md` 로 (ANALYSIS_MODE.md) — §3.38 | `--json` | logs/analysis/req_<id>.md/.json |
 | `time "표현"` | 한국어 시간 표현 파싱 | | 없음 |
@@ -117,12 +141,15 @@ CLI 플래그 / --preset 은 그 위에 "프로세스 한정" 으로 덮어씀 (
 | `wiki [--min-degree]` | 위키 페이지 재생성 | | `wiki/*.md` |
 | `docs` | 색인된 문서 목록 | `--json` | 읽기 |
 | `stats` | 인덱스 통계/프로바이더/토글 | `--json` | 읽기 |
-| `system [--target-docs --daily-new --horizon-days]` | 확장성 추정/지연 통계 | `--json` | 읽기 |
+| `stats --full [--days N] [--section …] [--top N] [--bucket day\|week\|month] [--trend-days N]` | **운영 통계** — 색인 규모 너머: 단계별 빌드 ms(느린 순) · 질의 시간대/창구 분포 · p50/p95 와 가장 느린 질의 · 토큰(질의당·호출당) · 근거 부족률·👍/👎 · 사용자별 · DB 테이블과 `data/` 폴더별 용량 + **정리 힌트** · 임베딩 캐시 적중률. 섹션 `index·build·queries·latency·tokens·quality·users·storage·embed·trend`. **`--section trend`** 는 일/주/월 추세(구간별 질의량·지연·토큰·빌드·근거 부족률)를 스파크라인과 표로 — 기간은 묶음에 맞춰 자동(일 14일·주 12주·월 1년). Web 옵저빌리티 › 시스템(차트) · MCP `wiki_status(full=true, bucket=…)` 와 같은 함수 — OPS_STATS.md | `--json` | **읽기 전용** (회귀 테스트로 고정) |
+| `reset data\|settings\|logs [--apply]` | **관리자 초기화** — 다른 환경으로 옮길 때 앞 환경의 흔적을 턴다. **기본은 미리보기**(지우는 목록·유지하는 목록·용량)이고 `--apply` 가 있어야 실행된다. `corpus/` 원본은 절대, `security.json`·`.env` 는 옵션으로 켜야 지워지며 `data` 범위는 지우기 전에 자동 스냅샷. `destructive` 등급 — RESET.md | `--json --yes` | data: DB·wiki·`data/{requests,reruns,sweeps,graph_profiles}` · settings: 설정 JSON · logs: `logs/`(파일은 **비우고 지우지 않는다** — Windows 열린 핸들) |
+| `graph-rules show\|types\|lint\|test "<문장>"\|add-entity\|add-alias\|fill-defaults\|path` | **그래프 빌드 규칙**(`data/rules.json`) — 질의 확장 사전(`rules`)과 짝이고 이쪽은 **빌드할 때** 노드·변을 만든다. `types` 는 쓸 수 있는 엔티티 유형·값 종류·관계 어휘, `lint` 는 빌드 전 정적 점검(깨진 정규식·없는 유형·**가려진 `link_rules`**·겹치는 별칭·`inverse` 짝), `test` 는 문장 하나가 어떤 노드·관계가 되는지 — GRAPH_RULES.md | `--json` | data/rules.json (show/types/lint/test 는 읽기) |
+| `system [--target-docs --daily-new --horizon-days]` | 확장성 추정/지연 통계 (**가정을 넣어 계산**하는 것 — 지금 상태는 `stats`) | `--json` | 읽기 |
 | `maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|purge_requests [--yes]` | DB 유지보수 (`purge_requests` 는 확인 문구) | | DB 파일, requests |
 | `mcp-source list|test|tools|retrieve|federated|ingest|enrich|fetch` | 외부 소스 = 다른 RAG · MCP 서버 · REST 검색 API (전송 stdio/http/rest). `tools <src>`(원격 tool 스키마) · `retrieve "질의" [--source] [--k]`(검색 채널 매핑 확인) · `federated`(페더레이션 도구·플러그인 상태) — §3.37, RAG_FEDERATION.md | `--since --dry-run --source --k` | mcp_sources.json, `data/mcp_cache/*`(ingest) |
 | `watch [--interval] [--once]` | 코퍼스 변경 감시 → 증분 빌드 | 토글 | build 와 동일 |
 | `mcp [--transport stdio|http --host --port] [--connect URL --token …] [--client-config [--url]]` | MCP 서버: stdio(기본) / Streamable HTTP 단독 포트 / stdio→원격 HTTP 브리지 (MCP.md) — §3.36. 플래그 생략 시 `config.json mcp_transport/mcp_host/mcp_port/mcp_url`. `--client-config` 는 실행하지 않고 클라이언트 설정 JSON 4종을 출력 | `--insecure` | query 와 동일 |
-| `serve [--port] [--host] [--insecure]` | Web UI + `POST /mcp` (블로킹). 기본 `config.json web_host/web_port`(127.0.0.1:8765). `--host 0.0.0.0` 등 외부 공개는 security.json 의 사용자/API 키/SSO 또는 익명 역할이 있어야 기동 | | 전부 |
+| `serve [--port] [--host] [--insecure]` | Web UI + `POST /mcp` (블로킹). 기본 `config.json web_host/web_port`(**0.0.0.0**:8765 — 2026-09-18 부터 외부 바인드가 기본, 이 PC 전용은 `config set web_host=127.0.0.1`). 외부 공개는 security.json 의 사용자/API 키/SSO 또는 익명 역할이 있어야 기동; 요청 단위 overrides 화이트리스트·500 마스킹은 SECURITY.md §6.1 | | 전부 |
 
 ---
 
@@ -187,7 +214,7 @@ python -m llmwiki build verify [--fix]
 
 **내부 단계** (`cli._run_cmd` → `Pipeline.build` → `_build`)
 0. `--full` 이면 기본으로 `reset_index()` : 색인 테이블(docs, chunks, chunks_fts, embeddings, entities, entities_fts, relations, mentions, communities, kv, doc_meta, doc_vectors, answer_cache) DELETE + VACUUM. `--purge-logs` 면 로그 테이블(query_log, proposals, evolution_log, synonyms, requests, forensics, episodes, trials, embed_runs)도 삭제. 편집 노트 없는 `wiki/*.md` 삭제. `--no-reset` 이면 생략.
-1. `BuildLock(data/build.lock)` 획득 (`build_lock_timeout` 초 대기, 0 = 즉시 실패 → exit 2). 소유 pid 가 죽었거나 6시간 지난 락은 회수.
+1. `BuildLock(data/build.lock)` 획득 (`build_lock_timeout` 초 대기 — 기본 172800 = 48시간, 0 으로 바꾸면 즉시 실패 → exit 2). 소유 pid 가 죽었거나 `build_lock_stale_s`(기본 172800 = 48시간)가 지난 락은 회수.
 2. trace 단계 (`--trace` 에 그대로 나타남):
    - `health` (토글 `health_check`) → 실패 시 `RuntimeError("health check failed…")` → exit 3
    - `mcp_ingest` (토글 `mcp_sources`) → `data/mcp_cache/<name>` 폴더가 스캔 대상에 추가
@@ -437,7 +464,21 @@ python -m llmwiki search fts    "RX DMA underrun PHY 재시작" --k 3
 python -m llmwiki search vector "RX DMA underrun PHY 재시작" --k 3
 python -m llmwiki search graph  "RX DMA underrun PHY 재시작" --k 3 --json
 ```
-**내부 단계**: `Profiler("search")` 하나에 `retrieval.fts_search`(동의어 = DB synonyms 테이블, 라우터/규칙 확장 없음) / `vector_search(embedder)` / `graph_search(graph_hops)` 단일 채널만 실행. 텍스트 모드는 result 만, `--json` 은 `{"result","trace"}`. requests 는 남기지 않고 logs 에 `search` 줄만 남는다.
+**내부 단계** (2026-09-19): `retrieval.channel_search` 하나가 고른 채널을 차례로 돌린다 — `fts_search`(동의어 = DB synonyms 테이블, 라우터/규칙 확장 없음) · `vector_search(embedder)` · `graph_search(graph_hops)`.
+그 다음 조합한다.
+
+| 조합 | 뜻 | 정렬 |
+|---|---|---|
+| `--mode or` (기본) | 고른 채널 중 **하나라도** 찾은 청크 (커버리지) | 채널 수 많은 순 → 채널별 최고 순위 |
+| `--mode and` | 고른 채널이 **모두** 찾은 청크 (채널 합의) | 〃 |
+| `--mode rrf` | 질의 경로와 **같은 가중 RRF** (라우터 가중치 그대로) | fusion 점수 |
+| `--require A --exclude B` | (포함 중 하나) **그리고** (필수 전부) **그리고** (제외에 없음) — 예: `search fts,vector "…" --require graph` = `(FTS 또는 Vector) 그리고 Graph` | 채널 수 → 최고 순위 |
+
+`--json` 은 `{query, channels, mode, expr, require, any, exclude, per_channel{채널:{n,ms,rows}}, rows[{chunk_id,score,channels{채널:{rank,score}},n_channels,doc_id,heading,snippet}], graph?, weights, counts{union,intersection,returned}, trace}`.
+Web Ask › 채널 검색 과 MCP `wiki_search` 가 **같은 함수**를 쓰므로 세 창구의 결과가 같다. requests 는 남기지 않고 logs 에 `search` 줄만 남는다.
+
+`inspect "질문"` 은 검색을 돌리지 않고 **질의가 검색어로 어떻게 변했는지**만 본다 (`llmwiki/querydebug.py`, LLM 호출 0, 수 ms):
+토큰화 → 규칙 확장 → 시간 표현 → 채널 라우팅 → 고정 근거. Web Ask › 디버그 · MCP `wiki_inspect` 와 같은 함수다.
 
 **출력**
 ```

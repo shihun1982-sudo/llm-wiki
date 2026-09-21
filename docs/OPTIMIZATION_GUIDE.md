@@ -47,7 +47,7 @@
 ## 3. 전체 구조
 
 ```
-query   : sync_index → providers → cache_hit → time_scope → query_rules → router → query_expand → pins → fts_search → vector_search → graph_search → doc_vector_search → external_rag → rrf_fuse → rerank → doc_expand → context → evidence → answer → claim → forensic → evolve_capture → log → analysis
+query   : sync_index → providers → cache_hit → time_scope → query_rules → router → query_expand → pins → fts_search → vector_search → graph_search → doc_vector_search → external_rag → rrf_fuse → doc_acl → fusion_llm → rerank → rerank_review_llm → doc_expand → context → evidence → answer → claim → forensic → evolve_capture → log → analysis
 build   : health → providers → load_corpus → diff → chunk_index → embed → graph_build → wiki_pages → prune → warm_cache
 evolve  : capture → hitl → snapshot → apply → regress → evolution_log
 watch   : scan → build_incremental
@@ -70,26 +70,29 @@ watch   : scan → build_incremental
 |---|---|---|---|---|---|
 | `sync_index` | 인덱스 동기화 | - | - | - | 재시작 없이 최신 색인 반영. |
 | `providers` | 프로바이더 준비 | `llm_answer`, `rerank_llm` | - | `llm_roles.answer`, `llm_roles.rerank` | 최초 질의 지연. 이후 0ms. |
-| `cache_hit, precompute_hit` | 질의 캐시 · 프리컴퓨트 | `query_cache`, `precompute`, `precompute_after_build` | - | `query_cache_size` | LLM 토큰 0, 수 ms. 로그/자가진화는 건너뜀. 재빌드 시 자동 무효화. |
+| `cache_hit, precompute_hit, precompute_miss` | 질의 캐시 · 프리컴퓨트 | `query_cache`, `precompute`, `precompute_after_build` | - | `query_cache_size` | LLM 토큰 0, 수 ms. 로그/자가진화는 건너뜀. 재빌드 시 자동 무효화. |
 | `time_scope` | 시간 표현 해석 | `time_scope` | `time_mode`, `time_boost_w`, `recency_half_life_days` | `timezone`, `week_start` | 시간 조건이 있는 질문의 정밀도↑. filter 가 0건이면 boost 로 자동 완화. |
-| `query_rules` | 규칙 기반 질의 확장 | `query_rules`, `profile_expansion` | `syn_w`, `related_w`, `exclude_penalty`, `acronym_phrase` | - | LLM 없이 결정적으로 recall↑. related 를 별도 리스트로 두어 precision 보호. profile_expansion 으로 전/후 효과 기록. |
+| `query_rules, expansion_profile` | 규칙 기반 질의 확장 | `query_rules`, `profile_expansion` | `syn_w`, `related_w`, `exclude_penalty`, `acronym_phrase`, `query_rules_max_rounds`, `related_symmetric` | - | LLM 없이 결정적으로 recall↑. related 를 별도 리스트로 두어 precision 보호. profile_expansion 으로 전/후 효과 기록. |
 | `router` | 적응형 라우터 | `router`, `router_llm` | `router_short_kw`, `router_long_kw`, `router_entity_min`, `router_strong_seed`, `router_base_graph`, `router_kw_fts` 외 7 | - | 채널 가중치가 융합 결과를 직접 좌우. 끄면 1:1:1. |
 | `query_expand` | LLM 질의 확장 (옵션) | `query_expand`, `query_decompose` | `query_expand_n`, `query_expand_w`, `query_decompose_max` | `llm_roles.expand` | 어휘 불일치 완화(recall↑). LLM 1회(토큰·지연↑). |
 | `pins` | 고정 근거(pin) | `pins` | - | - | 코딩 규칙처럼 특정 질의 유형에 항상 포함할 문서, 사용자가 확인한 정답 근거 고정. |
-| `fts_search` | FTS(BM25) | `fts` | `top_k_fts`, `fts_mode`, `fts_and_min_hits`, `fts_w_heading`, `fts_w_body`, `fts_w_tokens` 외 6 | `top_k_fts` | 정확 키워드·숫자·날짜에 강함. 한국어 조사 변형은 토큰 컬럼으로 흡수. |
+| `fts_search, fts_search_rules, fts_search_alt, fts_search_related` | FTS(BM25) | `fts` | `top_k_fts`, `fts_mode`, `fts_and_min_hits`, `fts_w_heading`, `fts_w_body`, `fts_w_tokens` 외 6 | `top_k_fts` | 정확 키워드·숫자·날짜에 강함. 한국어 조사 변형은 토큰 컬럼으로 흡수. |
 | `vector_search` | 벡터 검색 | `vector` | `top_k_vector`, `vector_min_sim` | `top_k_vector` | 의미 유사 문단 recall. hash 임베더는 표기 변형에 강하나 의미 이해는 못함. |
 | `graph_search` | 그래프 검색 | `graph` | `top_k_graph`, `graph_hops`, `graph_seed_min`, `graph_max_seeds`, `graph_decay`, `graph_hub_exp` 외 9 | `top_k_graph`, `graph_hops` | 다중 홉·관계형 질문에 강함. 시드가 없으면 빈 결과. |
 | `doc_vector_search` | 문서 카드 벡터 (옵션) | `doc_vector` | - | - | 긴 설계 문서의 문서 단위 recall↑. 빌드 시 doc_vectors 생성 필요. |
-| `external_rag` | 외부 RAG 채널 (옵션) | `external_rag` | `rrf_k`, `fusion_method`, `fusion_multi_bonus`, `channel_w_fts`, `channel_w_vector`, `channel_w_graph` 외 8 | - | 다른 팀 RAG·사내 검색을 코드 수정 없이 채널로 추가. 외부 지연이 더해지므로 timeout_s 와 weight 로 제어. 소스 오류는 채널 하나만 비고 질의는 계속. |
-| `rrf_fuse, boost` | 융합 · 부스트 | `pins`, `feedback_boost` | `rrf_k`, `fusion_method`, `fusion_multi_bonus`, `channel_w_fts`, `channel_w_vector`, `channel_w_graph` 외 8 | `rrf_k` | 다중 채널 합의 후보가 상위로. 방식은 `fusion compare` 로 평가셋 비교. 모든 배율은 hit.boosts 에 기록. |
-| `rerank_llm, rerank_cross_encoder, rerank_local` | 리랭크 | `rerank`, `rerank_llm` | `rerank_candidates`, `rerank_chunk_chars`, `rerank_method`, `rerank_ce_model`, `rerank_w_cover`, `rerank_w_consensus` 외 2 | `rerank_candidates`, `rerank_chunk_chars`, `llm_roles.rerank` | 최종 MRR 에 가장 직접적. LLM 은 토큰 1회, 크로스인코더는 로컬 CPU, 로컬은 수 ms. |
-| `doc_expand` | 문서 단위 확장 | `doc_expand` | `top_k_final`, `context_max_chars`, `context_chunk_chars`, `context_neighbors`, `context_neighbor_top`, `dedupe_similarity` 외 6 | - | 한 문서의 표·목록·후속 문단이 잘려 나가는 문제 완화(근거 완전성↑). 토큰↑ → 상한(max_chunks·min_score)으로 제어. speed/token 프리셋은 off. |
-| `context` | 컨텍스트 구성 | `context_trim`, `dedupe_hits` | `top_k_final`, `context_max_chars`, `context_chunk_chars`, `context_neighbors`, `context_neighbor_top`, `dedupe_similarity` 외 6 | `top_k_final`, `context_max_chars`, `context_chunk_chars` | 답변 LLM 입력 토큰과 근거 완전성을 결정. |
+| `external_rag, mcp_enrich, external_inject` | 외부 RAG 채널 (옵션) | `external_rag` | `rrf_k`, `fusion_method`, `fusion_multi_bonus`, `channel_w_fts`, `channel_w_vector`, `channel_w_graph` 외 26 | - | 다른 팀 RAG·사내 검색을 코드 수정 없이 채널로 추가. 외부 지연이 더해지므로 timeout_s 와 weight 로 제어. 소스 오류는 채널 하나만 비고 질의는 계속. |
+| `rrf_fuse, boost, channel_inject` | 융합 · 부스트 | `pins`, `feedback_boost` | `rrf_k`, `fusion_method`, `fusion_multi_bonus`, `channel_w_fts`, `channel_w_vector`, `channel_w_graph` 외 26 | `rrf_k` | 다중 채널 합의 후보가 상위로. 방식은 `fusion compare` 로 평가셋 비교. 모든 배율은 hit.boosts 에 기록. |
+| `doc_acl` | 문서 접근 제어 | `doc_acl` | - | - | 검색은 읽기다 — 등급이 다른 문서가 섞인 위키에서 RAG 가 유출 경로가 되지 않게 한다. 규칙이 비어 있으면 아무도 막지 않고, admin 은 항상 전부 본다. 가려진 건수는 trace 와 응답 메타에 남는다. |
+| `fusion_llm` | 융합 뒤 LLM 검토 (옵션) | `llm_after_fusion` | `rrf_k`, `fusion_method`, `fusion_multi_bonus`, `channel_w_fts`, `channel_w_vector`, `channel_w_graph` 외 26 | `llm_roles.fusion` | 리랭크 창에 들어갈 후보를 미리 걸러 정밀도↑·리랭크 토큰↓. LLM 1회 추가. 실패·파싱 오류면 순위를 그대로 둔다(품질을 깎지 않는 방향). 전부 drop 하라는 응답은 무시한다. |
+| `rerank_llm, rerank_cross_encoder, rerank_local, rerank_api` | 리랭크 | `rerank`, `rerank_llm` | `rerank_candidates`, `rerank_chunk_chars`, `rerank_method`, `rerank_ce_model`, `rerank_w_cover`, `rerank_w_consensus` 외 4 | `rerank_candidates`, `rerank_chunk_chars`, `llm_roles.rerank` | 최종 MRR 에 가장 직접적. LLM 은 토큰 1회, 크로스인코더는 로컬 CPU, 로컬은 수 ms. |
+| `rerank_review_llm` | 리랭크 뒤 LLM 선택 (옵션) | `llm_after_rerank` | `rerank_candidates`, `rerank_chunk_chars`, `rerank_method`, `rerank_ce_model`, `rerank_w_cover`, `rerank_w_consensus` 외 4 | `llm_roles.select` | 컨텍스트 구성을 LLM 이 정한다(정밀도↑). expand_docs 는 doc_expand 가 그 문서를 우선·전체 확장한다(토큰↑). LLM 1회 추가. 실패·빈 select 면 리랭크 순위 그대로. |
+| `doc_expand` | 문서 단위 확장 | `doc_expand` | `top_k_final`, `context_max_chars`, `context_chunk_chars`, `context_chars_per_token`, `context_budget_reserve_tokens`, `context_min_fit_chars` 외 9 | - | 한 문서의 표·목록·후속 문단이 잘려 나가는 문제 완화(근거 완전성↑). 토큰↑ → 상한(max_chunks·min_score)으로 제어. speed/token 프리셋은 off. |
+| `context` | 컨텍스트 구성 | `context_trim`, `dedupe_hits`, `context_guard` | `top_k_final`, `context_max_chars`, `context_chunk_chars`, `context_chars_per_token`, `context_budget_reserve_tokens`, `context_min_fit_chars` 외 9 | `top_k_final`, `context_max_chars`, `context_chunk_chars` | 답변 LLM 입력 토큰과 근거 완전성을 결정. |
 | `evidence_check, fallback` | 근거 충분성 · fallback 루프 | `evidence_check`, `evidence_check_llm`, `fallback_loop`, `mcp_sources` | `evidence_min_score`, `evidence_min_channels`, `evidence_min_cover`, `evidence_min_chars`, `fallback_max_attempts`, `fallback_token_budget` 외 3 | `llm_roles.verify` | 근거 부족 답변을 줄임. 불충분할 때만 비용 발생. 무한 루프 방지 예산 필수. |
-| `answer_llm, answer_extractive, evidence_compress` | 답변 생성 | `llm_answer`, `evidence_compress` | `answer_length_target`, `answer_max_tokens`, `answer_repeat_guard`, `answer_repeat_min_chars`, `answer_repeat_times`, `answer_effort` 외 4 | `answer_max_tokens`, `answer_effort`, `llm_roles.answer` | 품질의 최종 출력. LLM 없으면 자동 추출식. 가이드 md 를 편집해 구조/문체 변경. |
+| `answer_llm, answer_extractive, answer_insufficient, evidence_compress` | 답변 생성 | `llm_answer`, `evidence_compress` | `answer_length_target`, `answer_max_tokens`, `answer_repeat_guard`, `answer_repeat_min_chars`, `answer_repeat_times`, `answer_effort` 외 8 | `answer_max_tokens`, `answer_effort`, `llm_roles.answer` | 품질의 최종 출력. LLM 없으면 자동 추출식. 가이드 md 를 편집해 구조/문체 변경. |
 | `claim_check, answer_refine` | 답변 검증 (claim check) | `claim_check`, `claim_check_llm`, `answer_refine` | `claim_support_min`, `claim_policy`, `claim_min_groundedness` | `llm_roles.verify` | hallucination 억제. 휴리스틱은 무료, LLM 판정은 토큰↑. |
-| `forensic, forensic_expect` | 포렌식 (자동 · 기대 결과) | `forensic_auto`, `llm_failure_report` | `memory_half_life_days`, `memory_archive_strength`, `forensic_min_events`, `forensic_near_miss_mult`, `forensic_term_candidates`, `forensic_term_targets` 외 1 | `llm_retries`, `llm_retry_backoff_s` | 실패 원인 추적과 자가진화 데이터 확보. LLM 호출 실패는 llm_report 로 함께 보고. |
-| `evolve_capture` | 자가진화 캡처 | `evolve_capture`, `evolve_auto_apply` | - | `evolve_min_confidence`, `evolve_low_score_threshold` | 제안은 Evolve 탭에서 HITL 승인. 자동 적용은 evolve_auto_apply. |
+| `forensic, forensic_expect` | 포렌식 (자동 · 기대 결과) | `forensic_auto`, `llm_failure_report` | `memory_half_life_days`, `memory_archive_strength`, `forensic_min_events`, `forensic_near_miss_mult`, `forensic_term_candidates`, `forensic_term_targets` 외 3 | `llm_retries`, `llm_retry_backoff_s` | 실패 원인 추적과 자가진화 데이터 확보. LLM 호출 실패는 llm_report 로 함께 보고. |
+| `evolve_capture, episode` | 자가진화 캡처 | `evolve_capture`, `evolve_auto_apply` | - | `evolve_min_confidence`, `evolve_low_score_threshold` | 제안은 Evolve 탭에서 HITL 승인. 자동 적용은 evolve_auto_apply. |
 | `log` | 로그 · 요청 기록 | - | - | `keep_requests` | Requests 탭 / `requests` CLI 의 원천. |
 | `analysis` | 상세 분석 리포트 (analysis_mode) | `analysis_mode` | - | `debug_level`, `keep_requests` | 품질/지연/토큰 디버깅의 출발점. LLM 에게 그대로 넘겨 튜닝을 물을 수 있다. 질의당 수십 ms·requests 행 크기 증가 → 디버깅할 때만 켠다. |
 
@@ -110,16 +113,16 @@ watch   : scan → build_incremental
 
 | trace 이름 | 단계 | 토글 | 튜닝 | 설정 | 영향 |
 |---|---|---|---|---|---|
-| `health` | Health 검사 | `health_check` | - | `build_lock_timeout` | 실패(fail) 항목이 있으면 빌드를 시작하지 않아 중간 실패를 예방. warn 은 alerts 로 보고. |
+| `health` | Health 검사 | `health_check` | - | `build_lock_timeout`, `build_lock_stale_s` | 실패(fail) 항목이 있으면 빌드를 시작하지 않아 중간 실패를 예방. warn 은 alerts 로 보고. |
 | `providers` | 프로바이더 준비 | `llm_graph`, `community_summary` | - | `llm_provider`, `llm_model`, `llm_roles`, `embed_provider`, `embed_model` | 최초 1회 지연(Ollama 탐지 ~0.8s). 프로바이더가 없으면 LLM 단계는 모두 skipped. |
-| `load_corpus` | 코퍼스 로드 | `stat_skip`, `incremental` | - | `corpus_dirs` | 파일 수·PDF 파싱에 비례. stat_skip 으로 변경 없는 빌드는 수십 ms. |
+| `load_corpus, mcp_ingest` | 코퍼스 로드 | `stat_skip`, `incremental` | - | `corpus_dirs` | 파일 수·PDF 파싱에 비례. stat_skip 으로 변경 없는 빌드는 수십 ms. |
 | `diff` | 변경 감지 | `incremental` | - | - | 증분 범위를 결정. incremental 끄면 매번 전체 재처리. |
-| `chunk_index` | 청킹 · FTS 색인 (채널 fts) | `build_fts`, `fts_trigram` | `chunk_max_chars`, `chunk_overlap_chars`, `chunk_min_chars`, `tokenizer`, `wiki_min_degree` | `chunk_max_chars`, `chunk_overlap_chars` | 청크 크기가 검색 정밀도/컨텍스트 토큰/벡터 메모리를 좌우. 값 변경 시 전체 리빌드(세 채널 모두). |
-| `embed` | 벡터 임베딩 (채널 vector) | `embed`, `idf_refit_incremental`, `embed_adaptive` | `embed_dim`, `embed_batch`, `hash_ngram_weight` | `embed_provider`, `embed_model`, `embed_dim`, `embed_batch` | 벡터 채널 recall 의 원천. hash 는 오프라인·비의미적, voyage/st 는 의미 검색. 메모리 = 청크×dim×4B. |
-| `graph_build, rule_extract, llm_extract, degrees, doc_refs, communities` | 그래프 추출 (채널 graph) | `rule_graph`, `llm_graph`, `communities`, `community_summary`, `incremental_communities`, `explicit_relations` | `cooccur_window`, `cooccur_scale`, `cooccur_min_w`, `dates_per_chunk`, `amounts_per_chunk`, `community_iters` 외 3 | `llm_graph_budget`, `llm_graph_min_chars`, `llm_roles.extract`, `llm_roles.summary` | 그래프 채널·위키·엔티티 상세의 원천. 규칙은 무료·결정적, LLM 은 청크당 1회 호출(토큰↑, budget 으로 제한; 실패는 llm_report). |
+| `chunk_index, build_channel, reindex_fts` | 청킹 · FTS 색인 (채널 fts) | `build_fts`, `fts_trigram` | `chunk_max_chars`, `chunk_overlap_chars`, `chunk_min_chars`, `tokenizer`, `wiki_min_degree` | `chunk_max_chars`, `chunk_overlap_chars` | 청크 크기가 검색 정밀도/컨텍스트 토큰/벡터 메모리를 좌우. 값 변경 시 전체 리빌드(세 채널 모두). |
+| `embed, doc_vectors` | 벡터 임베딩 (채널 vector) | `embed`, `idf_refit_incremental`, `embed_adaptive` | `embed_dim`, `embed_batch`, `hash_ngram_weight` | `embed_provider`, `embed_model`, `embed_dim`, `embed_batch` | 벡터 채널 recall 의 원천. hash 는 오프라인·비의미적, voyage/st 는 의미 검색. 메모리 = 청크×dim×4B. |
+| `graph_build, rule_extract, llm_extract, degrees, doc_refs, communities, community_summary` | 그래프 추출 (채널 graph) | `rule_graph`, `llm_graph`, `communities`, `community_summary`, `incremental_communities`, `explicit_relations` | `cooccur_window`, `cooccur_scale`, `cooccur_min_w`, `dates_per_chunk`, `amounts_per_chunk`, `community_iters` 외 3 | `llm_graph_budget`, `llm_graph_min_chars`, `llm_roles.extract`, `llm_roles.summary` | 그래프 채널·위키·엔티티 상세의 원천. 규칙은 무료·결정적, LLM 은 청크당 1회 호출(토큰↑, budget 으로 제한; 실패는 llm_report). |
 | `wiki_pages` | 위키 페이지 | `wiki_pages`, `wiki_full_rewrite` | - | `wiki_dir` | 사람이 편집한 `## 편집 노트` 가 다음 빌드에 overlay 문서로 재색인됨(HITL 진화 경로). |
-| `prune` | 정리 · 유지보수 | `fts_optimize` | - | - | 검색 속도 유지·DB 비대 방지. |
-| `warm_cache` | 캐시 예열 | `warm_cache` | - | - | 빌드 직후 첫 질의 지연 제거(3만 청크면 수 초). |
+| `prune, verify` | 정리 · 유지보수 | `fts_optimize` | - | - | 검색 속도 유지·DB 비대 방지. |
+| `warm_cache, precompute` | 캐시 예열 | `warm_cache` | - | - | 빌드 직후 첫 질의 지연 제거(3만 청크면 수 초). |
 
 ## 6. evolve — Self-Evolving (제안 → 적용 → 검증)
 
@@ -131,7 +134,7 @@ watch   : scan → build_incremental
 | `hitl` | 검토 (HITL) | `evolve_auto_apply` | - | `evolve_min_confidence` | 안전장치: 기본은 수동 승인. |
 | `snapshot` | 스냅샷 | - | - | - | 롤백 가능성 확보. |
 | `build` | 적용 · 재색인 | - | - | - | 빌드 흐름을 재사용 (변경 문서만). |
-| `eval` | 회귀 평가 · 승격/롤백 | - | - | - | 품질 저하 자동 차단. |
+| `eval, run` | 회귀 평가 · 승격/롤백 | - | - | - | 품질 저하 자동 차단. |
 | `evolution_log` | 이력 | - | - | - | 감사 추적. |
 
 ## 7. watch — Auto Build (워처)
@@ -170,4 +173,4 @@ python -m llmwiki trial compare before after        :: hit@k · MRR · term reca
 
 
 ---
-생성: `python -m llmwiki arch doc` · 2026-09-16 06:29
+생성: `python -m llmwiki arch doc` · 2026-09-19 13:24

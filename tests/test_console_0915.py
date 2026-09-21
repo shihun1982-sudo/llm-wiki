@@ -67,9 +67,15 @@ class ConsoleEncodingTest(unittest.TestCase):
         self.assertEqual(code2, 0, err2[-300:])
 
     def test_health_reports_console(self):
+        """좁은 콘솔 인코딩에서 health 가 **완주**하고 console_encoding 행을 낸다.
+        exit 0 을 요구하지 않는다: 이 PC 의 config.json 이 headless 에이전트(opencode 등)를 가리키는데 그 실행 파일이 PATH 에 없으면
+        health 는 정당하게 FAIL(exit 1) 이다 — 테스트 목적은 인코딩 회귀이므로 '요약 줄 존재 + Traceback 없음' 으로 판정한다."""
         code, out, err = _run(["health", "--quick"], {"PYTHONIOENCODING": "ascii"})
-        self.assertEqual(code, 0, err[-300:])
-        self.assertIn("console_encoding", out.decode("utf-8"))
+        text = out.decode("utf-8")
+        self.assertIn(code, (0, 1), err[-300:])
+        self.assertRegex(text, r"(?m)^health: ")
+        self.assertNotIn(b"Traceback", out + err)
+        self.assertIn("console_encoding", text)
 
     def test_project_text_files_are_utf8(self):
         """포팅 환경에서 깨지지 않도록 저장소의 텍스트 파일은 UTF-8 이어야 한다 (.ps1 은 Windows PowerShell 5.1 을 위해 BOM 필요)."""

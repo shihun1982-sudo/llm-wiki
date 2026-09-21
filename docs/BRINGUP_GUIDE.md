@@ -1,29 +1,39 @@
-# Bring-up Guide — 새 환경으로 포팅하기
+﻿# Bring-up Guide — 새 환경으로 포팅하기
 
 > 대상: 이 시스템(LLM Wiki v3)을 다른 PC/서버/조직 환경에 옮겨 세우는 엔지니어. 설치 → 설정 파일 채우기 → 프로바이더 연결 → 코퍼스 계약 적용 → 첫 빌드 → 검증 → 스케줄 등록 → 운영까지 순서대로 따라 하면 된다.
-> CLI 명령의 단계별 동작과 실제 출력 예는 [CLI_FLOWS.md](CLI_FLOWS.md), 전체 구조는 [ARCHITECTURE_V3.md](ARCHITECTURE_V3.md), 문서 형식은 [CORPUS_CONTRACT.md](CORPUS_CONTRACT.md), 인터랙티브 가이드는 `docs/llmwiki_guide.html` 을 브라우저로 여세요.
-> 2026-09-14 추가(다중 사용자 권한 표·MCP 원격/다수 LLM·채널별 빌드·문서 단위 확장·LLM 재시도/실패 보고·기대 결과 포렌식)의 설계와 근거는 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md), 운영 상세는 [SECURITY.md](SECURITY.md) · [MCP.md](MCP.md) · [FORENSIC.md](FORENSIC.md). 이 가이드의 §0 체크리스트 10~14, **§3.2 설정 위치 총람**, §4.3~4.6, §6.1, §7.1, §9, §10 에 반영되어 있다. 2026-09-15 전 기능 검증 결과와 재실행 방법은 [VERIFICATION_0915.md](VERIFICATION_0915.md). **다른 RAG·검색 API·MCP 서버를 붙이고 외부 LLM 에 한 곳으로 내주는 방법**은 [RAG_FEDERATION.md](RAG_FEDERATION.md)(§4.6 요약), **품질·속도·토큰 디버깅용 상세 분석 모드**는 [ANALYSIS_MODE.md](ANALYSIS_MODE.md)(§9 운영 표).
+> CLI 명령의 단계별 동작과 실제 출력 예는 [CLI_FLOWS.md](CLI_FLOWS.md), 전체 구조는 [ARCHITECTURE_V3.md](history/2026-09-15/ARCHITECTURE_V3.md), 문서 형식은 [CORPUS_CONTRACT.md](CORPUS_CONTRACT.md), 인터랙티브 가이드는 `docs/llmwiki_guide.html` 을 브라우저로 여세요.
+> 2026-09-14 추가(다중 사용자 권한 표·MCP 원격/다수 LLM·채널별 빌드·문서 단위 확장·LLM 재시도/실패 보고·기대 결과 포렌식)의 설계와 근거는 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md), 운영 상세는 [SECURITY.md](SECURITY.md) · [MCP.md](MCP.md) · [FORENSIC.md](FORENSIC.md). 이 가이드의 §0 체크리스트 10~14, **§3.2 설정 위치 총람**, §4.3~4.6, §6.1, §7.1, §9, §10 에 반영되어 있다. 2026-09-15 전 기능 검증 결과와 재실행 방법은 [VERIFICATION_0915.md](history/2026-09-15/VERIFICATION_0915.md). **다른 RAG·검색 API·MCP 서버를 붙이고 외부 LLM 에 한 곳으로 내주는 방법**은 [RAG_FEDERATION.md](RAG_FEDERATION.md)(§4.6 요약), **품질·속도·토큰 디버깅용 상세 분석 모드**는 [ANALYSIS_MODE.md](ANALYSIS_MODE.md)(§9 운영 표).
+
+> 문서가 <!--live:docs-->43개다. **어느 문서를 지금의 사실로 믿어야 하는지**(현행 ↔ 기록)와 증상별 읽을 것은
+> [DOC_MAP.md](DOC_MAP.md) 에 있다. 이 문서는 그중 **올리는 절차**를 맡는다.
 
 ## 0. 체크리스트 (요약)
 
 | 단계 | 명령/파일 | 확인 |
 |---|---|---|
 | 1 | Python 3.9+ (권장 3.11+), `pip install -r requirements.txt` (+ optional) | `python setup/check_env.py` |
-| 2 | 폴더 복사 (`data/ wiki/ logs/` 제외 가능) | 상대 경로 설정이라 그대로 동작 |
-| 3 | `config.json` (`setup/config.example.json` 복사) — `corpus_dirs`, 모델 | `python -m llmwiki config show --effective` |
-| 4 | `.env` (`setup/.env.example` 복사) — API 키/PAT. 게이트웨이·opencode 는 §4.1~4.3, 예시 `setup/config.example.pat-gateway.json` · `config.example.headless.json` | `python -m llmwiki models test --live` |
+| 2 | 폴더 복사 (`data/ wiki/ logs/` 제외 가능) — **환경에 묶인 것(LLM 주소·헤더·MCP·SSO·경로)이 어디에 있는지는 [PORTING.md](PORTING.md) §1 지도.** 설정을 한 폴더로 모아 들고 가려면 `config bundle --out conf` + `LLMWIKI_CONF_DIR=conf` | 상대 경로 설정이라 그대로 동작 · `config paths` 로 실제로 읽는 경로 확인 |
+| 3 | `config.json` (`setup/config.example.json` 복사) — `corpus_dirs`, 모델. 키의 뜻은 [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md), 빠진 키는 `config fill-defaults --all` 로 기본값째 채운다 | `python -m llmwiki config show --effective` |
+| 4 | `.env` (`setup/.env.example` 복사) — API 키/PAT. **바꾸는 키만 추린 샘플 5종(게이트웨이+PAT · Anthropic 호환 · 로컬 Ollama · opencode 전부 · 역할별 혼합)은 [LLM_CONNECT.md](LLM_CONNECT.md) §1**, 전체 키가 든 원본은 `setup/config.example.pat-gateway.json` · `config.example.headless.json`, 에이전트 실행 세부는 §4.1~4.3 | `python -m llmwiki models test --live` · 전환이 config.json 만으로 되는지는 `python tools/verify/verify_llm_switch.py` |
 | 5 | 문서 계약: `schemas/`, 기존 문서에 front matter 추가 또는 `schemas/infer.json` 규칙 | `python -m llmwiki corpus lint` |
-| 6 | 어휘/규칙: `query_rules.json`, `data/rules.json`(id_patterns, link_rules), `prompts/answer_guide.md` | `rules test "…"` |
+| 6 | 어휘/규칙: `query_rules.json`(질의 확장 — [QUERY_RULES.md](QUERY_RULES.md)), `data/rules.json`(그래프 빌드 — 엔티티 사전·id_patterns·link_rules·`schema` 어휘. 절마다 무엇을 정하는지는 [GRAPH_RULES.md](GRAPH_RULES.md)), `prompts/answer_guide.md` | `rules test "…"` · **`graph-rules lint`**(빌드 전 정적 점검, 오류면 종료 코드 1) · `graph-rules test "<우리 문장>"`(무엇이 노드·관계가 되는지 바로 확인) |
 | 7 | `python -m llmwiki health` → `build --full --trace` → `build verify` | alerts 0, coverage 100% |
 | 8 | 평가셋 `eval/questions.json` 교체 → `eval` → `trial run --name baseline` | hit@k, groundedness 기준선 기록 |
 | 9 | 스케줄 등록 `setup/schedule_build.ps1 -Register` (또는 cron) | `build status`, `logs tail --file build` |
 | 10 | `security.json` 확인(기본 admin `kh82.kim` 비밀번호 변경) → `users add <id> --role <viewer|class3|class2|class1|builder|admin>` → `security perms`(권한 표) → `serve --host 0.0.0.0` — §4.4 | 게스트로 질의 가능, viewer 로 리빌드가 로그인 안내/403, builder 는 채널 리빌드 문구 모달, `security audit` |
+| 10.1 | (등급이 다른 문서가 섞여 있으면) **문서 단위 접근 제어** — `setup/docacl.example.json` → `docacl.json` 에 경로 규칙, 문서 front matter 에 `acl:` — §4.4.1, [SECURITY.md §6.2](SECURITY.md) | `security docacl check --role viewer` 의 "가려짐" 건수가 의도와 같고, viewer 로 로그인해 그 문서 내용을 물으면 근거에 없다(trace 의 `doc_acl` 단계) |
 | 11 | 외부 LLM 연결: `apikey add <이름> --role viewer` → 클라이언트에 `{"type":"http","url":"http://host:8765/mcp","headers":{"Authorization":"Bearer lwk_…"}}` (같은 PC 는 stdio) — §4.5, [MCP.md](MCP.md) | **`python -m llmwiki mcp --doctor`**(도구·스키마·플러그인·외부 소스·페더레이션·인증 자가 점검) 이 "정상", 그리고 `curl …/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` |
 | 12 | 채널별 빌드·문서 단위 확장·LLM 재시도·기대 결과 포렌식 확인 — §6.1, §7.1, §4.3, §9 | `build fts|vector|graph`, `query … --trace` 의 `doc_expand` 단계, `forensic expect last --doc …` |
 | 2.5 | **이미 빌드해 둔 색인이 있으면** 다시 빌드하지 말고 가져다 쓴다 — `data/llmwiki.sqlite3` + `data/rules.json` + `corpus/` 를 **타임스탬프 보존해서** 복사 — 색인 파일만이면 §2.2, **코퍼스와 색인을 통째로**면 §2.3 (복사 명령 · 받는 쪽에서 바꿀 것 표) | `health`(embedding_dim 일치·corpus_dirs 존재·channels_populated) → `build verify` → `build` 가 `changed=0` |
-| 13 | 전 기능 재검증 — `tools/verify/` 스크립트 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §6, 남은 항목은 [HANDOVER_0916.md](HANDOVER_0916.md) §2.4) | `verify_cli.py`, `verify_web.py` 전부 OK, `verify_ui_wiring.py` OK, `verify_browser.py` OK, `verify_mcp.py --quick` OK, **`verify_security_ui.py` OK**(보안·사용자 화면을 인증 꺼짐/admin/admin 아님 세 상태로 눌러 본다 — 증상별 원인은 [SECURITY.md §8.1](SECURITY.md)) |
+| 12.5 | **품질·보안 사각지대 확인** — [QA_HARDENING_0919.md §5](history/2026-09-19/QA_HARDENING_0919.md) 의 TC 표(창구 정합 5 · RAG 품질 8 · 동시성 5 · 보안 8)를 자기 코퍼스로 한 번 훑는다 | 각 TC 의 "기대" 열대로. 특히 TC-2.1(모델 창 초과), TC-3.2(`db_pool.live`=0), TC-4.2(viewer 가 못 보는 문서가 근거에 없고 admin 은 찾는다) |
+| 13 | 전 기능 재검증 — **`python tools/verify/verify_all.py`** 한 줄 ([TESTING_GUIDE.md](TESTING_GUIDE.md) 의 변경 영역 → 테스트 표, 최근 결과 [VERIFICATION_0918.md](history/2026-09-19/VERIFICATION_0918.md)) | 단위·정렬(`verify_surface_align.py`)·문서 정합(`verify_docs.py`)·**설정 양방향(`verify_settings_sync.py`)**·CLI·Web·MCP·UI 배선·브라우저·버튼·보안 화면 모두 OK. 증상별 원인은 [SECURITY.md §8.1](SECURITY.md), [TESTING_GUIDE.md §4](TESTING_GUIDE.md) |
+| 16 | 버전 확인과 업그레이드 — `python -m llmwiki --version` 이 [RELEASE_NOTES.md](RELEASE_NOTES.md) 맨 위 절과 같은지, 기존 환경이면 그 절의 "운영자가 할 일"(`config fill-defaults --all` 로 새 키를 파일에 명시) | `/api/status` 의 `version`, `config fill-defaults --dry-run` 에 추가될 키 0개 |
 | 15 | 품질/속도/토큰 디버깅 준비 — `query "대표 질의" --analyze` 로 `logs/analysis/req_<id>.md` 가 생기는지, 렌즈 소견에 조절점이 붙는지 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md), 그 자료를 LLM 에게 통째로 줄 때는 `optimize last --out bundle.md` — §7.0, [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) | `analyze last --print` 에 §0~§9, `optimize last` 가 A~D 절을 만든다 |
 | 14 | (선택) 다른 RAG / 검색 API / MCP 서버 연결 — `mcp_sources.json`(`setup/mcp_sources.example.json`), 토글 `external_rag`·`mcp_federation` — §4.6, [RAG_FEDERATION.md](RAG_FEDERATION.md) | `mcp-source test <src>`, `mcp-source retrieve "…"`, `query … --external-rag --trace` 에 `external_rag` 단계, `/mcp tools/list` 에 `<src>__<tool>` |
+
+> **코드를 고치러 온 사람에게**: 이 가이드는 "어떻게 올리나" 를 다룬다. "무엇이 어디에 있고 왜 그런가" 는
+> [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) 한 편에 있다 — 설계 제약과 채택하지 않은 것들, 모듈 지도,
+> 질의 27단계 상세, 설정 4층, 동시성·보안, 확장 지점, 정합 불변식.
 
 ## 1. 환경
 
@@ -68,6 +78,12 @@ bash setup/install.sh && pip install -r setup/requirements-optional.txt
 :: 옮기기 전, 이 환경에서 자리를 줄이고 싶을 때
 python -m llmwiki snapshot list
 python -m llmwiki snapshot prune --keep 1          :: 자동 백업 정리 (보통 여기서 가장 많이 줄어든다)
+
+:: 옮기기 전에 앞 환경의 흔적을 턴다 — 먼저 미리보기(무엇이 얼마나 지워지는지)를 본다
+python -m llmwiki reset logs                       :: 미리보기 · 실제로 지우려면 --apply
+python -m llmwiki reset logs --apply               :: logs/ · 질의 로그 · 요청 프로파일 · data/{requests,reruns,sweeps,graph_profiles}
+python -m llmwiki reset data --apply               :: 코퍼스가 바뀐다면 색인도 (corpus/ 원본과 설정은 그대로, 스냅샷 자동)
+:: 범위·옵션·지우지 않는 것의 전체 표는 docs/RESET.md
 
 :: 색인만 버리고 새 환경에서 다시 빌드 (rules.json·profiles.json 은 살린다)
 robocopy . ..\llmwiki-port /E /XD data logs wiki .git __pycache__
@@ -232,9 +248,10 @@ python -m llmwiki build                  :: changed=0 removed=0 이면 복사가
 | `config.json` | 코퍼스 경로, 프로바이더/역할별 모델, 토글, 운영 수치(배치·WAL·로그·timezone), **LLM 재시도**(`llm_timeout`·`llm_retries`·`llm_retry_backoff_s`), **서버/MCP 기본값**(`web_host`·`web_port`·`mcp_transport`·`mcp_host`·`mcp_port`·`mcp_url`) — 원본 `setup/config.example.json` | 새 환경 필수 | 즉시(서버 reload); 서버/MCP 키는 다음 기동 |
 | `.env` | API 키/PAT(`OPENAI_API_KEY`·`LLM_API_KEY`, `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`, `VOYAGE_API_KEY`, `RERANK_API_KEY`, MCP 토큰) + **모든 설정의 env 오버라이드** `LLMWIKI_<KEY>` / `LLMWIKI_TOGGLE_<NAME>` / `LLMWIKI_<ROLE>_MODEL` | 키 발급 후 | 프로세스 시작 |
 | `security.json` | 로그인 방식(로컬 ID/비밀번호 · SSO · API 키), **역할 6단계 · 권한 표(permissions) · 익명 접속(anonymous_role) · CLI 게이트(cli)**, 파괴적 작업 정책 — [SECURITY.md](SECURITY.md). 원본 `setup/security.example.json`(users 비어 있음 + 각 키 설명 `_how`) | 서버 공개 전 | 즉시(서버 reload) |
+| `docacl.json` | **문서 단위 접근 제어** — 어떤 역할이 어떤 문서를 **근거로** 볼 수 있나. 경로 규칙(`rules[].prefix`/`min_role`) + 규칙에 없는 문서의 기본 등급(`default_min_role`) + 사용 여부(`enabled`)·거부 문구(`deny_message`). 문서 front matter 의 `acl:` 과 함께 **높은 쪽**이 적용된다 — [SECURITY.md §6.2](SECURITY.md). 원본 `setup/docacl.example.json`. 파일이 없거나 규칙이 비면 **아무도 막지 않는다**(기본) | 등급이 다른 문서가 섞일 때 | 즉시(mtime) |
 | `tuning.json` | 알고리즘 상수(FTS·라우터·그래프·융합·근거 판정·claim·메모리…) 오버라이드만. 문서 단위 확장 `doc_expand_*`, 기대 결과 포렌식 `forensic_near_miss_mult`·`forensic_term_candidates`·`forensic_term_targets`·`forensic_pin_confidence` 포함 — [TUNING.md](TUNING.md) | 품질 튜닝 | 즉시 |
 | `presets.json` | quality / speed / token / offline / deep_research 묶음 | 조직 정책 | `--preset`, `preset apply` |
-| `query_rules.json` | acronym / synonym / alias / related / exclude / compound 사전 | 도메인 용어 | 즉시 |
+| `query_rules.json` | 질의 확장 사전 — 유형 **9개**: acronym / synonym / alias / related / exclude / compound + **context**(문맥마다 뜻이 갈리는 약어) / **hypernym**(상위어 ⊃ 하위어) / **unit**(`4KB` ⇄ `4096 byte`). 유형 표는 `rules types`, 점검은 `rules lint`, 효과는 `rules effect` — [QUERY_RULES.md](QUERY_RULES.md). 원본 `setup/query_rules.example.json`(절마다 `_how_*` 설명) | 도메인 용어 | 즉시 |
 | `data/rules.json` | 그래프 엔티티 사전, 관계 정규식, **ID 패턴(id_patterns)**, **결정적 링크 규칙(link_rules)**, front matter 관계 매핑 | 문서 ID 체계 | 재빌드 |
 | `schemas/*.json` | 문서 유형별 스키마 + 추론 규칙 + 마이그레이션 | 새 문서 유형 | lint/빌드 |
 | `prompts/*.md` | 역할별 LLM 프롬프트/답변 가이드 | 답변 스타일 | 즉시(mtime) |
@@ -261,6 +278,11 @@ python -m llmwiki build                  :: changed=0 removed=0 이면 복사가
 - `llm_provider`: `auto`(Anthropic 키 → Ollama(모델이 받아져 있을 때) → none) | `anthropic` | `openai` | `ollama` | `headless:<agent>` | `mock` | `none`.
 - `embed_provider`: `auto`(Voyage 키 → Ollama bge-m3/nomic → hash) | `hash` | `voyage` | `openai` | `ollama` | `st`. 임베더/차원/dtype 을 바꾸면 `build --full`. 내용 해시 캐시(`embedding_cache`) 덕분에 같은 모델·차원으로 되돌리면 재임베딩이 없다.
 
+> **키 하나하나의 뜻·기본값·범위·리빌드 필요 여부는 [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) 에 전부 있다**
+> (`python -m llmwiki config doc` 이 코드에서 생성한다 — 파일 18종 · config 키 103개 · 토글 66개 · 튜닝 141개).
+> 이 절(§3.2)은 **기능별로 어디를 보면 되는지** 의 색인이고, 그 문서는 **키별 사전**이다. 값을 바꾼 뒤 무엇을 해야 하는지는
+> [CONFIG_REFERENCE.md §6](CONFIG_REFERENCE.md), 자주 하는 변경은 §7 에 있다.
+
 ### 3.2 2026-09-14/15 기능의 설정 위치 총람 (코드 수정 없이 파일만으로 이식)
 
 각 기능의 값은 아래 파일·키에 있고, 원본 예시는 `setup/` 에 있다. 새 환경에서는 예시를 복사해 값을 채우고(§0 체크리스트 3·4·10·11), `python setup/check_env.py` 가 security/agents/서버/재시도 설정을 한 줄씩 보고한다. 우선순위는 항상 **CLI 플래그 > 환경변수(`LLMWIKI_<KEY>`) > 파일 > 코드 기본값**.
@@ -268,8 +290,9 @@ python -m llmwiki build                  :: changed=0 removed=0 이면 복사가
 | 기능 | 파일 | 키 (기본값) | 원본 예시 | 확인 명령 |
 |---|---|---|---|---|
 | 다중 사용자 권한 | `security.json` | `mode`(auto) · `anonymous_role`(viewer) · `permissions.levels`(read=viewer, run=class3, edit=class2, index=class1, rebuild=builder, admin/destructive=admin) · `permissions.ops`({}) · `cli.default_role`(admin) · `cli.require_login`(false) · `users` · `api_keys` · `sso` · `destructive` | `setup/security.example.json` | `security show`, `security perms`, `users list`, `apikey list` |
+| 문서 단위 접근 제어 | `docacl.json` + `config.json toggles` + 문서 front matter | `enabled`(true) · `default_min_role`(viewer = 모두 공개) · `rules[]`(`prefix`/`min_role`/`note`, 기본 빈 목록 = 아무도 막지 않음) · `deny_message`; 토글 `doc_acl`(on); 문서 쪽은 `acl: class1` 또는 `acl: [class1, admin]` — [SECURITY.md §6.2](SECURITY.md) | `setup/docacl.example.json` | `security docacl show`, `security docacl check --role viewer`, Web Settings › 보안 › 문서 접근 제어 |
 | CLI 실행자 로그인 | `.env` | `LLMWIKI_USER`/`LLMWIKI_PASSWORD` 또는 `LLMWIKI_API_KEY` (전역 `--user` 가 우선) | `setup/.env.example` §D | `--user <id> stats` |
-| MCP 서버(같은 PC/원격/다수) | `config.json` | `web_host`(127.0.0.1) · `web_port`(8765) — `serve` 기본값; `mcp_transport`(stdio) · `mcp_host`(127.0.0.1) · `mcp_port`(8766) — `mcp` 기본값 | `setup/config.example.json` | `serve`, `mcp --transport http`, `curl …/mcp` |
+| MCP 서버(같은 PC/원격/다수) | `config.json` | `web_host`(**0.0.0.0** — 2026-09-18 부터 외부 바인드 기본, 이 PC 전용이면 127.0.0.1; 전제 보호는 [SECURITY.md §6.1](SECURITY.md)) · `web_port`(8765) — `serve` 기본값; `mcp_transport`(stdio) · `mcp_host`(127.0.0.1) · `mcp_port`(8766) — `mcp` 기본값 | `setup/config.example.json` | `serve`, `mcp --transport http`, `curl …/mcp` |
 | MCP 브리지(stdio 클라이언트 → 원격) | `config.json` + `.env` | `mcp_url`("") 또는 `LLMWIKI_MCP_URL`; 토큰 `LLMWIKI_MCP_TOKEN` (플래그 `--connect/--token` 우선) | `.env.example` §D | `mcp --client-config` 의 `bridge_json` |
 | MCP 클라이언트 설정 | 클라이언트 파일 | `mcpServers.llmwiki.{command,args,cwd}` (stdio) / `{type:http,url,headers.Authorization}` (HTTP) | `setup/mcp_clients.example.json`, `mcp --client-config [--url] [--token]` | 클라이언트에서 `tools/list` |
 | 채널별 빌드 | `config.json toggles` | `build_fts`(on) · `embed`(on) · `rule_graph`(on) · `llm_graph`(off) · `communities`(on) · `wiki_pages`(on) | `config.example.json` | `build fts|vector|graph`, `build verify` |
@@ -284,8 +307,9 @@ python -m llmwiki build                  :: changed=0 removed=0 이면 복사가
 | 도구 페더레이션(외부 LLM 에 한 곳으로) | `mcp_sources.json` + `config.json toggles` | 소스 `expose`(true/목록); 토글 `mcp_federation`(off) | 같은 예시 | `mcp-source federated`, `/mcp tools/list` 의 `<source>__<tool>` |
 | MCP 플러그인 도구 | `config.json` + `plugins/mcp_tools/*.py` | `mcp_plugins_dir`(plugins/mcp_tools) | `plugins/mcp_tools/_example_echo.py` | `mcp-source federated` 의 plugins |
 | 상세 분석 모드 | `config.json toggles` | `analysis_mode`(off); 관련 `debug_level`(1) · `keep_requests`(2000) · 리포트 위치 `LLMWIKI_LOGS_DIR_PATH/analysis` | — | `query "…" --analyze`, `analyze last --print` — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) |
-| 검증 하네스 | `tools/verify/*.py` 상단 `PORT` | 8792(web) · 8793(browser) · 8794(monkey); 브라우저 실행 파일 `LLMWIKI_BROWSER` | [tools/verify/README.md](../tools/verify/README.md) | [VERIFICATION_0915.md](VERIFICATION_0915.md) §6 |
-| **동시 사용자 제어 (30명)** | `server.json` | `concurrency.max_parallel_reads`(8) · `max_parallel_per_user`(3) · `max_parallel_per_ip`(6) · `max_parallel_batch`(1 — 평가·trial 등 배치 작업 동시 실행 수) · `max_body_mb`(8) · `keep_alive_s`(30 — 0 이면 HTTP/1.0, 화면 갱신이 밀린다) · `queue_max`(64) · `queue_timeout_s`(120) · `reads_during_build`(incremental) · `write_wait_timeout_s`(600) · `read_wait_timeout_s`(900); `timeouts.query_s`(900) · `search_s`(120) · `mcp_s`(900) · `job_s`(0=무제한) · `cli_s`(600); `rate_limit.enabled`(true) · `per_user_per_min`(60) · `per_ip_per_min`(120) · `query_per_user_per_min`(20) · `exempt_roles`([admin]); `sessions.enforce`(false) · `max_per_user`(5) · `idle_timeout_min`(720); `access.block_ips`([]) · `block_users`([]) · `allow_ips`([]) · `maintenance_mode`(false) · `maintenance_message` · `maintenance_allow_roles`([admin]); `monitor.history_size`(500) · `viewer_can_see_activity`(true) · `show_user_to_viewer`(true) · `slow_request_ms`(30000) · `stats_window_min`(15) · `live_dir`(data/live) · `live_stale_s`(90) | `setup/server.example.json` | `server stats`, `server activity`, `server limits`, Web 관리 › 서버 모니터 — [CONCURRENCY.md](CONCURRENCY.md) |
+| 검증 하네스 | `tools/verify/*.py` 상단 `PORT` 또는 `--port` | 8792(web) · 8793(browser) · 8794(monkey) · 8795(responsive) · 8934(settings_sync); 브라우저 실행 파일 `LLMWIKI_BROWSER` | [tools/verify/README.md](../tools/verify/README.md) | `python tools/verify/verify_all.py` → [VERIFICATION_0918.md](history/2026-09-19/VERIFICATION_0918.md) · 변경 영역별 [TESTING_GUIDE.md](TESTING_GUIDE.md) |
+| **Pipeline 화면 배치** (2026-09-18) | `data/profiles.json` (계정별) | `sidebar_toggles`(compact — 사이드바 토글을 요약 한 줄로, `full` 이면 예전 배치) · `sidebar_collapsed`({}) | — | 사이드바 제목 줄의 `전체 보기 / 간단히`, 헤더 `💾 내 설정 저장` — [PIPELINE_PAGE.md](PIPELINE_PAGE.md) |
+| **동시 사용자 제어 (30명)** | `server.json` | `concurrency.max_parallel_reads`(8) · `max_parallel_per_user`(3) · `max_parallel_per_ip`(6) · `max_parallel_batch`(1 — 평가·trial 등 배치 작업 동시 실행 수) · `max_body_mb`(8) · `keep_alive_s`(30 — 0 이면 HTTP/1.0, 화면 갱신이 밀린다) · `queue_max`(64) · `queue_timeout_s`(120) · `reads_during_build`(incremental) · `write_wait_timeout_s`(172800 = 48시간, 빌드가 시작을 기다리는 시간) · `read_wait_timeout_s`(900 — 질의의 수명이라 일부러 짧다); `timeouts.query_s`(900) · `search_s`(120) · `mcp_s`(900) · `job_s`(172800 = 48시간, 빌드·평가 상한. 0=무제한) · `cli_s`(600); `rate_limit.enabled`(true) · `per_user_per_min`(60) · `per_ip_per_min`(120) · `query_per_user_per_min`(20) · `exempt_roles`([admin]); `sessions.enforce`(false) · `max_per_user`(5) · `idle_timeout_min`(720); `access.block_ips`([]) · `block_users`([]) · `allow_ips`([]) · `maintenance_mode`(false) · `maintenance_message` · `maintenance_allow_roles`([admin]); `monitor.history_size`(500) · `viewer_can_see_activity`(true) · `show_user_to_viewer`(true) · `slow_request_ms`(30000) · `stats_window_min`(15) · `live_dir`(data/live) · `live_stale_s`(90) | `setup/server.example.json` | `server stats`, `server activity`, `server limits`, Web 관리 › 서버 모니터 — [CONCURRENCY.md](CONCURRENCY.md) |
 | **역할별 LLM 정책** | `config.json llm_roles.<role>` | 역할마다 `timeout_s` · `retries` · `backoff`(exponential) · `backoff_s`(2.0) · `backoff_max_s`(60.0) · `budget_s`(0=무제한) · `circuit_failures`(3) · `circuit_cooldown_s`(60) · `max_tokens`. **기본 배포값**(config.example.json): 보조 단계는 빨리 포기 — expand 30s/1회·rerank 60s/1회·verify 90s/1회, 사용자가 기다리는 answer 240s/2회, 빌드·배치는 길게 — extract 120s/2회·summary 90s/2회·review 300s/2회·forensic 120s/1회. `budget_s` 는 재시도까지 합친 상한. 지정하지 않으면 전역값을 쓴다: `llm_timeout`(600) · `llm_retries`(3) · `llm_retry_backoff`(exponential) · `llm_retry_backoff_s`(2.0) · `llm_retry_backoff_max_s`(60.0) · `llm_budget_s`(0) · `llm_http_retries`(2) · `llm_circuit_failures`(3) · `llm_circuit_cooldown_s`(60) | `setup/config.example.json` | `models policy`, `server circuits`, 답변 상단 `⚠ LLM 실행 보고` — [CONCURRENCY.md](CONCURRENCY.md) §7 |
 | **스케줄러** | `schedule.json` | `tick_s`(5) · `timezone`(config 따름) · `tasks[]`(`name` · `enabled` · `when`{`every`/`at`+`days`/`cron`} · `action`{`type` 19종 · 유형별 인자} · `on_error`(log) · `max_runtime_s` · `catch_up`(false)). 저장하면 서버가 자동으로 다시 읽는다 | `setup/schedule.example.json` | `schedule list`, `schedule validate`, `schedule run <name>`, `schedule history`, Web 설정 › 스케줄 — [SCHEDULER.md](SCHEDULER.md) |
 | **쓸 수 있는 LLM 목록** | `models.json` | `models[]`(`id` · `provider` · `label` · `roles`[] · `tags`[] · `context_k` · `enabled` · `notes`). Web 설정의 역할별 드롭다운과 `models list` 의 목록이 된다. 카탈로그에 없는 모델을 설정해도 동작은 하며 "카탈로그에 없음"으로 표시된다 | `setup/models.example.json` | `models list`, `models discover`, `models catalog add/remove` |
@@ -298,8 +322,20 @@ python -m llmwiki build                  :: changed=0 removed=0 이면 복사가
 | **반복 억제 (LLM 고장 예방)** | `config.json` | `llm_frequency_penalty`(0.3) · `llm_presence_penalty`(0) — OpenAI 호환; `llm_repeat_penalty`(1.1) — Ollama 네이티브. 역할별로도 `llm_roles.<role>.frequency_penalty` 등으로 지정 | `setup/config.example.json` | 답변에 같은 구절이 반복되면 올린다 |
 | **파일·폴더 위치** | `config.json` + `LLMWIKI_<NAME>_PATH` | `data_dir`(data) · `wiki_dir`(wiki) · `db_name`(llmwiki.sqlite3) · `corpus_dirs`. 설정 파일 18종은 `LLMWIKI_CONFIG`·`LLMWIKI_TUNING_PATH` 처럼 경로를 통째로 옮길 수 있다 | `setup/config.example.json` | `config paths` 가 지금 쓰는 18개 경로를 모두 출력 |
 | **로그** | `config.json` | `log_level`(INFO — DEBUG 로 올리면 단계별 상세) · `log_max_mb`(10) · `log_backups`(10) · `log_console`(false) | `setup/config.example.json` | `logs files`, Web 관리 › 서버 모니터의 로그 레벨 |
-| **빌드 운영 수치** | `config.json` | `auto_build_interval`(30초) · `build_lock_timeout`(600) · `embed_batch`/`embed_batch_max`/`embed_batch_target_ms`(적응형 배치) · `embed_commit_every` · `wal_checkpoint_mb` · `query_cache_size` | `setup/config.example.json` | `build status`, `system` |
-| **자가진화 임계** | `config.json` | `evolve_min_confidence`(0.7 — 이 이상만 자동 적용 후보) · `evolve_low_score_threshold` | `setup/config.example.json` | `evolve status` |
+| **빌드 운영 수치** | `config.json` | `auto_build_interval`(30초) · `build_lock_timeout`(172800 = 48시간, 앞 빌드를 기다리는 시간. 0=즉시 실패) · `build_lock_stale_s`(172800 = 48시간, 빌드 1회의 최대 수명) · `embed_batch`/`embed_batch_max`/`embed_batch_target_ms`(적응형 배치) · `embed_commit_every` · `wal_checkpoint_mb` · `query_cache_size` | `setup/config.example.json` | `build status`, `system` |
+| **빌드 시간 제한 (기본 48시간)** | `server.json` + `config.json` + `schedule.json` | 빌드를 중간에 끊을 수 있는 값은 다섯 개다: `timeouts.job_s`(172800 — 빌드 작업 자체) · `concurrency.write_wait_timeout_s`(172800 — 빌드가 시작을 기다리는 시간) · `build_lock_timeout`(172800) · `build_lock_stale_s`(172800) · 스케줄 태스크 `incremental-build`/`nightly-full-build` 의 `timeout_s`(172800). 더 오래 걸리는 코퍼스라면 다섯 개를 같이 올린다. 빌드 **안의** LLM 1회 제한은 `llm_timeout`(600)/`llm_roles.<role>.timeout_s`/`agents.json timeout_s` 로 따로이고, 멈춘 엔드포인트를 빨리 포기해야 빌드가 끝나므로 짧게 둔다 | `setup/server.example.json` · `setup/config.example.json` · `setup/schedule.example.json` | `server limits`, `build status`, Web 관리 › 서버 모니터 — [CONCURRENCY.md](CONCURRENCY.md) §빌드에 걸리는 시간 제한 |
+| **자가진화 임계·안전장치** | `config.json` | `evolve_min_confidence`(0.8 — 이 이상만 자동 적용 후보) · **`evolve_auto_apply_kinds`**(`[]` = 되돌리기 쉬운 synonym·query_rule·pin·wiki_note 만. `chunk_params`(전체 리빌드)·`alias`/`entity`(그래프 재빌드)는 일부러 제외) · **`evolve_snapshot_keep`**(20 — 적용마다 만드는 스냅샷 보관 개수, 0=무제한) · `evolve_low_score_threshold` | `setup/config.example.json` | `evolve status` · `evolve kinds` · `evolve auto-apply --dry-run` — [EVOLVE.md](EVOLVE.md) |
+| **앙상블 (역할 단위 다중 LLM)** | `config.json` | `llm_roles.<역할>.ensemble`(`enabled` · `members[]`{provider,model,weight,enabled} 최대 3 · `aggregator` · `wait` · `timeout_s` · `min_results` · `prompt`) + 공통 기본값 `llm_ensemble_defaults`. **편집은 🧭 Pipeline › 앙상블 한 곳**에서만 (Settings › 모델·프로바이더 는 상태만 보여 주고 그리로 안내). 취합 프롬프트는 역할마다 `prompts/ensemble_merge_<역할>.md`, 없으면 공용 `prompts/ensemble_merge.md` | `setup/config.example.json` | `models ensemble show\|set <역할>` · `prompts show ensemble_merge_answer` — [ENSEMBLE.md](ENSEMBLE.md) |
+| **채널 검색 조합** (2026-09-19) | 설정 없음 (요청 단위) | FTS·Vector·Graph 를 **필수(AND) · 포함(OR) · 제외(NOT)** 로 조합. 행마다 어느 채널이 몇 위로 찾았는지 표시 | — | `search fts,vector "…" --require graph` · Web Ask › 채널 검색 · MCP `wiki_search{channels,mode,require,exclude}` — [CLI_FLOWS.md](CLI_FLOWS.md) |
+| **질의 해부** (2026-09-19) | 설정 없음 | 토큰화·규칙 확장·시간 표현·채널 라우팅·pin 을 LLM 없이 한 화면에 | — | `inspect "질의"` · Web Ask › 디버그 · MCP `wiki_inspect` |
+| **규칙 효과 측정** (2026-09-19) | `data/llmwiki.sqlite3` 의 `kv.rule_effect` (설정 없음) | 질의마다 규칙별로 발화·후보·기여·인용을 센다. 걸리기만 하고 한 번도 기여하지 못한 규칙이 지울 후보다 | — | `rules effect [--order useless]` · Web Settings › 질의 규칙 사전 의 **규칙 효과** · `GET /api/query_rules/effect` — [QUERY_RULES.md §4.5](QUERY_RULES.md) |
+| **파라미터 스윕** (2026-09-18) | `config.json` | `sweep_dir`(data/sweeps) · `sweep_keep`(30) · `sweep_max_values`(20) · `sweep_max_parallel`(1) | `setup/config.example.json` | `sweep keys`, `sweep run last --key rrf_k --range 10:100:30`, `GET /api/sweep/keys` — [SWEEP.md](SWEEP.md) |
+| **그래프 진단 프로파일** (2026-09-18) | `config.json` | `graph_profile_keep`(30) · `graph_profile_requests`(200) · `graph_profile_hubs`(10) | `setup/config.example.json` | `graph profile --compare`, `GET /api/graph/profile/history` — [GRAPH_PROFILE.md](GRAPH_PROFILE.md) |
+| **질의 규칙 방향 · 접기** (2026-09-18) | `tuning.json` (stage query_rules) | `related_symmetric`(false) · `query_rules_max_rounds`(2) · `syn_w`(0.8) · `related_w`(0.4) · `exclude_penalty`(0.5) · `acronym_phrase`(true) | `config fill-defaults --tuning --examples` 가 `setup/tuning.example.json` 생성 | `rules explain <용어>`, `rules lint`, `tuning show --stage query_rules` — [QUERY_RULES.md](QUERY_RULES.md) |
+| 질의 확장 사전 | `query_rules.json` | 절 `acronym` · `synonym` · `alias` · `related` · `exclude` · `compound` (모두 {} 가능) | `setup/query_rules.example.modem.json` | `rules stats`, `rules test "질의"`, `GET /api/query_rules` |
+| **기본값 명시 표식** (2026-09-18) | `config.json` · `tuning.json` · `query_rules.json` · `data/rules.json` | `config fill-defaults --all` 이 모든 Settings/튜닝/규칙 키를 기본값으로 채운다(있는 값 유지). tuning.json 은 `_explicit_defaults: true` 표식과 함께 기본값과 같은 값도 저장; `llm_roles.<role>.{provider,model,effort,timeout_s,retries,max_tokens}`("" = 상속) · `llm_roles.<role>.ensemble`(비활성 템플릿) | `config fill-defaults --all --examples` 실행 결과 = `setup/*.example.*` | `config fill-defaults --all --dry-run`(추가될 키 0개면 정상), `config show --effective`, `models show` — [SETTINGS_SYNC.md](SETTINGS_SYNC.md) |
+| **.env 가시성 · 재로드** (2026-09-18) | `.env` | 화면/CLI 에 항상 보이는 키 `KNOWN_ENV_KEYS`(OPENAI_API_KEY, LLM_API_KEY, OPENAI_EMBED_API_KEY, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, VOYAGE_API_KEY, RERANK_API_KEY, COHERE_API_KEY, JINA_API_KEY, LLMWIKI_MCP_TOKEN, LLMWIKI_API_KEY, PYTHONIOENCODING) — 값은 마스킹 | `setup/.env.example` | `config env`, `config reload --env`, `GET/POST /api/env`(admin), Settings › config.json 탭 하단 .env 패널 |
+| **카탈로그 연결 테스트 · provider 자동 해석** (2026-09-18) | `models.json` · `config.json llm_roles.<role>.model` | 카탈로그 항목 `provider`/`id`/`enabled`. 역할 provider 가 비어 있고 model 이 카탈로그에 한 provider 로만 등록돼 있으면 그 provider 를 쓴다(`provider_source=catalog`) | `setup/models.example.json` | `models test --catalog [--live]`, `models test`(↳ 힌트 줄), `POST /api/models/test_catalog`, Settings › 카탈로그 "전체 카탈로그 테스트" |
 | **설정 파일 원자적 저장** | (코드) `llmwiki/atomicio.py` | 환경변수 `LLMWIKI_ATOMIC_RETRIES`(10) · `LLMWIKI_ATOMIC_RETRY_MS`(20) — 동시 저장·백신 잠금으로 교체가 막힐 때의 재시도 | — | `python -m unittest tests.test_concurrency_0915.AtomicWriteTest` |
 
 `install.bat`/`install.sh` 는 `config.json`·`.env` 에 더해 `security.json`·`agents.json`·`server.json`·`schedule.json`·`models.json` 도 예시에서 생성한다(없을 때만).
@@ -391,7 +427,7 @@ opencode(또는 claude / codex CLI)를 비대화형 subprocess 로 실행해 LLM
    }
    ```
    전역 `llm_provider` 를 `headless:opencode` 로 두면 빌드 역할(extract/summary)까지 모두 프로세스 실행이 되어 매우 느리므로, **질의 역할에만** 두는 것을 권장한다(`llm_graph` 는 청크당 프로세스 1개).
-3. `agents.json` 의 `opencode` 항목이 명령 템플릿이다: `["opencode", "run", "--format", "json", "-m", "{model}", "{prompt}"]`, 출력 `ndjson`. 설치된 opencode 버전이 다른 플래그/출력을 쓰면 여기만 고친다(출력이 일반 텍스트면 `"output": "text"`).
+3. `agents.json` 의 `opencode` 항목이 명령 템플릿이다: `["opencode", "run", "--format", "json", "-m", "{model}"]` + **`"prompt_mode": "stdin"`**(프롬프트를 파이프로 — 2026-09-18 부터 코드 기본값도 stdin), 출력 `ndjson`. 설치된 opencode 버전이 다른 플래그/출력을 쓰면 여기만 고친다(출력이 일반 텍스트면 `"output": "text"`). 프롬프트를 인자로 넘기는 `"prompt_mode": "arg"` + `"{prompt}"` 는 Windows 명령줄 32,767자 한계(`WinError 206`)에 걸리므로 **`arg_max_chars`(30000) 가드**가 넘치면 stdin(템플릿에 `{prompt_file}` 이 있으면 file)으로 자동 전환하고 trace 에 `prompt_mode_fallback` 을 남긴다. 자식 프로세스 환경은 `env_passthrough` 허용 목록 + 항목 `env` 만 전달된다 — 상세 [HEADLESS.md](HEADLESS.md).
    **재시도 정책**(같은 항목): `"timeout_s": 300`(1회 실행 5분 제한 — 넘으면 프로세스를 죽임), `"retries": 3`(최대 4회 실행), `"retry_backoff_s": 5`(대기 5s·10s·15s), `"retry_on": ["timeout", "exec", "exit", "empty"]`(타임아웃 / 실행 파일 오류 / 종료 코드≠0 / 빈 출력). 4회 모두 실패하면 그 역할은 대체 경로(answer→추출식, rerank→로컬, expand/verify→생략)를 타고 결과의 `llm_report` 와 답변 상단 `⚠ LLM 실행 보고` 에 적힌다. 배선만 확인하려면 `headless:mock` (`python -m llmwiki.headless --mock --sleep 400` 같은 인자로 타임아웃 재현 가능).
 4. **Windows**: npm/bun 으로 설치한 opencode 는 `opencode.cmd` 셸 스크립트다. `command[0]` 은 PATH 에서 `.cmd/.bat` 까지 찾아 절대 경로로 실행하므로 그대로 두면 되고, 안 찾히면 `"C:\\Users\\<me>\\AppData\\Roaming\\npm\\opencode.cmd"` 처럼 절대 경로를 적는다. (예전 버전은 ping 은 통과하는데 실제 호출이 `WinError 2` 로 실패했다 — 수정됨.)
 5. 확인: `python -m llmwiki models test --live` → `answer headless:opencode/… live: OK reply='OK'`. 배선만 먼저 보려면 `headless:mock`.
@@ -416,6 +452,30 @@ python -m llmwiki serve --host 0.0.0.0 --port 8765       :: 사용자·API 키·
 - CLI 도 같은 표: 공용 서버면 `"cli": {"default_role": "viewer"}` 로 낮추고 `--user <id>`(또는 `LLMWIKI_USER`/`LLMWIKI_PASSWORD`, `LLMWIKI_API_KEY`)로 승격. 거부는 종료 코드 5, 감사 로그 DENY.
 - 정책: edit/index/admin 등급은 확인 대화상자, **rebuild(전체/채널 리빌드·스냅샷 복원)와 destructive(로그 삭제·config reset·사용자 삭제)는 확인 문구(`DELETE INDEX`) + 로컬 계정 비밀번호 재입력**, 실행 직전 자동 스냅샷(`snapshot list|restore`), 전부 `logs/audit.jsonl` 에 기록.
 - HTTPS 와 IP 제한은 리버스 프록시에서(SECURITY.md §8).
+- **등급이 다른 문서가 섞여 있으면** §4.4.1 의 문서 단위 접근 제어를 함께 켠다. 위 권한 표는 "무엇을 **실행**할 수 있나" 만 정하므로, 그것만으로는 viewer 도 인사·보안 문서를 근거로 받아 본다.
+
+#### 4.4.1 문서 단위 접근 제어 (`docacl.json`) — 누가 어떤 문서를 **근거로** 볼 수 있나
+
+RAG 에서 **검색은 곧 읽기**다. 색인에 들어간 문서는 누구의 질문에도 인용될 수 있으므로, 인사·보안 사고·
+미공개 로드맵·고객사 문서가 섞인 위키라면 읽기 권한을 문서 단위로 나눠야 한다. 설계·근거는 [SECURITY.md §6.2](SECURITY.md).
+
+```bat
+copy setup\docacl.example.json docacl.json               :: 또는 python -m llmwiki security docacl init
+python -m llmwiki security docacl show                   :: 규칙·기본 등급·토글 상태
+python -m llmwiki security docacl check --role viewer    :: **저장 전에** 몇 건이 가려지는지 (문서 예시 포함)
+python -m llmwiki security docacl check --role class2
+```
+```json
+{ "enabled": true, "default_min_role": "viewer",
+  "rules": [ {"prefix": "corpus/hr/", "min_role": "class1", "note": "인사"},
+             {"prefix": "corpus/roadmap/", "min_role": "class2", "note": "미공개 로드맵"} ] }
+```
+- 문서 쪽에서도 스스로 등급을 매길 수 있다 — front matter 에 `acl: class1` 또는 `acl: [class1, admin]`(목록이면 **가장 낮은 역할**이 하한). 경로 규칙과 둘 다 걸리면 **더 높은 등급**이 적용된다. 역할 이름 오타는 빌드 린트가 `acl` 오류로 알려 준다.
+- `default_min_role` 을 올리면 "규칙에 적힌 것만 공개"인 화이트리스트 방식이 된다. **admin 은 항상 전부 본다.**
+- 막히는 곳: 질의 답변의 근거(trace 의 `doc_acl` 단계) · 채널 검색(`/api/search`, MCP `wiki_search`) · 문서 열람(`/api/doc`·`/api/doc_chunks`·`/api/chunk`, MCP `wiki_doc`) · 유사 문서(MCP `wiki_related`). CLI 는 로컬 운영자 도구라 admin 으로 동작한다.
+- Web: Settings › 보안 › **문서 접근 제어**(규칙 편집 + "영향 확인" 으로 역할별 보임/가려짐 건수).
+- 긴급 해제: `config.json` 토글 `doc_acl: false` (Settings › 토글 › ⑧ 보안) 또는 `docacl.json` 의 `enabled: false`.
+- 파일이 없거나 규칙이 비어 있으면 **아무도 막지 않는다** — 지금 정하지 않고 나중에 켜도 된다.
 
 ### 4.5 외부 LLM 을 MCP 로 붙이기 (같은 PC · 원격 · 다수)
 
@@ -551,7 +611,7 @@ python -m llmwiki tuning set doc_expand_mode=full doc_expand_max_chunks=20      
 | `vector` | 질의와 의미가 가까운 청크 | 의미 임베더를 쓸 때 |
 | `hybrid`(기본) | 위 둘의 가중합(`doc_expand_w`) | 보통 |
 | **`full`** | **그 문서의 나머지 전부**(상한까지, 문서 순서) | 문서 하나를 끝까지 읽혀야 하는 질문(설계 문서·회의록·절차서) |
-추가 청크는 부모 청크 바로 뒤에 문서 순서로 들어가며 `[C#]` 로 인용된다. 컨텍스트 상한(`context_max_chars`)은 그대로 적용되므로 토큰이 무한히 늘지 않는다. 확장이 왜 안 됐는지는 `forensic expect … ` 의 `doc_expand` 행에서 확인한다. 실측(샘플 코퍼스 25문항): 주 후보 순위 지표(hit@5·MRR)는 동일, 컨텍스트 청크 10.2→13.5개(+4.4), 글자 1,609→2,085(+30%), 지연 +0.8ms — [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §7.2. 평가 지표는 보조 청크를 순위에서 제외하고 계산한다(`evalset.primary_hits`).
+추가 청크는 부모 청크 바로 뒤에 문서 순서로 들어가며 `[C#]` 로 인용된다. 컨텍스트 상한(`context_max_chars`)은 그대로 적용되므로 토큰이 무한히 늘지 않는다. 확장이 왜 안 됐는지는 `forensic expect … ` 의 `doc_expand` 행에서 확인한다. 실측(샘플 코퍼스 25문항): 주 후보 순위 지표(hit@5·MRR)는 동일, 컨텍스트 청크 10.2→13.5개(+4.4), 글자 1,609→2,085(+30%), 지연 +0.8ms — [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §7.2. 평가 지표는 보조 청크를 순위에서 제외하고 계산한다(`evalset.primary_hits`).
 
 ## 8. 스케줄 (매일 증분)
 
@@ -592,6 +652,7 @@ python -m llmwiki schedule run nightly_build   # 한 번 즉시 실행해 보기
 | 일반 사용자에게 어떻게 보이는지 확인 | `serve --host 0.0.0.0` 로 띄우면 인증이 켜져 로그인 전에는 `guest/viewer` 로 보인다 (127.0.0.1 로 띄우면 `mode: auto` 가 인증을 꺼서 항상 admin) — [WEB_UI.md](WEB_UI.md) §8 |
 | 사용자마다 화면 설정을 따로 | 헤더의 `💾 내 설정 저장`. `data/profiles.json` 에 계정별로 저장되고 로그인 시 자동 적용된다. 서버 설정은 바뀌지 않는다 — [WEB_UI.md](WEB_UI.md) §4 |
 | MCP 로 노출 | `claude mcp add llmwiki -- python -m llmwiki mcp` (cwd = 프로젝트 루트). 도구: `wiki_query(mode, doc_types, preset)`, `wiki_search`, `wiki_related`, `wiki_doc`, `wiki_entity`, `wiki_propose`(HITL 제안), `wiki_status` |
+| 세 창구(CLI·Web·MCP)가 같은 기능·같은 답을 주는지 확인 | `python tools/verify/verify_surface_align.py`(존재 + 전수, 1초) → `python tools/verify/verify_tri_surface.py`(`serve`·CLI 프로세스·`POST /mcp` 를 실제로 띄워 42건 비교, 4초). 전수 목록은 `verify_surface_align.py --inventory`. MCP 에 **일부러 없는** 기능과 그 이유는 [SURFACE_ALIGNMENT.md §4](SURFACE_ALIGNMENT.md) |
 | 로그 | `logs/` (llmwiki.log · error.log · build.log · query.log, JSON Lines, 로테이션). `logs grep --request <id>` 로 프로파일과 연결 |
 | 프로파일 | `requests last`, Web › Observability › 요청 프로파일 (run_id → 로그) |
 | 근거 부족/품질 문제 | `forensic last`, `forensic summary`, Web › Quality › 포렌식. 누적 소견은 `memory consolidate` 로 제안(corpus_gap/query_rule/tuning) 생성 |
@@ -600,11 +661,13 @@ python -m llmwiki schedule run nightly_build   # 한 번 즉시 실행해 보기
 | LLM 이 느리거나 죽음 | 답변 상단 `⚠ LLM 실행 보고` / 결과 `llm_report` / 빌드 alerts `llm_failures` 를 본다. `agents.json timeout_s·retries`, `config.json llm_timeout·llm_retries`, `models test --live` |
 | 외부 LLM(MCP) 관리 | `apikey add|list|remove`, Web 보안 탭 "API 키", `security audit`(op=mcp 거부 기록) — [MCP.md](MCP.md) |
 | 권한 조정 | `security perms [set …]`, Web 보안 탭 "권한 표" — [SECURITY.md](SECURITY.md) §2.3 |
-| 자가진화 | `evolve status/apply/reject`, Web › Evolve. `evolve_auto_apply` 는 기본 OFF(HITL). tuning 제안은 자동 적용 대상 아님 |
+| 자가진화 | `evolve status/show/apply/reject`, Web › Evolve. `evolve_auto_apply` 는 기본 OFF(HITL). tuning 제안은 자동 적용 대상 아님 |
+| 제안을 승인할지 판단 | `evolve status` 에서 `[X]` 가 붙은 줄은 **이대로는 적용 실패하거나 조용히 무효**인 제안이다. `evolve show <번호>` 가 무엇이 · 어느 파일에서 · 어떻게 바뀌고(before/after) · 리빌드가 드나 · 왜 문제인지를 한 화면에 보여 준다. Web Evolve › 제안 카드와 MCP `wiki_evolve(id=…)` 도 같은 내용 — [EVOLVE.md](EVOLVE.md) §1.5 |
 | 메모리 decay | `memory decay` (반감기 `memory_half_life_days`) — 스케줄에 주 1회 넣어도 됨 |
 | 캐시 | `precompute run` (평가셋+빈번 질의 사전 계산), 재빌드 시 자동 무효화 |
 | 유지보수 | `maintenance vacuum|fts_optimize|wal_checkpoint`, `embed clear-cache`(캐시 초기화) |
 | 여러 사람이 동시에 쓴다 (30명 기준) | `setup/server.example.json` → `server.json` 으로 복사해 동시 실행 슬롯·대기열·속도 제한을 환경에 맞춘다. 권장값과 계산 근거는 [CONCURRENCY.md](CONCURRENCY.md) §3. 사용자가 `429`(속도 제한) 또는 `503`(대기열 꽉 참)을 본다면 §9 문제 해결표 |
+| 빌드가 왜 느린가 · 질의가 얼마나·언제 몰리나 · 디스크가 어디서 커지나 | **운영 통계** `python -m llmwiki stats --full [--days 30] [--section storage]` — 단계별 빌드 ms(느린 순), 질의 시간대·창구 분포, p50/p95 와 가장 느린 질의, 토큰(질의당·호출당), 근거 부족률·👍/👎, 사용자별, DB 테이블과 `data/` 폴더별 용량 + **정리 힌트**, 임베딩 캐시 적중률. Web 옵저빌리티 › 시스템 의 `운영 통계`, MCP `wiki_status(full=true, days=, sections=)` 가 같은 값을 준다. 읽기 전용이며 표본 수를 함께 보여 준다(3건으로 낸 p95 를 믿지 않도록) — [OPS_STATS.md](OPS_STATS.md) |
 | 지금 서버가 무엇을 하고 있나 | Web 관리 › 서버 모니터, 또는 `python -m llmwiki server stats` · `server activity`. 진행 중·대기 중 요청, 사용자·IP별 사용량, 거절 사유, 세션, LLM 회로 상태. 원격 서버는 `--server http://host:8765 --user <id>` |
 | 특정 사용자/IP 를 막거나 내보내야 한다 | `server block --ip 10.1.2.3 --reason "…"` · `server block --user hong` · `server kick --user hong`(세션 종료) · 해제는 `server unblock`. 전체 정지는 `server maintenance on --message "…"`(admin 은 계속 사용 가능) |
 | 오래 걸리는 빌드·질의를 멈추고 싶다 | Web 진행 패널의 `중지`, CLI 는 `Ctrl+C`, 다른 곳에서 돌고 있으면 `server activity` 로 토큰을 찾아 `server cancel <token>`. 빌드는 중지해도 그때까지의 진행분을 저장하므로 다음 증분 빌드가 이어서 한다 |

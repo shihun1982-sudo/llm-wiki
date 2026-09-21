@@ -47,6 +47,7 @@ HTML = os.path.join(ROOT, "llmwiki", "web", "static", "index.html")
 
 # 오래 걸려서 기본으로는 누르지 않는 것 (--heavy 로 포함)
 HEAVY = {"btn-build", "btn-build-full", "btn-eval", "btn-eval-matrix", "btn-tr-run", "btn-fusion-compare",
+         "btn-tr-ab",     # A/B = trial 을 **두 번** 돌린다 (평가셋 전체를 LLM 으로) — btn-tr-run 과 같은 이유로 무겁다
          "btn-models-test-live", "btn-cat-discover", "btn-docvec", "btn-pc-run", "btn-w-rebuild",
          "btn-query", "btn-fx-llm", "btn-ev-review", "btn-mem-consolidate", "btn-fx-consolidate",
          "btn-src-ingest", "btn-src-retrieve", "btn-verify", "btn-verify-fix", "btn-health", "btn-scan",
@@ -67,11 +68,22 @@ PREFILL = {
     "btn-fx-expect": "document.querySelector('#fx-docs').value='ISSUE-2001';",
     "btn-search": "document.querySelector('#s-q')&&(document.querySelector('#s-q').value='PDCCH');",
     "btn-rules-test": "document.querySelector('#rules-test-q')&&(document.querySelector('#rules-test-q').value='PDCCH 디코더');",
+    # 질의 해부 — 입력이 비어 있으면 핸들러가 바로 빠져나가 아무것도 렌더하지 않는다(헛도는 검사였다).
+    # 2026-09-20: 프리필을 넣어도 동작하지 않던 진짜 원인은 `ask.js` 가 `loaders` 를 LW 에서 구조분해하지
+    # 않아 **그 IIFE 가 로드 중에 죽어 있었던** 것이다 — 그 뒤의 onclick 이 아예 등록되지 않았다.
+    # 버튼·API 검사는 모두 통과했고 `verify_browser` 의 콘솔 오류 수집이 잡았다.
+    "btn-dbg": "document.querySelector('#dbg-q')&&(document.querySelector('#dbg-q').value='ISSUE-2001');",
+    "btn-dbg-copy": "document.querySelector('#dbg-q')&&(document.querySelector('#dbg-q').value='ISSUE-2001');",
     "btn-time-test": "document.querySelector('#time-q')&&(document.querySelector('#time-q').value='지난주 리뷰한 CL');",
     "btn-qr-test": "document.querySelector('#qr-test-q')&&(document.querySelector('#qr-test-q').value='PDCCH');",
     "btn-graph": "document.querySelector('#g-entity')&&(document.querySelector('#g-entity').value='ISSUE-2001');",
     "btn-tr-compare": "",
     "btn-tr-md": "",
+    # 과거 질의를 **고를 수 있어야** 비교가 내 관심사 위에서 돈다 (2026-09-20).
+    # 목록이 체크박스와 함께 떠야 하고, 안 뜨면 예전처럼 기간·건수로 뭉뚱그리는 것밖에 못 한다.
+    "btn-tr-pick": "!document.querySelector('#tr-pick').classList.contains('hidden')"
+                   " && (document.querySelectorAll('#tr-pick [data-qid]').length>0"
+                   "     || document.querySelector('#tr-pick').textContent.indexOf('과거 질의가 없습니다')>=0)",
 }
 
 # 버튼별 기대 조건(선택). 없으면 '오류 없음 + 무언가 일어남' 만 본다.
@@ -80,7 +92,11 @@ EXPECT = {
                       " && document.querySelector('#ev-summary').textContent.indexOf('pending')>=0",
     "btn-mem-refresh": "document.querySelector('#mem-status').textContent.indexOf('[object Object]')<0"
                        " && document.querySelector('#mem-episodes').innerHTML.length>20",
-    "btn-fx-refresh": "document.querySelector('#fx-list').innerHTML.length>20",
+    # 포렌식 목록은 **판정 칩**(문제만/전부/판정별)과 함께 그려져야 한다. 칩이 없으면 화면이
+    # 다시 '최근 60건 나열' 로 돌아간 것이고, 그러면 정상 건에 덮여 볼 것을 못 본다 (2026-09-20).
+    "btn-fx-refresh": "document.querySelector('#fx-list').innerHTML.length>20"
+                      " && document.querySelectorAll('#fx-summary .fx-chips .chip').length>=2"
+                      " && !!document.querySelector('#fx-summary .fx-chips .chip.on')",
     "btn-fx-run": "document.querySelector('#fx-detail').textContent.indexOf('포렌식 #')>=0",
     "btn-req-refresh": "!!document.querySelector('#req-list table')",
     "btn-act-refresh": "!!document.querySelector('#act-gauge .ag-slots')",
@@ -98,6 +114,27 @@ EXPECT = {
     "btn-lint-refresh": "document.querySelector('#lint-table').innerHTML.length>10"
                         " || document.querySelector('#lint-summary').innerHTML.length>10",
     "btn-config-effective": "document.querySelector('#config-effective').textContent.length>50",
+    # 초기화 버튼은 **미리보기만** 연다 — 표와 '유지합니다' 목록이 그려지는지 본다.
+    # 실제로 지우는 '지금 초기화' 는 미리보기 뒤에 JS 가 만들며 id 가 없으므로 이 하네스가 누를 수 없다.
+    # 해부가 실제로 그려졌는지 — 다섯 구간 + 임시 토글 줄. 조건식은 ASCII(선택자)만 쓴다.
+    "btn-dbg": "document.querySelectorAll('#dbg-out .dbg-sec').length>=6"
+               " && !!document.querySelector('#dbg-toggles [data-tg]')",
+    # 운영 통계가 실제로 집계돼 그려졌는지 (섹션이 여러 개 + **추세 차트**가 실제 SVG 로 그려졌는지).
+    # 차트를 숫자 표로만 두면 "나아지나 나빠지나" 가 한눈에 안 보여 만든 뜻이 없다 (2026-09-20).
+    #
+    # **눈금과 축까지 본다.** 첫 판은 viewBox 를 `preserveAspectRatio="none"` 으로 늘려 점이 타원이 되고
+    # 축이 없어 값을 읽을 수 없었다. 늘리기로 돌아가거나 축이 사라지면 여기서 실패해야 한다.
+    "btn-ops": "document.querySelectorAll('#ops-out .dbg-sec').length>=4"
+               " && document.querySelectorAll('#ops-out .chart svg').length>=3"
+               " && document.querySelectorAll('#ops-out .chart svg .ch-bar, #ops-out .chart svg .ch-line').length>0"
+               " && document.querySelectorAll('#ops-out [data-bucket]').length===3"
+               " && document.querySelectorAll('#ops-out .chart svg .ch-grid').length>=3"
+               " && document.querySelectorAll('#ops-out .chart svg .ch-ylab').length>=3"
+               " && document.querySelectorAll('#ops-out .chart svg .ch-xlab').length>=1"
+               " && !document.querySelector('#ops-out .chart svg[preserveAspectRatio=\"none\"]')",
+    "btn-reset-data": "document.querySelector('#sys-reset-out').innerHTML.indexOf('유지')>=0",
+    "btn-reset-settings": "document.querySelector('#sys-reset-out').innerHTML.indexOf('유지')>=0",
+    "btn-reset-logs": "document.querySelector('#sys-reset-out').innerHTML.indexOf('유지')>=0",
 }
 
 SHIM = """
@@ -144,6 +181,12 @@ def isolated_env(port: int, extra_cfg=None, extra_files=None, serve: bool = True
     cfg["wiki_dir"] = os.path.join(tmp, "wiki")
     cfg["llm_provider"] = "mock"
     cfg["llm_roles"] = {}
+    # 임베더도 **고정**한다. embed_provider=auto 는 이 PC 에 무엇이 깔려 있는지에 따라 달라져서
+    # (예: `ollama pull bge-m3` 한 순간 1024차원 ollama 임베더로 바뀐다) 색인 차원이 어긋나
+    # 벡터 검색이 빈 결과를 내고 하네스가 엉뚱하게 실패했다 (2026-09-19). 검증은 결정적이어야 한다.
+    cfg["embed_provider"] = "hash"
+    cfg["embed_model"] = ""
+    cfg["embed_dim"] = int(cfg.get("embed_dim") or 256) if str(cfg.get("embed_provider") or "") == "hash" else 256
     cfg["toggles"] = dict(cfg.get("toggles") or {}, auto_build=False, precompute=False, query_cache=False)
     os.makedirs(cfg["data_dir"])
     src_db = os.path.join(ROOT, "data", "llmwiki.sqlite3")

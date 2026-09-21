@@ -1,10 +1,10 @@
 {
  "pages": {
   "index": {
-   "dom_len": 88203,
+   "dom_len": 126538,
    "console_lines": 3,
    "errors": [],
-   "tabs": 32,
+   "tabs": 36,
    "user_badge": true,
    "title": "LLM Wiki · FTS + Vector + GraphRAG (self-evolving)",
    "has_btn-q-expect": true,
@@ -26,7 +26,7 @@
    "has_build-external": true
   },
   "login": {
-   "dom_len": 88203,
+   "dom_len": 126538,
    "console_lines": 3,
    "errors": []
   }
@@ -38,18 +38,48 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 5125,
-   "static_len": 4823,
+   "body_len": 5841,
+   "static_len": 5539,
    "ok": true
   },
   {
    "group": "ask",
    "tab": "search",
    "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 4621,
+   "static_len": 3292,
+   "ok": true
+  },
+  {
+   "group": "ask",
+   "tab": "debug",
+   "active": true,
    "rendered": false,
    "errors": [],
-   "body_len": 752,
-   "static_len": 752,
+   "body_len": 2278,
+   "static_len": 2278,
+   "ok": true
+  },
+  {
+   "group": "pipeline",
+   "tab": "pipeline",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 66839,
+   "static_len": 6551,
+   "ok": true
+  },
+  {
+   "group": "pipeline",
+   "tab": "ensemble",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 153359,
+   "static_len": 1276,
    "ok": true
   },
   {
@@ -58,7 +88,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 113107,
+   "body_len": 112590,
    "static_len": 2641,
    "ok": true
   },
@@ -68,7 +98,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 5809,
+   "body_len": 5985,
    "static_len": 907,
    "ok": true
   },
@@ -94,12 +124,32 @@
   },
   {
    "group": "knowledge",
+   "tab": "doc",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 546,
+   "static_len": 498,
+   "ok": true
+  },
+  {
+   "group": "knowledge",
    "tab": "graph",
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 7074,
+   "body_len": 1280,
    "static_len": 1065,
+   "ok": true
+  },
+  {
+   "group": "knowledge",
+   "tab": "graphprof",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 1978,
+   "static_len": 1215,
    "ok": true
   },
   {
@@ -108,7 +158,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 25187,
+   "body_len": 536,
    "static_len": 488,
    "ok": true
   },
@@ -116,10 +166,10 @@
    "group": "knowledge",
    "tab": "rules",
    "active": true,
-   "rendered": false,
+   "rendered": true,
    "errors": [],
-   "body_len": 317,
-   "static_len": 317,
+   "body_len": 11048,
+   "static_len": 2702,
    "ok": true
   },
   {
@@ -128,8 +178,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 4219,
-   "static_len": 995,
+   "body_len": 8917,
+   "static_len": 2654,
    "ok": true
   },
   {
@@ -138,8 +188,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1082,
-   "static_len": 423,
+   "body_len": 2028,
+   "static_len": 1369,
    "ok": true
   },
   {
@@ -148,7 +198,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 17976,
+   "body_len": 18102,
    "static_len": 1186,
    "ok": true
   },
@@ -158,8 +208,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 38776,
-   "static_len": 1597,
+   "body_len": 212320,
+   "static_len": 2073,
    "ok": true
   },
   {
@@ -168,8 +218,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 12670,
-   "static_len": 459,
+   "body_len": 65665,
+   "static_len": 1990,
    "ok": true
   },
   {
@@ -188,8 +238,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 39668,
-   "static_len": 3375,
+   "body_len": 83269,
+   "static_len": 5483,
    "ok": true
   },
   {
@@ -208,7 +258,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 67698,
+   "body_len": 82772,
    "static_len": 567,
    "ok": true
   },
@@ -218,8 +268,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1175,
-   "static_len": 1031,
+   "body_len": 5678,
+   "static_len": 2436,
    "ok": true
   },
   {
@@ -238,7 +288,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1565,
+   "body_len": 3041,
    "static_len": 614,
    "ok": true
   },
@@ -258,8 +308,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1737,
-   "static_len": 443,
+   "body_len": 4336,
+   "static_len": 926,
    "ok": true
   },
   {
@@ -268,8 +318,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 26861,
-   "static_len": 2592,
+   "body_len": 28003,
+   "static_len": 2979,
    "ok": true
   },
   {
@@ -278,7 +328,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 20623,
+   "body_len": 20539,
    "static_len": 801,
    "ok": true
   },
@@ -298,7 +348,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 14923,
+   "body_len": 15518,
    "static_len": 2118,
    "ok": true
   },
@@ -308,18 +358,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 84001,
+   "body_len": 83450,
    "static_len": 1110,
-   "ok": true
-  },
-  {
-   "group": "observability",
-   "tab": "arch",
-   "active": true,
-   "rendered": true,
-   "errors": [],
-   "body_len": 20745,
-   "static_len": 1085,
    "ok": true
   },
   {
@@ -328,8 +368,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 9391,
-   "static_len": 2094,
+   "body_len": 11320,
+   "static_len": 3913,
    "ok": true
   },
   {
@@ -338,8 +378,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 19540,
-   "static_len": 224,
+   "body_len": 38215,
+   "static_len": 1203,
    "ok": true
   },
   {

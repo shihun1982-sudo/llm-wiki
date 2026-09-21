@@ -108,6 +108,28 @@ class ArchitectureTest(unittest.TestCase):
         txt = render_text(reg, {"fts": False})
         self.assertIn("fts(OFF)", txt)
 
+    def test_phases_cover_every_stage(self):
+        """페이즈(상위 단계)는 모든 단계를 **순서대로 빠짐없이** 덮어야 한다.
+
+        Web 🧭 Pipeline 과 CLI `arch` 가 이 묶음으로 화면을 그린다. 새 단계를 넣고 `STAGE_PHASE` 에
+        한 줄을 빠뜨리면 그 단계가 `(기타)` 로 밀려 흐름의 엉뚱한 자리에 붙는다 — 여기서 잡는다.
+        """
+        reg = registry()
+        for fk, f in reg["flows"].items():
+            keys = [s["key"] for s in f["stages"]]
+            self.assertTrue(f.get("phases"), "%s: phases 가 없다" % fk)
+            flat = [k for ph in f["phases"] for k in ph["stages"]]
+            self.assertEqual(flat, keys, "%s: 페이즈가 단계 순서를 바꾸거나 빠뜨렸다" % fk)
+            self.assertNotIn("_other", [ph["key"] for ph in f["phases"]],
+                             "%s: 페이즈 미배치 단계 %s — architecture.STAGE_PHASE 에 추가하세요"
+                             % (fk, [k for ph in f["phases"] if ph["key"] == "_other" for k in ph["stages"]]))
+            for ph in f["phases"]:
+                self.assertTrue(ph.get("title") and ph.get("desc"), "%s/%s: 제목·설명이 필요하다" % (fk, ph["key"]))
+                for sk in ph["stages"]:
+                    self.assertEqual(next(s for s in f["stages"] if s["key"] == sk)["phase"], ph["key"])
+        # 텍스트 지도에도 페이즈가 보인다 (arch show 로 구조를 읽는 사람을 위해)
+        self.assertIn("[retrieve]", render_text(reg, {}))
+
     def test_guide_markdown(self):
         """docs/OPTIMIZATION_GUIDE.md 는 레지스트리에서 생성된다 — 흐름·단계·손잡이가 모두 실려야 한다."""
         from llmwiki import optimize as opt
@@ -257,7 +279,8 @@ class QualityOptionsTest(unittest.TestCase):
         # 도구를 늘리면 여기도 함께 고친다 (MCP.md 의 표와 verify_surface_align.py 의 대조표도)
         self.assertEqual({t["name"] for t in tools}, {"wiki_query", "wiki_search", "wiki_entity", "wiki_status", "wiki_related", "wiki_doc", "wiki_propose",
                                                       "wiki_feedback", "wiki_forensic", "wiki_sources", "wiki_external_search", "wiki_analysis",
-                                                      "wiki_requests", "wiki_rerun"})
+                                                      "wiki_requests", "wiki_rerun", "wiki_rules", "wiki_graph_profile", "wiki_graph_rules",
+                                                      "wiki_sweep", "wiki_inspect", "wiki_evolve"})
         # 붙는 LLM 이 "읽기 전용인가" 를 판단하는 근거 — 도구를 늘리면서 빠뜨리기 쉽다
         self.assertFalse([t["name"] for t in tools if not (t.get("annotations") or {})], "annotations 가 없는 도구가 있습니다")
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "wiki_query", "arguments": {"question": "캐파 확장 담당", "k": 3}}})

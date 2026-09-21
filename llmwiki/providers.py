@@ -9,6 +9,7 @@ Embed: hash (로컬, 문자 n-gram 해싱; 오프라인) | voyage | ollama | st(
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import random
@@ -18,7 +19,7 @@ import threading
 import time
 import urllib.request
 import urllib.error
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -342,7 +343,10 @@ class MockLLM(BaseLLM):
     #   LLMWIKI_MOCK_DELAY_MS=1500        호출마다 이만큼 지연 (느린 요청·취소·대기열 시험용)
     #   LLMWIKI_MOCK_FAIL=timeout         매번 타임아웃으로 실패 (transient → 재시도·회로 차단 경로)
     #   LLMWIKI_MOCK_FAIL=timeout:2       처음 2회만 실패하고 3회째 성공 (재시도 성공 경로)
-    # 문서: docs/CONCURRENCY.md §타임아웃 검증, tools/verify/verify_timeouts.py
+    #   LLMWIKI_MOCK_ANSWER=<본문>        답변 역할의 출력만 이 문자열로 바꾼다 (없는 인용 [C99]·빈 답·무인용 같은
+    #                                     **모델이 잘못 답하는 경우**를 재현한다 — 진짜 LLM 으로는 재현이 불가능하다).
+    #                                     "" 로 두면 빈 답. 다른 역할(추출·리랭크)에는 영향이 없다.
+    # 문서: docs/CONCURRENCY.md §타임아웃 검증, tools/verify/verify_timeouts.py, tests/test_rag_edge_cases.py
     _fail_counts: Dict[str, int] = {}
 
     def _test_hooks(self) -> None:
@@ -380,6 +384,18 @@ class MockLLM(BaseLLM):
                 rels.append({"src": ents[i]["name"], "dst": ents[i + 1]["name"], "rel": "related_to",
                              "description": "co-mentioned (mock)", "weight": 0.5})
             text = json.dumps({"entities": ents, "relations": rels}, ensure_ascii=False)
+        elif "TASK=fusion_review" in system:
+            # 융합 뒤 검토 (llm_after_fusion): 결정적으로 **마지막 후보 하나만** drop 한다 (후보가 3개 이상일 때).
+            # 배선(감점·제거·재정렬·trace)을 시험할 수 있으면서 근거를 통째로 날리지 않는다.
+            ids = [int(i) for i in dict.fromkeys(re.findall(r"\[(\d+)\]", user))]
+            drop = ids[-1:] if len(ids) >= 3 else []
+            text = json.dumps({"keep": [i for i in ids if i not in drop], "drop": drop, "reason": "mock: 마지막 후보만 무관으로 가정"}, ensure_ascii=False)
+        elif "TASK=rerank_review" in system:
+            # 리랭크 뒤 선택 (llm_after_rerank): 순서를 **뒤집어** 돌려준다 — 선택이 실제로 최종 순서를 바꾸는지 시험하기 위해.
+            # expand_docs 는 첫 후보의 문서 하나 (doc_expand 우선·전체 확장 경로 시험).
+            ids = [int(i) for i in dict.fromkeys(re.findall(r"\[(\d+)\]", user))]
+            docs = re.findall(r"문서=(\S+)", user)
+            text = json.dumps({"select": list(reversed(ids)), "expand_docs": docs[:1], "note": "mock: 역순 선택"}, ensure_ascii=False)
         elif "TASK=rerank" in system:
             ids = re.findall(r"\[(\d+)\]", user)
             text = json.dumps({"ranking": [int(i) for i in dict.fromkeys(ids)]})
@@ -389,9 +405,13 @@ class MockLLM(BaseLLM):
             q = user.split("\n")[-1].strip()
             text = json.dumps({"queries": [q + " 관련 내용", q.replace("?", "") + " 상세"], "keywords": []}, ensure_ascii=False)
         else:
-            cites = re.findall(r"\[(?:C)?(\d+)\]", user)
-            first = cites[:3] if cites else []
-            text = "(mock answer) 컨텍스트 기반 요약입니다. " + " ".join("[C%s]" % c for c in first)
+            forced = os.environ.get("LLMWIKI_MOCK_ANSWER")
+            if forced is not None:
+                text = forced
+            else:
+                cites = re.findall(r"\[(?:C)?(\d+)\]", user)
+                first = cites[:3] if cites else []
+                text = "(mock answer) 컨텍스트 기반 요약입니다. " + " ".join("[C%s]" % c for c in first)
         return {"text": text, "usage": {"input_tokens": len(user) // 3, "output_tokens": len(text) // 3},
                 "ms": (time.perf_counter() - t0) * 1000, "model": "mock"}
 
@@ -446,9 +466,11 @@ class AnthropicHTTPLLM(BaseLLM):
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode("utf-8"))
             ids = [m.get("id") for m in data.get("data", [])]
-            ok = (self.model in ids) or not ids
+            mm = model_in_list(self.model, ids)
+            ok = mm["known"] is not False
             return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "models": ids[:40],
-                    "detail": "connected %s" % self.base_url + ("" if ok else "; model %s not in list" % self.model)}
+                    "model_known": mm["known"], "model_match": mm["match"],
+                    "detail": "connected %s" % self.base_url + ("" if ok else "; %s" % mm["hint"])}
         except urllib.error.HTTPError as e:
             # 게이트웨이가 /v1/models 를 막아둔 경우(404/405)는 연결 자체는 된 것 — models test --live 로 실제 호출 확인
             body = e.read().decode("utf-8", "ignore")[:200]
@@ -604,9 +626,12 @@ class OllamaLLM(BaseLLM):
             with urllib.request.urlopen(self.url + "/api/tags", timeout=3) as r:
                 data = json.loads(r.read().decode("utf-8"))
             names = [m.get("name") for m in data.get("models", [])]
-            ok = any(n == self.model or n.split(":")[0] == self.model for n in names)
+            mm = model_in_list(self.model, names)
+            ok = mm["known"] is not False
             return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "models": names,
-                    "detail": "connected" if ok else "model %s not pulled (ollama pull %s)" % (self.model, self.model)}
+                    "model_known": mm["known"], "model_match": mm["match"],
+                    "detail": ("connected" + (" (%s)" % mm["match"] if mm["match"] and mm["match"] != self.model else ""))
+                              if ok else "model %s not pulled — `ollama pull %s` · %s" % (self.model, self.model, mm["hint"])}
         except Exception as e:
             return {"ok": False, "ms": (time.perf_counter() - t0) * 1000, "detail": "ollama unreachable at %s: %s" % (self.url, e)}
 
@@ -639,6 +664,47 @@ def openai_api_key(embed: bool = False) -> str:
     if embed and os.environ.get("OPENAI_EMBED_API_KEY"):
         return os.environ["OPENAI_EMBED_API_KEY"]
     return os.environ.get("OPENAI_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
+
+
+def model_in_list(model: str, ids: List[str]) -> Dict[str, Any]:
+    """설정한 모델 이름이 서버가 알려 준 목록에 있는가 — **이름 표기 차이를 흡수해서** 판단한다.
+
+    2026-09-19: `ollama list` 는 `llama3.1:latest` 로 내놓는데 config 에는 보통 `llama3.1` 만 적는다.
+    예전에는 이 둘을 다른 이름으로 보고 "model llama3.1 not in list" 로 연결 실패를 냈다 —
+    실제 호출은 멀쩡히 되는데도 화면이 빨간 ✗ 를 보여 주던 원인이다.
+
+    같은 모델로 보는 표기
+      - 대소문자 차이
+      - Ollama 의 암묵적 `:latest` (`llama3.1` ↔ `llama3.1:latest`)
+      - 게이트웨이의 네임스페이스 접두어 (`openai/gpt-4o` · `models/gemini-1.5` ↔ `gpt-4o` · `gemini-1.5`)
+
+    반환 {"known": True|False|None, "match": 실제 목록에 있던 이름, "hint": 사람에게 줄 안내}
+    목록을 받지 못했으면(빈 목록) 판단하지 않고 None — 게이트웨이가 목록을 막아 둔 경우다.
+    """
+    ids = [str(x) for x in (ids or []) if x]
+    if not ids:
+        return {"known": None, "match": "", "hint": ""}
+    m = str(model or "").strip()
+    if not m:
+        return {"known": None, "match": "", "hint": ""}
+
+    def forms(x: str) -> set:
+        x = x.strip()
+        out = {x, x.lower()}
+        low = x.lower()
+        out.add(low.split(":")[0])            # llama3.1:latest → llama3.1
+        out.add(low.rsplit("/", 1)[-1])       # openai/gpt-4o  → gpt-4o
+        out.add(low.rsplit("/", 1)[-1].split(":")[0])
+        return {y for y in out if y}
+
+    want = forms(m)
+    for i in ids:
+        if want & forms(i):
+            return {"known": True, "match": i, "hint": ""}
+    near = [i for i in ids if m.lower()[:6] and m.lower()[:6] in i.lower()]
+    hint = ("모델 이름이 목록에 없습니다. 비슷한 이름: %s" % ", ".join(near[:5])) if near else \
+           ("모델 이름이 목록에 없습니다. 쓸 수 있는 이름: %s" % ", ".join(ids[:8]))
+    return {"known": False, "match": "", "hint": hint}
 
 
 def auth_headers(api_key: str, header: str = "authorization", extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -679,9 +745,11 @@ class OpenAICompatLLM(BaseLLM):
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode("utf-8"))
             ids = [m.get("id") for m in (data.get("data") or [])]
-            ok = (self.model in ids) or not ids
+            mm = model_in_list(self.model, ids)
+            ok = mm["known"] is not False
             return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "models": ids[:40],
-                    "detail": "connected %s" % self.base_url + ("" if ok else "; model %s not in list" % self.model)}
+                    "model_known": mm["known"], "model_match": mm["match"],
+                    "detail": "connected %s" % self.base_url + ("" if ok else "; %s" % mm["hint"])}
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "ignore")[:200]
             if e.code in (404, 405):   # 게이트웨이가 /models 를 제공하지 않음 — 인증/연결은 통과한 것
@@ -751,6 +819,280 @@ class OpenAICompatLLM(BaseLLM):
         raise last or LLMError("unknown")
 
 
+# =============================== 앙상블 (역할 단위 최대 3 LLM 병렬 + 취합) ===============================
+ENSEMBLE_MAX_MEMBERS = 3
+
+
+class EnsembleLLM(BaseLLM):
+    """역할 하나에 여러 LLM 을 병렬로 부르고 취합 LLM 이 최종 본문을 만드는 래퍼 (docs/ENSEMBLE.md, 계획 §2.6).
+
+    - members: [(BaseLLM, weight)] 최대 3개. 각 멤버는 자기 재시도·회로 차단 정책을 그대로 쓴다(멤버 인스턴스의 complete()).
+    - wait: all = 모든 멤버가 끝날 때까지(멤버별 timeout 이 상한) · timeout = timeout_s 지나면 그때까지 온 결과만 사용.
+    - min_results: 성공 결과가 이보다 적으면 LLMError (호출부는 단일 LLM 실패와 같은 대체 경로를 탄다).
+    - 성공 1개면 취합 없이 그 본문(ensemble.aggregated=false), 2개 이상이면 prompts/<prompt>.md 규칙으로 취합 LLM 을 1회 부른다.
+    - 결과 dict 에 r["ensemble"] = {members:[{model,provider,weight,ok,ms,chars,usage,error}], aggregator:{model,provider,ms,usage}, policy, aggregated}.
+    - 멤버 실패는 record_incident 로 남겨 llm_report 에 보인다(ensemble_member=true). 래퍼 자체는 재시도·회로 차단을 하지 않는다.
+    """
+    name = "ensemble"
+
+    def __init__(self, members: List[Tuple[BaseLLM, float]], aggregator: Optional[BaseLLM] = None, wait: str = "all",
+                 timeout_s: float = 120, min_results: int = 1, prompt: str = "ensemble_merge", role: str = "default") -> None:
+        BaseLLM.__init__(self)
+        self.members: List[Tuple[BaseLLM, float]] = [(m, float(w if w not in (None, "") else 1.0)) for m, w in list(members)[:ENSEMBLE_MAX_MEMBERS]]
+        self.aggregator: Optional[BaseLLM] = aggregator if aggregator is not None else (self.members[0][0] if self.members else None)
+        self.wait = "timeout" if str(wait or "all").lower().startswith("time") else "all"
+        self.timeout_s = float(timeout_s or 0)
+        self.min_results = max(1, int(min_results or 1))
+        self.prompt_name = str(prompt or "ensemble_merge")
+        self.role = role
+        self.model = "+".join(str(m.model or m.name) for m, _ in self.members) or "(no members)"
+        self.retries = 0                 # 재시도는 멤버가 각자 한다
+        self.circuit_failures = 0        # 회로 차단도 멤버 단위
+        self.timeout = int(max((int(getattr(m, "timeout", 0) or 0) for m, _ in self.members), default=DEFAULT_LLM_TIMEOUT))
+
+    # ---- 상태 ----
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        return any(getattr(m, "available", False) for m, _ in self.members)
+
+    @available.setter
+    def available(self, _v: bool) -> None:
+        pass    # 멤버 상태에서 파생되는 값 — 외부 대입은 무시
+
+    @property
+    def reason(self) -> str:
+        if self.available:
+            return ""
+        if not self.members:
+            return "ensemble: 활성 멤버가 없음 (llm_roles.<role>.ensemble.members)"
+        return "ensemble: 멤버 전부 사용 불가 — " + " / ".join("%s/%s: %s" % (m.name, m.model, getattr(m, "reason", "") or "unavailable") for m, _ in self.members)
+
+    def policy(self) -> Dict[str, Any]:
+        return {"ensemble": True, "wait": self.wait, "timeout_s": self.timeout_s, "min_results": self.min_results, "prompt": self.prompt_name,
+                "members": len(self.members), "aggregator": "%s/%s" % (self.aggregator.name, self.aggregator.model) if self.aggregator else "",
+                "retries": 0, "backoff_s": 0, "budget_s": 0, "circuit_failures": 0}
+
+    def describe(self) -> Dict[str, Any]:
+        d = BaseLLM.describe(self)
+        d["members"] = [dict(m.describe(), weight=w) for m, w in self.members]
+        d["aggregator"] = self.aggregator.describe() if self.aggregator is not None else None
+        d["ensemble"] = True
+        return d
+
+    def ping(self) -> Dict[str, Any]:
+        t0 = time.perf_counter()
+        rows = []
+        for m, w in self.members:
+            r = m.ping()
+            rows.append(dict(r, provider=m.name, model=m.model, weight=w, available=m.available))
+        agg = None
+        if self.aggregator is not None and all(self.aggregator is not m for m, _ in self.members):
+            agg = dict(self.aggregator.ping(), provider=self.aggregator.name, model=self.aggregator.model)
+        ok_n = sum(1 for r in rows if r.get("ok"))
+        ok = ok_n >= self.min_results and (agg is None or bool(agg.get("ok")))
+        detail = "ensemble %d/%d members ok" % (ok_n, len(rows)) + "; " + "; ".join("%s/%s: %s" % (r["provider"], r["model"], "ok" if r.get("ok") else r.get("detail", "")[:80]) for r in rows)
+        if agg is not None:
+            detail += "; aggregator %s/%s: %s" % (agg["provider"], agg["model"], "ok" if agg.get("ok") else agg.get("detail", "")[:80])
+        return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "detail": detail, "members": rows, "aggregator": agg}
+
+    def live_test(self, timeout_s: int = 60) -> Dict[str, Any]:
+        t0 = time.perf_counter()
+        rows = []
+        for m, w in self.members:
+            rows.append(dict(m.live_test(timeout_s), provider=m.name, model=m.model, weight=w))
+        agg = None
+        if self.aggregator is not None and all(self.aggregator is not m for m, _ in self.members):
+            agg = dict(self.aggregator.live_test(timeout_s), provider=self.aggregator.name, model=self.aggregator.model)
+        ok_n = sum(1 for r in rows if r.get("ok"))
+        ok = ok_n >= self.min_results and (agg is None or bool(agg.get("ok")))
+        detail = "ensemble %d/%d members ok" % (ok_n, len(rows)) + "; " + "; ".join("%s/%s: %s" % (r["provider"], r["model"], r.get("detail", "")[:80]) for r in rows)
+        if agg is not None:
+            detail += "; aggregator %s/%s: %s" % (agg["provider"], agg["model"], agg.get("detail", "")[:80])
+        return {"ok": ok, "ms": (time.perf_counter() - t0) * 1000, "detail": detail, "members": rows, "aggregator": agg}
+
+    # ---- 호출 ----
+    def _run_member(self, idx: int, llm: BaseLLM, weight: float, system: str, user: str, max_tokens: int, effort: str,
+                    json_mode: bool, token: Optional[str], files: List[str]) -> Dict[str, Any]:
+        """작업 스레드: 멤버 1개 호출. 진행 토큰을 물려받아 취소가 전파되고, 이 스레드의 incident 를 모아 되돌려 준다."""
+        if token:
+            _pg._TL.token = token          # progress.bind 와 같은 스레드 로컬 — 취소 확인·LLM 활동 표시가 요청 항목에 붙는다
+        reset_incidents()
+        t0 = time.perf_counter()
+        out: Dict[str, Any] = {"i": idx, "model": str(llm.model or ""), "provider": llm.name, "weight": weight, "ok": False,
+                               "ms": 0.0, "chars": 0, "usage": {}, "error": "", "text": ""}
+        try:
+            eff = str(getattr(llm, "_ens_effort", "") or effort)
+            r = llm.complete(system, user, max_tokens=max_tokens, effort=eff, json_mode=json_mode, files=files)
+            text = r.get("text") or ""
+            out.update(text=text, chars=len(text), usage=dict(r.get("usage") or {}), model=str(r.get("model") or llm.model or ""),
+                       attempts=r.get("attempts", 1), ok=bool(text.strip()))
+            if not out["ok"]:
+                out["error"] = "empty output"
+        except _pg.Cancelled:
+            out["error"] = "cancelled"
+        except Exception as e:
+            out["error"] = str(e)[:300]
+            out["transient"] = _is_transient_exc(e)
+        out["ms"] = (time.perf_counter() - t0) * 1000
+        out["incidents"] = drain_incidents()
+        return out
+
+    def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
+        if not self.members:
+            raise LLMError(self.reason)
+        t_start = time.perf_counter()
+        token = _pg.current_token()
+        files = list(getattr(self, "_files", []) or [])
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(ENSEMBLE_MAX_MEMBERS, len(self.members))), thread_name_prefix="ensemble-%s" % self.role)
+        futs = {}
+        results: Dict[int, Dict[str, Any]] = {}
+        try:
+            for i, (m, w) in enumerate(self.members):
+                futs[ex.submit(self._run_member, i, m, w, system, user, max_tokens, effort, json_mode, token, files)] = i
+            pending = set(futs)
+            deadline = (time.time() + self.timeout_s) if (self.wait == "timeout" and self.timeout_s > 0) else None
+            while pending:
+                _pg.check_cancel()                                   # 취소는 폴링 사이에 확인 (멤버 스레드도 같은 토큰으로 스스로 멈춘다)
+                done, pending = concurrent.futures.wait(pending, timeout=0.25)
+                for f in done:
+                    results[futs[f]] = f.result()
+                if deadline is not None and pending and time.time() >= deadline:
+                    for f in pending:
+                        i = futs[f]
+                        m, w = self.members[i]
+                        results[i] = {"i": i, "model": str(m.model or ""), "provider": m.name, "weight": w, "ok": False, "ms": (time.perf_counter() - t_start) * 1000,
+                                      "chars": 0, "usage": {}, "error": "ensemble wait=timeout: %.0fs 안에 응답 없음 (결과는 버려짐)" % self.timeout_s, "text": "", "incidents": [], "timed_out": True}
+                        f.cancel()
+                    _pg.note("앙상블(%s) 대기 %.0fs 초과 — 도착한 %d개로 진행" % (self.role, self.timeout_s, sum(1 for r in results.values() if r.get("ok"))))
+                    break
+        finally:
+            ex.shutdown(wait=False)
+        rows = [results[i] for i in sorted(results)]
+        # 멤버 스레드의 incident 를 요청 스레드로 옮긴다 (llm_report 에 멤버별 실패가 보이도록)
+        for r in rows:
+            for inc in r.pop("incidents", None) or []:
+                record_incident(dict(inc, ensemble_member=True, ensemble_role=self.role))
+            if not r.get("ok") and r.get("error") and not r.get("timed_out"):
+                pass   # 멤버의 최종 실패는 이미 멤버 complete() 가 incident 로 남겼다
+            elif r.get("timed_out"):
+                record_incident({"role": self.role, "provider": r["provider"], "model": r["model"], "attempts": 1, "max_attempts": 1,
+                                 "elapsed_ms": round(r["ms"], 1), "errors": [r["error"]], "transient": True, "timeout_s": self.timeout_s,
+                                 "prompt_chars": len(system) + len(user), "ts": time.time(), "ensemble_member": True, "ensemble_role": self.role})
+        _count("llm_calls", max(0, len(rows) - 1))    # 래퍼 자신이 1회로 세어지므로 멤버 수 - 1 을 더해 실제 호출 수를 맞춘다
+        ok_rows = [r for r in rows if r.get("ok")]
+        usage_sum = {"input_tokens": sum(int((r.get("usage") or {}).get("input_tokens", 0) or 0) for r in rows),
+                     "output_tokens": sum(int((r.get("usage") or {}).get("output_tokens", 0) or 0) for r in rows)}
+        meta_members = [{k: v for k, v in r.items() if k != "text"} for r in rows]
+        policy = {"wait": self.wait, "timeout_s": self.timeout_s, "min_results": self.min_results, "prompt": self.prompt_name}
+        if len(ok_rows) < self.min_results:
+            errs = "; ".join("%s/%s: %s" % (r["provider"], r["model"], r.get("error", "")[:120]) for r in rows if not r.get("ok"))
+            raise LLMError("ensemble(%s): %d/%d 멤버만 성공 (min_results=%d) — %s" % (self.role, len(ok_rows), len(rows), self.min_results, errs),
+                           transient=bool(rows) and all(r.get("transient") or r.get("timed_out") for r in rows if not r.get("ok")), kind="ensemble")
+        if len(ok_rows) == 1:
+            r0 = ok_rows[0]
+            _pg.note("앙상블(%s): 결과 1개 — 취합 없이 %s/%s 사용" % (self.role, r0["provider"], r0["model"]))
+            out1 = {"text": r0["text"], "usage": usage_sum, "ms": (time.perf_counter() - t_start) * 1000, "model": r0["model"],
+                    "ensemble": {"members": meta_members, "aggregator": None, "policy": policy, "aggregated": False}}
+            _note_ensemble(out1["ensemble"], self.role)
+            return out1
+        # 2개 이상 → 취합
+        from . import prompts as _prompts
+        merge_rules = _prompts.get(self.prompt_name) or _prompts.DEFAULTS.get("ensemble_merge", "")
+        parts = ["[원래 작업의 시스템 프롬프트]", system.strip(), "", "[원래 작업의 사용자 프롬프트]", user.strip(), "",
+                 "[후보 답변 %d개]" % len(ok_rows)]
+        for n, r in enumerate(ok_rows, 1):
+            parts.append("")
+            parts.append("후보 %d — 모델 %s (%s), 가중치 %.2f:" % (n, r["model"], r["provider"], float(r["weight"])))
+            parts.append(r["text"].strip())
+        parts.append("")
+        parts.append("위 규칙에 따라 원래 작업의 형식 그대로 최종 답변 하나만 출력하세요." + (" 출력은 JSON 만." if json_mode else ""))
+        agg = self.aggregator if self.aggregator is not None else self.members[0][0]
+        ar = agg.complete(merge_rules, "\n".join(parts), max_tokens=max_tokens, effort=str(getattr(agg, "_ens_effort", "") or effort), json_mode=json_mode)
+        agg_meta = {"model": str(ar.get("model") or agg.model or ""), "provider": agg.name, "ms": float(ar.get("ms", 0) or 0),
+                    "usage": dict(ar.get("usage") or {}), "attempts": ar.get("attempts", 1), "prompt_chars": len(merge_rules) + sum(len(x) for x in parts)}
+        out = {"text": ar.get("text") or "", "usage": usage_sum, "ms": (time.perf_counter() - t_start) * 1000, "model": self.model,
+               "ensemble": {"members": meta_members, "aggregator": agg_meta, "policy": policy, "aggregated": True}}
+        _note_ensemble(out["ensemble"], self.role)
+        return out
+
+
+def summarize_ensemble(ens: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """앙상블 결과 → **단계 meta 에 실을 요약**. 앙상블이 아니면 None (화면이 배지를 안 그린다).
+
+    무엇을 남기나: 멤버 수·성공 수·취합 여부·대기 정책과, **멤버마다** 모델·프로바이더·ms·글자수·
+    토큰·실패 사유. 이것이 있어야 "앙상블로 돌았나", "누가 느렸나", "몇이 실패했나", "취합에 얼마나
+    더 썼나" 에 Web·CLI·MCP 가 같은 답을 할 수 있다.
+
+    본문(text)은 싣지 않는다 — trace 는 요청마다 저장되므로 크기가 배로 늘고 읽을 일도 드물다.
+    """
+    if not isinstance(ens, dict) or not ens.get("members"):
+        return None
+
+    def _u(d, k):
+        return int(((d or {}).get("usage") or {}).get(k) or 0)
+
+    members = []
+    for m in (ens.get("members") or []):
+        members.append({"model": m.get("model"), "provider": m.get("provider"),
+                        "ok": bool(m.get("ok")), "ms": round(float(m.get("ms") or 0)),
+                        "chars": int(m.get("chars") or 0), "weight": m.get("weight"),
+                        "input_tokens": _u(m, "input_tokens"), "output_tokens": _u(m, "output_tokens"),
+                        "error": (str(m.get("error"))[:160] if m.get("error") else None)})
+    agg = ens.get("aggregator") or None
+    return {"members": members, "n_members": len(members), "n_ok": sum(1 for m in members if m["ok"]),
+            "aggregated": bool(ens.get("aggregated")), "policy": ens.get("policy"),
+            "member_ms_max": max([m["ms"] for m in members] or [0]),
+            "aggregator": ({"model": agg.get("model"), "provider": agg.get("provider"),
+                            "ms": round(float(agg.get("ms") or 0)),
+                            "input_tokens": _u(agg, "input_tokens"),
+                            "output_tokens": _u(agg, "output_tokens")} if agg else None)}
+
+
+def _note_ensemble(ens: Dict[str, Any], role: str) -> None:
+    """앙상블이 돌았다는 사실을 **지금 열려 있는 단계**에 남긴다.
+
+    여기 한 곳에 두는 이유: 앙상블은 역할 11개(answer·rerank·extract·summary·review·expand·verify·
+    forensic·fusion·select…) 어디에나 켤 수 있다. 호출 자리마다 같은 코드를 넣으면 한 자리만 빠뜨려도
+    그 역할은 "앙상블인지 알 수 없는" 상태가 된다. 프로바이더가 직접 적으면 **켜는 곳마다 저절로** 보인다.
+    """
+    try:
+        from . import profiler as _prof
+        s = summarize_ensemble(ens)
+        if s:
+            _prof.note_current(ensemble=dict(s, role=role))
+    except Exception:
+        pass       # 관측은 본 기능을 막지 않는다
+
+
+def _make_ensemble(settings, role: str, cfg: Dict[str, Any], ens: Dict[str, Any]) -> EnsembleLLM:
+    from . import prompts as _prompts
+    """role_llm(role)['ensemble'](이미 기본값이 합쳐지고 빈 멤버가 걸러진 dict) → EnsembleLLM. 멤버·취합기는 _make_llm + apply_policy(역할 정책 상속)."""
+    members: List[Tuple[BaseLLM, float]] = []
+    for m in (ens.get("members") or [])[:ENSEMBLE_MAX_MEMBERS]:
+        llm = _make_llm(m.get("provider") or cfg["provider"], m.get("model") or cfg["model"], settings)
+        llm.role = role
+        apply_policy(llm, settings, role)
+        llm._ens_effort = str(m.get("effort") or "")       # 비우면 호출 시점의 역할 effort
+        members.append((llm, float(m.get("weight", 1.0) or 1.0)))
+    agg_cfg = ens.get("aggregator") or {}
+    aggregator: Optional[BaseLLM] = None
+    if agg_cfg.get("model"):
+        for llm, _ in members:      # 멤버와 같은 provider/model 이면 인스턴스를 공유 (stats·회로 상태가 하나로 모인다)
+            if llm.name == (agg_cfg.get("provider") or cfg["provider"]) and str(llm.model) == str(agg_cfg["model"]) and not agg_cfg.get("effort"):
+                aggregator = llm
+                break
+        if aggregator is None:
+            aggregator = _make_llm(agg_cfg.get("provider") or cfg["provider"], agg_cfg["model"], settings)
+            aggregator.role = role
+            apply_policy(aggregator, settings, role)
+            aggregator._ens_effort = str(agg_cfg.get("effort") or "")
+    # 취합 프롬프트: config 에 적은 이름 > 역할 전용 파일(ensemble_merge_<role>.md) > 공용 ensemble_merge.md
+    prompt_name = _prompts.ensemble_prompt_name(role, ens.get("prompt", ""))
+    ens_llm = EnsembleLLM(members, aggregator, wait=ens.get("wait", "all"), timeout_s=ens.get("timeout_s", 120),
+                          min_results=ens.get("min_results", 1), prompt=prompt_name, role=role)
+    return ens_llm
+
+
 # 모델 카탈로그 (UI 드롭다운/문서용; 자유 입력도 허용)
 MODEL_CATALOG: Dict[str, Any] = {
     "llm": {
@@ -777,10 +1119,15 @@ MODEL_CATALOG: Dict[str, Any] = {
 
 
 def make_llm(settings, role: Optional[str] = None) -> BaseLLM:
-    """settings.llm_provider/llm_model 또는 (role 이 주어지면) settings.llm_roles[role] 로 LLM 생성."""
+    """settings.llm_provider/llm_model 또는 (role 이 주어지면) settings.llm_roles[role] 로 LLM 생성.
+    역할의 ensemble 이 켜져 있고 활성 멤버가 1개 이상이면 EnsembleLLM(멤버 병렬 + 취합) 을 돌려준다.
+    provider 가 비어 있고 model 이 카탈로그(models.json)에 한 provider 로만 있으면 role_llm() 이 그 provider 를 고른다(provider_source=catalog)."""
     if role:
         cfg = settings.role_llm(role)
         provider, model = cfg["provider"], cfg["model"]
+        ens = cfg.get("ensemble") if isinstance(cfg.get("ensemble"), dict) else None
+        if ens and ens.get("enabled") and ens.get("members"):
+            return _make_ensemble(settings, role, cfg, ens)
     else:
         provider, model = settings.llm_provider, settings.llm_model
     llm = _make_llm(provider, model, settings)

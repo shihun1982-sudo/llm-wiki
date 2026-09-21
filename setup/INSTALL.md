@@ -1,4 +1,4 @@
-# 새 환경 설치 가이드 (setup/)
+﻿# 새 환경 설치 가이드 (setup/)
 
 상세한 포팅 절차(설정 파일 채우기 · 프로바이더 연결 · 코퍼스 계약 · 첫 빌드 검증 · 스케줄 · 운영)는 **[docs/BRINGUP_GUIDE.md](../docs/BRINGUP_GUIDE.md)** 를 보세요. 이 문서는 설치와 최소 설정만 다룹니다.
 
@@ -24,7 +24,7 @@
 | `mcp_clients.example.json` | 외부 LLM 클라이언트(Claude Code/Desktop · Cursor · opencode · Codex)에 붙여 넣는 MCP 설정 블록 4종. 환경 값이 채워진 버전: `python -m llmwiki mcp --client-config` — docs/MCP.md |
 | `mcp_sources.example.json` | `mcp_sources.json` 원본 — **다른 RAG · MCP 서버 · REST 검색 API** 를 붙이는 소스 4종 예시(peer_wiki http · kb_rest rest · mango stdio · mock). 토글 `external_rag`(검색 채널)·`mcp_federation`(도구 노출) — docs/RAG_FEDERATION.md |
 | (루트) `plugins/mcp_tools/` | MCP 플러그인 도구 폴더(`_example_echo.py` 예시; 밑줄을 지우면 활성) — docs/RAG_FEDERATION.md §3 |
-| (루트) `tools/verify/` | 전 기능 검증 하네스(CLI 184 · Web 210 · UI 배선 · 브라우저) — docs/VERIFICATION_0915.md |
+| (루트) `tools/verify/` | 전 기능 검증 하네스 25종(`verify_all.py` 한 줄) — docs/VERIFICATION.md |
 
 ## 1. 요구사항
 
@@ -89,7 +89,7 @@ run.bat test                        :: 단위 테스트 (87개)
 | `no embeddings for provider` / dim mismatch | 임베더·차원 변경 후 `build --full` |
 | 근거 부족(insufficient) 답변 | `forensic last` → 문서 추가 / `rules add` / `fallback_loop` 토글 |
 | 포트 사용 중 | `serve --port 8899` 또는 `config.json web_port` (mcp 단독 서버는 `mcp_port`) |
-| 옮긴 뒤 전부 정상인지 | `python tools/verify/verify_cli.py` · `verify_web.py` · `verify_ui_wiring.py` · `verify_browser.py` — docs/VERIFICATION_0915.md §6 |
+| 옮긴 뒤 전부 정상인지 | `python tools/verify/verify_cli.py` · `verify_web.py` · `verify_ui_wiring.py` · `verify_browser.py`, 또는 `verify_all.py` 한 줄 — docs/VERIFICATION.md §4 |
 
 ## 7. 폴더 이식
 

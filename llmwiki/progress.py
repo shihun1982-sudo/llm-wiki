@@ -106,10 +106,22 @@ STAGE_LABELS: Dict[str, str] = {
     "fts_search_alt": "대체 질의 검색", "fts_search_related": "관련어 검색", "vector_search": "벡터 검색", "graph_search": "그래프 검색",
     "doc_vector_search": "문서 카드 검색", "external_rag": "외부 RAG 검색", "rrf_fuse": "융합", "boost": "부스트", "rerank_llm": "LLM 리랭크", "rerank_api": "API 리랭크",
     "rerank_local": "로컬 리랭크", "rerank_cross_encoder": "크로스인코더 리랭크", "doc_expand": "문서 단위 확장", "context": "컨텍스트 조립", "evidence_check": "근거 충분성 판정",
+    "fusion_llm": "융합 뒤 LLM 검토", "rerank_review_llm": "리랭크 뒤 LLM 선택",
     "build_channel": "채널 빌드", "reindex_fts": "FTS 재색인", "forensic_expect": "기대 결과 포렌식",
     "fallback": "확장 재검색(fallback)", "evidence_compress": "근거 압축(LLM)", "answer_llm": "LLM 답변 생성", "answer_extractive": "추출식 답변",
     "answer_insufficient": "근거 부족 응답", "claim_check": "claim 검증", "answer_refine": "답변 재작성(LLM)", "forensic": "포렌식 진단",
     "evolve_capture": "자가진화 제안 수집", "episode": "에피소드 기록", "run": "평가 실행", "eval": "평가",
+    # 2026-09-19: architecture.py 레지스트리가 아는 단계 이름을 여기에도 모두 채운다.
+    # 세 곳(코드가 만드는 이름 · 레지스트리 · 이 라벨표)이 어긋나면 화면에 영문 키가 그대로 나오거나
+    # 단계에 토글·튜닝·시간 제한이 붙지 않는다. tools/verify/verify_stage_align.py 가 어긋남을 잡는다.
+    "doc_acl": "문서 접근 제어",
+    "cache_hit": "질의 캐시 확인", "precompute_hit": "사전 계산 적중", "precompute_miss": "사전 계산 없음",
+    "expansion_profile": "질의 확장 효과 기록", "channel_inject": "채널 결과 주입", "external_inject": "외부 결과 주입",
+    "mcp_enrich": "외부 소스 보강", "rerank": "리랭크", "degrees": "노드 차수 계산", "doc_refs": "문서 참조 집계",
+    "answer": "답변 생성", "claim": "답변 검증", "evidence": "근거 충분성", "log": "요청 기록",
+    "analysis": "상세 분석 리포트", "capture": "제안 생성", "hitl": "사람 검토", "apply": "적용 · 재색인",
+    "snapshot": "스냅샷", "regress": "회귀 평가", "evolution_log": "진화 이력",
+    "scan": "코퍼스 변경 스캔", "build_incremental": "증분 빌드",
 }
 
 

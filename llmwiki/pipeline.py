@@ -45,6 +45,20 @@ from . import prompts as _prompts
 from . import logging_setup as _log
 from . import progress as _pg
 from .providers import parse_json, LLMError
+
+
+def _role_overridden(cfg: Any) -> bool:
+    """llm_roles.<role> 에 '실제로 지정한 값' 이 있는지. `config fill-defaults` 가 적어 둔 빈 뼈대("" · 꺼진 ensemble)는 지정이 아니다."""
+    if not isinstance(cfg, dict):
+        return False
+    for k, v in cfg.items():
+        if k == "ensemble":
+            if isinstance(v, dict) and v.get("enabled"):
+                return True
+            continue
+        if v not in (None, "", {}, []):
+            return True
+    return False
 from . import providers as _providers
 from .buildlock import BuildLock, BuildLockedError
 
@@ -104,7 +118,9 @@ class Pipeline:
         _tuning.load_tuning()
         self._init_text_plugins()
         self.store = Store(settings.db_path, busy_timeout_s=float(getattr(settings, "db_busy_timeout_s", 30.0) or 30.0),
-                           pool_size=int(getattr(settings, "db_pool_size", 16) or 16))
+                           pool_size=int(getattr(settings, "db_pool_size", 16) or 16),
+                           max_live=int(getattr(settings, "db_max_live_connections", 64) or 0),
+                           wait_timeout_s=float(getattr(settings, "db_pool_wait_timeout_s", 2.0) or 0.0))
         self._seen_version = self.store.build_version()
         self._llms = _LlmCache()
         self._embedders: Dict[str, Any] = {}
@@ -138,6 +154,25 @@ class Pipeline:
     def in_request_scope(self) -> bool:
         return getattr(self._tls, "settings", None) is not None
 
+    # ---------- 요청자 신분 (스레드 로컬) ----------
+    # 2026-09-19: 검색이 "누가 묻는가" 를 알아야 문서 단위 접근 제어를 할 수 있다 (llmwiki/docacl.py).
+    # 함수 서명을 줄줄이 바꾸는 대신, 요청 범위와 같은 스레드 로컬에 실어 보낸다 —
+    # Web/MCP/CLI/스케줄러가 모두 request_scope() 로 감싸므로 한 자리에서 들어오고 한 자리에서 지워진다.
+    @property
+    def actor(self) -> Dict[str, str]:
+        return getattr(self._tls, "actor", None) or {"user": "", "role": "admin", "origin": ""}
+
+    @actor.setter
+    def actor(self, v: Optional[Dict[str, str]]) -> None:
+        self._tls.actor = dict(v or {})
+
+    def acl_filter(self):
+        """이 요청자의 문서 접근 판정기. 규칙이 없으면 아무도 막지 않는다."""
+        from . import docacl as _acl
+        if not bool(getattr(self.s.toggles, "doc_acl", True)):
+            return _acl.Filter("admin", {}, {"enabled": False, "rules": [], "default_min_role": "viewer"})
+        return _acl.Filter(self.actor.get("role") or "viewer", self.store.doc_meta_map())
+
     @property
     def tuning(self):
         return _tuning.T
@@ -147,18 +182,38 @@ class Pipeline:
         pass
 
     @contextlib.contextmanager
-    def request_scope(self, overrides: Optional[Dict[str, Any]] = None, presets: Optional[List[str]] = None, mode: str = ""):
-        """요청 하나의 격리 범위: 설정 사본(+overrides) · 튜닝 오버레이(+presets/mode) · 스레드 전용 DB 연결.
-        Web/MCP/CLI(콘솔)/스케줄러/워처가 모두 이걸로 감싼다. 중첩되면 바깥 사본을 바탕으로 다시 사본을 만든다."""
+    def request_scope(self, overrides: Optional[Dict[str, Any]] = None, presets: Optional[List[str]] = None, mode: str = "",
+                      actor: Optional[Dict[str, str]] = None):
+        """요청 하나의 격리 범위: 설정 사본(+overrides) · 튜닝 오버레이(+presets/mode) · 스레드 전용 DB 연결 · **요청자 신분**.
+        Web/MCP/CLI(콘솔)/스케줄러/워처가 모두 이걸로 감싼다. 중첩되면 바깥 사본을 바탕으로 다시 사본을 만든다.
+
+        actor: {"user","role","origin"} — 문서 단위 접근 제어(docacl)가 이 역할로 근거를 거른다.
+        주지 않으면 바깥 범위의 값을 잇고, 그것도 없으면 admin (CLI·내부 호출은 제한하지 않는다)."""
+        prev_actor = getattr(self._tls, "actor", None)
+        if actor is not None:
+            self._tls.actor = dict(actor)
         prev_s = getattr(self._tls, "settings", None)
         base = prev_s if prev_s is not None else self._base_s
         s_local = base.copy()
         if overrides is not None and not isinstance(overrides, dict):
             raise ValueError("overrides 는 객체(JSON object)여야 합니다 (받은 값: %s)" % type(overrides).__name__)
+        # overrides["tuning"] = {키: 값} 은 Settings 가 아니라 이 요청의 튜닝 오버레이로 간다 (Web/MCP/CLI --tuning 이 같은 길).
+        # 모르는 키·범위 밖 값은 ValueError 로 바로 알린다 — 조용히 버리면 "설정이 안 먹는다" 로 보인다.
+        tun_ov = overrides.get("tuning") if overrides else None
+        if tun_ov is not None and not isinstance(tun_ov, dict):
+            raise ValueError("overrides.tuning 은 객체(JSON object)여야 합니다 (받은 값: %s)" % type(tun_ov).__name__)
         if overrides:
-            apply_overrides(s_local, overrides)
+            apply_overrides(s_local, {k: v for k, v in overrides.items() if k != "tuning"})
         self._tls.settings = s_local
         prev_ov = _tuning.T.push_overlay()
+        if tun_ov:
+            try:
+                for k, v in tun_ov.items():
+                    _tuning.T.set(str(k), v)
+            except (KeyError, ValueError, TypeError) as e:
+                _tuning.T.pop_overlay(prev_ov)
+                self._tls.settings = prev_s
+                raise ValueError("overrides.tuning: %s" % e)
         names = [x for x in (presets or []) if x]
         if mode == "deep":
             names.append("deep_research")
@@ -174,6 +229,8 @@ class Pipeline:
         finally:
             _tuning.T.pop_overlay(prev_ov)
             self._tls.settings = prev_s
+            if actor is not None:
+                self._tls.actor = prev_actor
 
     # ---------- lazy providers ----------
     @property
@@ -183,6 +240,7 @@ class Pipeline:
 
     def _llm_key(self, role: str) -> Tuple[Any, ...]:
         s = self.s
+        # role_llm() 은 ensemble(기본값 병합·활성 멤버·취합기) 과 provider_source 까지 돌려주므로 앙상블 설정 변경(요청 단위 오버라이드 포함)도 서명에 들어간다
         rc = s.role_llm(role) if role != "default" else {"provider": s.llm_provider, "model": s.llm_model}
         base = tuple((k, json.dumps(getattr(s, k, None), sort_keys=True, default=str)) for k in PROVIDER_SIG_KEYS)
         return (role, json.dumps(rc, sort_keys=True, default=str), base)
@@ -306,8 +364,10 @@ class Pipeline:
         with prof.stage("providers", created=need) as st:
             info = {}
             for r in roles:
-                llm = self.llm_for(r)
-                info[r] = "%s/%s%s" % (llm.name, llm.model, "" if llm.available else " (unavailable)")
+                llm = self.llm_for(r)      # 앙상블이면 make_llm 이 멤버·취합기까지 만든다
+                members = getattr(llm, "members", None)
+                info[r] = "%s/%s%s%s" % (llm.name, llm.model, (" (ensemble %d members)" % len(members)) if members else "",
+                                         "" if llm.available else " (unavailable)")
             emb = self.embedder
             info["embedder"] = "%s d=%s" % (emb.name, emb.dim)
             st.note(**info)
@@ -354,7 +414,8 @@ class Pipeline:
         - 빌드 파일 락 안에서 실행 (다른 프로세스의 빌드와 겹치지 않게)
         - snapshot=True 면 지우기 전에 data/snapshots/ 에 자동 스냅샷 (`snapshot list|restore`) — 실수로 지워도 되돌릴 수 있다"""
         with self._lock:
-            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="reset")
+            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout,
+                         stale_after_s=self.s.build_lock_stale_s, cmd="reset")
             lock.acquire()
             try:
                 return self._reset_index(keep_logs, keep_wiki_notes, snapshot, actor, snapshot_keep)
@@ -406,7 +467,9 @@ class Pipeline:
         for role in Settings.LLM_ROLES:
             cfg = self.s.role_llm(role)
             llm = self.llm_for(role)
-            roles[role] = dict(llm.describe(), configured=cfg, overridden=bool((self.s.llm_roles or {}).get(role)))
+            # describe() 는 앙상블이면 members/aggregator 를 포함한다. provider_source(role|global|catalog) 와 ensemble 설정은 configured 안에 있다.
+            roles[role] = dict(llm.describe(), configured=cfg, overridden=_role_overridden((self.s.llm_roles or {}).get(role)),
+                               provider_source=cfg.get("provider_source", ""), ensemble_enabled=bool((cfg.get("ensemble") or {}).get("enabled")))
         llm = self.llm
         emb = self.embedder
         try:
@@ -450,9 +513,228 @@ class Pipeline:
                     if key not in live_done:
                         live_done[key] = llm.live_test()
                     lv = live_done[key]
-                    row.update(live_ok=lv["ok"], live_ms=round(lv["ms"], 1), live_detail=lv["detail"], ok=bool(r.get("ok")) and lv["ok"])
+                    # 2026-09-19: **실제 호출이 성공하면 그 프로바이더는 쓸 수 있다.** 예전에는 ping 의 ok 까지
+                    # and 로 묶어서, 모델 목록 표기가 다르다는 이유만으로 "실제 호출 ✓" 인데도 ✗ 로 보였다.
+                    # ping 결과는 ping_ok 로 따로 남겨 화면이 "연결은 됐지만 목록에 없음" 을 구분해 보여 준다.
+                    row.update(live_ok=lv["ok"], live_ms=round(lv["ms"], 1), live_detail=lv["detail"],
+                               ping_ok=bool(r.get("ok")), ok=bool(lv["ok"]))
+                    if lv.get("members") is not None:     # 앙상블: 멤버·취합기별 live 결과도 그대로 싣는다
+                        row["live_members"], row["live_aggregator"] = lv.get("members"), lv.get("aggregator")
+                try:
+                    cfg = self.s.role_llm(w)
+                except Exception:
+                    cfg = {}
+                row["provider_source"] = cfg.get("provider_source", "")
+                if cfg.get("ensemble", {}).get("enabled"):
+                    row["ensemble"] = {k: cfg["ensemble"].get(k) for k in ("wait", "timeout_s", "min_results", "prompt", "aggregator")}
+                    row["ensemble"]["members"] = [{"provider": m["provider"], "model": m["model"], "weight": m["weight"]} for m in cfg["ensemble"]["members"]]
+                hint = self._catalog_hint(cfg.get("provider"), cfg.get("model"), cfg.get("provider_source", ""))
+                if hint:
+                    row["hint"] = hint
                 out[w] = row
         return out
+
+    @staticmethod
+    def _catalog_hint(provider: Any, model: Any, source: str = "") -> str:
+        """설정의 provider/model 짝이 카탈로그(models.json)와 다르면 한 줄 힌트 (계획 §0.1-c). 카탈로그가 자동으로 고른 경우도 알려 준다."""
+        try:
+            from . import models_catalog as _mc
+            cp = _mc.provider_for(str(model or ""))
+        except Exception:
+            return ""
+        p = str(provider or "")
+        if not cp or p in ("auto", "mock", "none"):
+            return ""
+        if source == "catalog":
+            return "provider 가 비어 있어 카탈로그의 provider %s 를 사용했습니다 (models.json: %s) — 다른 provider 를 쓰려면 llm_roles.<role>.provider 를 적으세요" % (cp, model)
+        if cp != p:
+            return "카탈로그에는 %s 이 provider %s 로 등록되어 있습니다 — provider 를 바꾸거나 카탈로그를 고치세요 (지금 provider=%s)" % (model, cp, p)
+        return ""
+
+    def test_catalog(self, live: bool = False, kinds: Optional[List[str]] = None) -> Dict[str, Any]:
+        """카탈로그(models.json) 전체 연결 테스트 (계획 §0.1-d): enabled 항목마다 (provider, model) 로 ping, live=True 면 완성 호출 1회.
+        kinds: ["llm","embed","rerank"] 중 검사할 절 (기본 llm+embed; rerank 는 rerank_url 이 있을 때만).
+        반환 {"rows": [{id, provider, kind, label, ok, ms, detail, live_ok?, live_ms?, live_detail?}], "n", "ok_n", "live", "path"}."""
+        from . import models_catalog as _mc
+        from .providers import _make_llm, apply_policy, make_embedder
+        cat = _mc.load_catalog(force=True)
+        kinds = kinds or ["llm", "embed"] + (["rerank"] if self.s.rerank_url else [])
+        rows: List[Dict[str, Any]] = []
+        seen: Dict[str, Dict[str, Any]] = {}
+        for m in cat.get("models", []):
+            if "llm" not in kinds or not m.get("enabled", True):
+                continue
+            prov, mid = str(m.get("provider") or "auto"), str(m.get("id") or "")
+            key = "llm:%s/%s" % (prov, mid)
+            if key in seen:
+                rows.append(dict(seen[key], id=mid, provider=prov, kind="llm", label=m.get("label") or "", detail="(위와 같은 provider/model)"))
+                continue
+            row: Dict[str, Any] = {"id": mid, "provider": prov, "kind": "llm", "label": m.get("label") or ""}
+            t0 = time.perf_counter()
+            try:
+                llm = apply_policy(_make_llm(prov, mid, self.s), self.s, None)
+                r = llm.ping()
+                row.update(ok=bool(r.get("ok")), ms=round(float(r.get("ms") or (time.perf_counter() - t0) * 1000), 1), detail=str(r.get("detail") or ""),
+                           available=bool(getattr(llm, "available", False)))
+                # ping 이 실패해도 실제 호출은 해 본다: "모델 목록에 없다" 는 표기 차이일 뿐 호출은 되는 경우가 많다.
+                # 실제 호출이 성공하면 그 모델은 **쓸 수 있는 것**이므로 최종 ok 는 live 결과를 따른다.
+                if live:
+                    lv = llm.live_test()
+                    row.update(live_ok=bool(lv.get("ok")), live_ms=round(float(lv.get("ms") or 0), 1), live_detail=str(lv.get("detail") or ""),
+                               ping_ok=row["ok"], ok=bool(lv.get("ok")))
+            except Exception as e:
+                row.update(ok=False, ms=round((time.perf_counter() - t0) * 1000, 1), detail="error: %s" % str(e)[:300])
+            seen[key] = row
+            rows.append(row)
+        for m in cat.get("embed", []):
+            if "embed" not in kinds or not m.get("enabled", True):
+                continue
+            prov, mid = str(m.get("provider") or "auto"), str(m.get("id") or "")
+            row = {"id": mid or "(hash)", "provider": prov, "kind": "embed", "label": m.get("label") or ""}
+            t0 = time.perf_counter()
+            try:
+                s2 = self.s.copy()
+                s2.embed_provider, s2.embed_model = prov, mid
+                if prov == "hash":
+                    s2.embed_dim = min(int(s2.embed_dim or 256), 256)      # 검사용: 큰 hash 행렬을 만들 필요가 없다
+                emb = make_embedder(s2)
+                r = emb.ping()
+                row.update(ok=bool(r.get("ok")), ms=round(float(r.get("ms") or (time.perf_counter() - t0) * 1000), 1),
+                           detail=str(r.get("detail") or ""), dim=r.get("dim") or getattr(emb, "dim", None))
+            except Exception as e:
+                row.update(ok=False, ms=round((time.perf_counter() - t0) * 1000, 1), detail="error: %s" % str(e)[:300])
+            rows.append(row)
+        for m in cat.get("rerank", []):
+            if "rerank" not in kinds or not m.get("enabled", True):
+                continue
+            prov, mid = str(m.get("provider") or "cohere"), str(m.get("id") or "")
+            row = {"id": mid, "provider": prov, "kind": "rerank", "label": m.get("label") or ""}
+            t0 = time.perf_counter()
+            try:
+                from .rerankers import ping_rerank_api
+                s2 = self.s.copy()
+                s2.rerank_api_style, s2.rerank_api_model = prov, mid
+                r = ping_rerank_api(s2)
+                row.update(ok=bool(r.get("ok")), ms=round(float(r.get("ms") or (time.perf_counter() - t0) * 1000), 1), detail=str(r.get("detail") or ""))
+            except Exception as e:
+                row.update(ok=False, ms=round((time.perf_counter() - t0) * 1000, 1), detail="error: %s" % str(e)[:300])
+            rows.append(row)
+        return {"rows": rows, "n": len(rows), "ok_n": sum(1 for r in rows if r.get("ok")), "live": bool(live), "path": _mc.catalog_path(),
+                "note": "ping 만 확인" if not live else "ping + 실제 완성 호출 1회 (같은 provider/model 은 1회)"}
+
+    def automap_models(self, live: bool = False, apply: bool = False,
+                       test: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """**연결되는 모델만 골라 역할에 자동 배정한다** (2026-09-19).
+
+        왜: 새 환경에 옮기면 카탈로그에는 모델이 20여 개 있는데 그중 무엇이 실제로 붙는지 모른 채
+        역할 10개를 손으로 하나씩 맞춰야 했다. 카탈로그 전체 연결 테스트를 이미 돌리고 있으니,
+        그 결과에서 **쓸 수 있는 모델만** 추려 역할에 한 번에 꽂아 준다.
+
+        고르는 규칙 (먼저 맞는 것이 이긴다)
+          1. 연결 테스트를 통과한 모델만 후보. live=True 면 실제 호출까지 성공한 것만.
+          2. 카탈로그의 `roles` 가 그 역할을 (또는 `*` 로 전부를) 가리키는 모델.
+          3. 그중 카탈로그에 적힌 순서가 앞선 것 — models.json 의 줄 순서가 곧 선호 순위다.
+          4. 역할 전용 후보가 없으면 `*` 후보, 그것도 없으면 통과한 아무 LLM.
+        임베딩과 API 리랭크도 같은 방식으로 하나씩 고른다.
+
+        apply=False 면 제안만 돌려준다(기본). apply=True 면 config.json 의 `llm_roles`
+        (+ 필요하면 embed_provider/embed_model·rerank_api_model)를 저장하고 프로바이더를 다시 만든다.
+        """
+        from . import models_catalog as _mc
+        from .config import save_settings
+        res = test or self.test_catalog(live=live)
+        rows = res.get("rows") or []
+        cat = _mc.load_catalog(force=True)
+        order = {("%s/%s" % (m.get("provider") or "auto", m.get("id") or "")): i for i, m in enumerate(cat.get("models", []))}
+        roles_of = {("%s/%s" % (m.get("provider") or "auto", m.get("id") or "")): list(m.get("roles") or ["*"])
+                    for m in cat.get("models", [])}
+
+        def passed(r):
+            if not r.get("ok"):
+                return False
+            return bool(r.get("live_ok")) if (live and "live_ok" in r) else True
+
+        # 순위: 폴백용(mock·hash)은 맨 뒤로 민다. 연결은 늘 되지만 품질이 목적이 아니라서,
+        # 진짜 모델이 하나라도 붙으면 그쪽을 골라야 한다 (자동 매핑이 hash 임베딩을 고르면 검색 품질이 무너진다).
+        FALLBACK = ("mock", "hash", "none")
+
+        def rank(r):
+            prov, mid = str(r.get("provider") or ""), str(r.get("id") or "")
+            fb = 1 if (prov in FALLBACK or mid in ("", "(hash)")) else 0
+            return (fb, order.get("%s/%s" % (prov, mid), 9999), mid)
+
+        llm_ok = sorted([r for r in rows if r.get("kind") == "llm" and passed(r)], key=rank)
+        embed_ok = sorted([r for r in rows if r.get("kind") == "embed" and passed(r)], key=rank)
+        rerank_ok = sorted([r for r in rows if r.get("kind") == "rerank" and passed(r)], key=rank)
+
+        proposal: Dict[str, Any] = {}
+        for role in Settings.LLM_ROLES:
+            cur = self.s.role_llm(role)
+            pick, why = None, ""
+            for r in llm_ok:
+                rs = roles_of.get("%s/%s" % (r["provider"], r["id"]), ["*"])
+                if role in rs:
+                    pick, why = r, "카탈로그에서 %s 역할용으로 등록된 모델" % role
+                    break
+            if pick is None:
+                for r in llm_ok:
+                    if "*" in roles_of.get("%s/%s" % (r["provider"], r["id"]), ["*"]):
+                        pick, why = r, "모든 역할에 쓸 수 있는 모델(roles=*)"
+                        break
+            if pick is None and llm_ok:
+                pick, why = llm_ok[0], "이 역할용 모델이 없어 연결되는 첫 모델로"
+            if pick is None:
+                proposal[role] = {"kind": "llm", "provider": "", "model": "", "current": "%s/%s" % (cur["provider"], cur["model"]),
+                                  "why": "연결되는 LLM 이 하나도 없습니다", "changed": False, "ok": False}
+                continue
+            newv = "%s/%s" % (pick["provider"], pick["id"])
+            proposal[role] = {"kind": "llm", "provider": pick["provider"], "model": pick["id"],
+                              "label": pick.get("label") or "", "ms": pick.get("ms"),
+                              "current": "%s/%s" % (cur["provider"], cur["model"]),
+                              "changed": newv != "%s/%s" % (cur["provider"], cur["model"]),
+                              "why": why, "ok": True}
+        if embed_ok:
+            e = embed_ok[0]
+            proposal["embed"] = {"kind": "embed", "provider": e["provider"], "model": e["id"] if e["id"] != "(hash)" else "",
+                                 "label": e.get("label") or "", "dim": e.get("dim"),
+                                 "current": "%s/%s" % (self.s.embed_provider, self.s.embed_model or "(hash)"),
+                                 "changed": (e["provider"] != self.s.embed_provider or (e["id"] if e["id"] != "(hash)" else "") != self.s.embed_model),
+                                 "why": "연결되는 임베딩 모델 중 카탈로그 첫 항목", "ok": True,
+                                 "warn": "임베딩 모델을 바꾸면 벡터 채널을 다시 만들어야 합니다 (`build vector --full`)"}
+        if rerank_ok:
+            r0 = rerank_ok[0]
+            proposal["rerank_api"] = {"kind": "rerank", "provider": r0["provider"], "model": r0["id"],
+                                      "current": "%s/%s" % (self.s.rerank_api_style, self.s.rerank_api_model or "-"),
+                                      "changed": r0["id"] != self.s.rerank_api_model,
+                                      "why": "연결되는 리랭크 API 중 첫 항목", "ok": True}
+
+        applied: List[str] = []
+        if apply:
+            roles_cfg = dict(self.s.llm_roles or {})
+            for role in Settings.LLM_ROLES:
+                p = proposal.get(role) or {}
+                if not p.get("ok") or not p.get("changed"):
+                    continue
+                d = dict(roles_cfg.get(role) or {})
+                d["provider"], d["model"] = p["provider"], p["model"]
+                roles_cfg[role] = d
+                applied.append("%s=%s/%s" % (role, p["provider"], p["model"]))
+            self.s.llm_roles = roles_cfg
+            pe = proposal.get("embed")
+            if pe and pe.get("changed"):
+                self.s.embed_provider, self.s.embed_model = pe["provider"], pe["model"]
+                applied.append("embed=%s/%s" % (pe["provider"], pe["model"] or "(hash)"))
+            pr = proposal.get("rerank_api")
+            if pr and pr.get("changed"):
+                self.s.rerank_api_style, self.s.rerank_api_model = pr["provider"], pr["model"]
+                applied.append("rerank_api=%s" % pr["model"])
+            if applied:
+                save_settings(self.s)
+                self.reload()          # 저장한 값을 전역 설정으로 올리고 프로바이더를 다시 만든다
+        return {"proposal": proposal, "applied": applied, "live": bool(live),
+                "candidates": {"llm": len(llm_ok), "embed": len(embed_ok), "rerank": len(rerank_ok)},
+                "tested": res.get("n"), "ok_n": res.get("ok_n"), "path": _mc.catalog_path(),
+                "note": "실제 호출까지 성공한 모델만" if live else "ping 이 통과한 모델만 (--live 로 실제 호출까지 확인 가능)"}
 
     # =====================================================================
     # BUILD
@@ -462,7 +744,8 @@ class Pipeline:
         """force=True: health 실패/락 대기 없이 강행. health=None 이면 toggles.health_check 를 따름.
         channels: ['fts','vector','graph'] 중 이번 빌드에서 처리할 채널만 (없는 채널의 단계는 skipped). 문서 로드·청킹은 항상 수행."""
         with self._lock:
-            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="build")
+            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout,
+                         stale_after_s=self.s.build_lock_stale_s, cmd="build")
             try:
                 lock.acquire()
             except BuildLockedError as e:
@@ -869,7 +1152,8 @@ class Pipeline:
         if channel not in BUILD_CHANNELS:
             raise ValueError("unknown channel %r (fts|vector|graph)" % channel)
         with self._lock:
-            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout, cmd="build %s" % channel)
+            lock = BuildLock(os.path.join(self.s.data_dir, "build.lock"), timeout=self.s.build_lock_timeout,
+                         stale_after_s=self.s.build_lock_stale_s, cmd="build %s" % channel)
             lock.acquire()
             try:
                 return self._build_channel(channel, full, progress, debug, force)
@@ -1087,9 +1371,32 @@ class Pipeline:
     # =====================================================================
     # QUERY
     # =====================================================================
+    def visibility_key(self) -> str:
+        """**무엇을 볼 수 있는가**를 나타내는 캐시 구획 이름. 답변 캐시·사전계산 캐시의 키에 들어간다.
+
+        왜 필요한가: 캐시가 맞으면 `doc_acl` 단계는 실행조차 되지 않는다(조기 반환). 키에 신분이 없으면
+        admin 이 한 번 물은 답이 그대로 viewer 에게 돌아간다 — 접근 제어가 캐시 하나로 무너진다.
+
+        **사용자 이름이 아니라 '가시성 등급' 으로 나눈다.** 사용자별로 나누면 30명 환경에서 적중률이 1/30 이
+        되어 캐시를 켜는 의미가 사라진다. 같은 역할은 같은 문서를 보므로 역할 하나가 곧 한 구획이다.
+        규칙이 없으면(=아무도 안 막힘) 모두 같은 구획을 쓴다 — 예전과 같은 적중률.
+        """
+        try:
+            from . import docacl as _acl
+            if not bool(getattr(self.s.toggles, "doc_acl", True)):
+                return "all"
+            acl = _acl.load()
+            if not (bool(acl.get("enabled", True)) and (acl.get("rules") or _acl._rank(acl.get("default_min_role")) > 0)):
+                return "all"          # 규칙 없음 = 누구나 같은 것을 본다
+            role = (self.actor or {}).get("role") or "viewer"
+            return "admin" if role == "admin" else "role:%s" % role
+        except Exception:
+            return "unknown"          # 판정 실패 시 구획을 분리해 둔다 (섞이는 것보다 낫다)
+
     def _cache_key(self, q: str) -> str:
         t = self.s.toggles
-        sig = {"q": q.strip(), "toggles": {k: v for k, v in t.__dict__.items() if not k.startswith("evolve")},
+        sig = {"q": q.strip(), "vis": self.visibility_key(),
+               "toggles": {k: v for k, v in t.__dict__.items() if not k.startswith("evolve")},
                "k": [self.s.top_k_fts, self.s.top_k_vector, self.s.top_k_graph, self.s.top_k_final, self.s.graph_hops, self.s.rrf_k],
                "ctx": [self.s.context_max_chars, self.s.context_chunk_chars, self.s.rerank_candidates, self.s.answer_max_tokens],
                "llm": [self.llm_for("answer").describe().get("model"), self.llm_for("rerank").describe().get("model")],
@@ -1100,7 +1407,8 @@ class Pipeline:
     def answer_signature(self) -> Dict[str, Any]:
         """답변 결과에 영향을 주는 설정 요약 (precompute 캐시 키)."""
         s, t = self.s, self.s.toggles
-        return {"toggles": {k: v for k, v in t.__dict__.items() if not k.startswith(("evolve", "log_", "forensic", "health", "profile"))},
+        return {"vis": self.visibility_key(),     # 접근 제어 구획 — 캐시가 맞으면 doc_acl 은 실행되지 않는다
+                "toggles": {k: v for k, v in t.__dict__.items() if not k.startswith(("evolve", "log_", "forensic", "health", "profile"))},
                 "k": [s.top_k_fts, s.top_k_vector, s.top_k_graph, s.top_k_final, s.graph_hops, s.rrf_k],
                 "ctx": [s.context_max_chars, s.context_chunk_chars, s.rerank_candidates, s.answer_max_tokens],
                 "llm": [self.s.role_llm("answer")["model"], self.s.role_llm("rerank")["model"]], "emb": self.s.embed_provider,
@@ -1108,9 +1416,17 @@ class Pipeline:
 
     def query(self, q: str, log: bool = True, overrides: Optional[Dict[str, Any]] = None,
               debug: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """질의 (v3 엔진). overrides 는 호출 전 apply_overrides 로 적용하는 것을 권장(Web 서버 방식)."""
+        """질의 (v3 엔진).
+
+        `overrides` 를 주면 이 호출 동안만 적용한다(안쪽 request_scope 로 감싸므로 바깥 범위는 그대로).
+        2026-09-19 이전에는 이 인자를 **받아 놓고 무시**해서, 넘긴 쪽은 설정이 먹은 줄 알지만 아무 일도
+        일어나지 않았다 — 값을 조용히 버리는 인자는 두지 않는다. Web 서버처럼 여러 요청을 다룰 때는
+        여전히 `request_scope(overrides=…)` 로 감싸는 편이 낫다(프리셋·신분과 한 범위에서 처리된다)."""
         from .query_engine import QueryEngine
-        return QueryEngine(self).run(q, log=log, debug=debug)
+        if not overrides:
+            return QueryEngine(self).run(q, log=log, debug=debug)
+        with self.request_scope(overrides=overrides):
+            return QueryEngine(self).run(q, log=log, debug=debug)
 
     def rerun(self, request_id: Any, point: str, log: bool = True, debug: Optional[int] = None,
               query: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -1211,9 +1527,11 @@ class Pipeline:
         else:
             prof.skipped("fts_search")
         if t.vector:
-            lists["vector"] = vector_search(self.store, self.embedder, q, s.top_k_vector, prof)
+            lists["vector"] = vector_search(self.store, self.embedder, q, s.top_k_vector, prof,
+                                            bool(getattr(s.toggles, "embed_query_cache", True)))
             for i, aq in enumerate(alt_queries):
-                lists["vector_alt%d" % (i + 1)] = vector_search(self.store, self.embedder, aq, s.top_k_vector, prof)
+                lists["vector_alt%d" % (i + 1)] = vector_search(self.store, self.embedder, aq, s.top_k_vector, prof,
+                                                                bool(getattr(s.toggles, "embed_query_cache", True)))
                 weights["vector_alt%d" % (i + 1)] = weights.get("vector", 1.0) * T.get("query_expand_w")
         else:
             prof.skipped("vector_search")
@@ -1236,9 +1554,16 @@ class Pipeline:
             prof.skipped("rerank")
         final = hits[: s.top_k_final]
 
-        with prof.stage("context", max_chars=s.context_max_chars, trim=t.context_trim, dedupe=t.dedupe_hits) as st:
-            ctx = build_context(final, chunks, graph_res if t.graph else None, s.context_max_chars, query=q,
-                                trim=t.context_trim, dedupe=t.dedupe_hits, chunk_chars=s.context_chunk_chars, stage=st, store=self.store)
+        from . import models_catalog as _mc
+        budget = _mc.context_budget(s, "answer")     # 설정값과 모델 창 중 작은 쪽 (query_engine 과 같은 규칙)
+        with prof.stage("context", max_chars=budget["chars"], configured=budget["configured"],
+                        model_window=budget["window_tokens"], budget_limited=budget["limited"],
+                        trim=t.context_trim, dedupe=t.dedupe_hits) as st:
+            if budget["limited"]:
+                st.note(budget=budget["reason"])
+            ctx = build_context(final, chunks, graph_res if t.graph else None, budget["chars"], query=q,
+                                trim=t.context_trim, dedupe=t.dedupe_hits, chunk_chars=s.context_chunk_chars, stage=st, store=self.store,
+                                guard=bool(getattr(t, "context_guard", True)))
             st.note(chars=ctx["chars"], citations=len(ctx["citations"]))
         al = self.llm_for("answer")
         ans = generate_answer(q, ctx, al, t.llm_answer, prof, s.role_llm("answer")["effort"], chunks, final,
@@ -1281,6 +1606,8 @@ class Pipeline:
                                                       {"top_fused": final[0].fused if final else 0, "n_hits": len(final)}, trace)
         result["request_id"] = self.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)},
                                                       result["config"], None, keep=s.keep_requests, archive_dir=s.requests_archive_dir())
+        if result.get("query_id"):
+            self.store.set_query_request_id(int(result["query_id"]), int(result["request_id"] or 0))
         # 반복 루프로 망가진 답변은 캐시하지 않는다 — 한 번 캐시되면 그 질문은 계속 같은 고장 답변을 즉시 돌려준다
         if key and not result.get("repeat_loop"):
             self.qcache_put(key, {"result": dict(result), "trace": trace})
@@ -1302,25 +1629,56 @@ class Pipeline:
     # =====================================================================
     # EVAL
     # =====================================================================
-    def evaluate(self, k: int = 5, questions: Optional[List[Dict[str, Any]]] = None, log: bool = False
-                 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    #: 답변에 LLM 을 쓰는 토글 — `retrieval_only` 가 한 번에 끈다.
+    #  검색 지표(hit@k·MRR·term_recall)는 LLM 없이도 전부 계산된다. 그런데 예전에는 평가가 항상 전체
+    #  파이프라인을 돌려서 25문항에 5분·수천 토큰이 들었고, 그래서 **아무도 자주 돌리지 않았다** —
+    #  품질 루프가 거기서 끊긴다. 검색을 튜닝할 때는 이 스위치 하나로 토큰 0에 끝낸다.
+    EVAL_LLM_TOGGLES = ("llm_answer", "claim_check", "claim_check_llm", "evidence_check_llm", "answer_refine",
+                        "query_expand", "query_decompose", "router_llm", "rerank_llm",
+                        "llm_after_fusion", "llm_after_rerank", "evidence_compress", "external_rag")
+
+    def evaluate(self, k: int = 5, questions: Optional[List[Dict[str, Any]]] = None, log: bool = False,
+                 retrieval_only: bool = False) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """회귀 평가. `retrieval_only` 면 LLM 을 쓰는 단계를 전부 끄고 **검색 지표만** 낸다(빠르고 토큰 0).
+        답변 관련 지표(answer_term_recall)는 그 모드에서 뜻이 없으므로 None 으로 둔다 — 0 으로 두면
+        '나빠졌다' 로 잘못 읽힌다."""
         prof = Profiler("eval", debug=self.s.debug_level, log=self.s.toggles.log_stages)
         qs = questions or load_questions()
         rows = []
-        with prof.stage("run", questions=len(qs)):
-            for qd in qs:
-                res, tr = self.query(qd["q"], log=log)
-                chunks = {h["chunk_id"]: {"text": h["text"]} for h in res["hits"]}
-                sc = score_result(qd, res["hits"], chunks, res["answer"], k)
-                from .evalset import primary_hits
-                rows.append(dict(sc, q=qd["q"], ms=tr["ms"], top=[h["chunk_id"] for h in primary_hits(res["hits"])[:k]],
-                                 tokens=res.get("tokens", {}).get("total_tokens", 0), cached=res.get("cached", False),
-                                 request_id=res.get("request_id"), run_id=res.get("run_id")))
+        prev_tog = {t: getattr(self.s.toggles, t, None) for t in self.EVAL_LLM_TOGGLES} if retrieval_only else {}
+        if retrieval_only:
+            for t in self.EVAL_LLM_TOGGLES:
+                if hasattr(self.s.toggles, t):
+                    setattr(self.s.toggles, t, False)
+        try:
+            with prof.stage("run", questions=len(qs), retrieval_only=retrieval_only):
+                for qd in qs:
+                    res, tr = self.query(qd["q"], log=log)
+                    chunks = {h["chunk_id"]: {"text": h["text"]} for h in res["hits"]}
+                    sc = score_result(qd, res["hits"], chunks, res["answer"], k)
+                    if retrieval_only:
+                        sc["answer_term_recall"] = None
+                    from .evalset import primary_hits
+                    rows.append(dict(sc, q=qd["q"], ms=tr["ms"], top=[h["chunk_id"] for h in primary_hits(res["hits"])[:k]],
+                                     tokens=res.get("tokens", {}).get("total_tokens", 0), cached=res.get("cached", False),
+                                     request_id=res.get("request_id"), run_id=res.get("run_id"),
+                                     # 기대값을 결과에 싣는다 — 이게 없어서 "놓친 문항을 왜 놓쳤나" 로
+                                     # 바로 넘어갈 수 없었다. 포렌식은 이 두 값만 있으면 바로 돌아간다.
+                                     expect_docs=list(qd.get("expect_docs") or []),
+                                     expect_terms=list(qd.get("expect_terms") or [])))
+        finally:
+            for t, v in prev_tog.items():
+                if v is not None:
+                    setattr(self.s.toggles, t, v)
         agg = aggregate(rows)
         agg["total_tokens"] = sum(r["tokens"] for r in rows)
         agg["avg_ms"] = round(sum(r["ms"] for r in rows) / max(1, len(rows)), 1)
+        agg["retrieval_only"] = bool(retrieval_only)
         trace = prof.finish()
-        out = {"summary": agg, "rows": rows, "config": {"toggles": self.s.toggles.__dict__}}
+        from .evalset import discriminating
+        out = {"summary": agg, "rows": rows, "config": {"toggles": self.s.toggles.__dict__},
+               # 어떤 지표가 지금 변별력이 있나 — 전 문항 같은 값이면 그 눈금으로는 튜닝 효과를 못 본다
+               "discriminating": discriminating(rows)}
         out["request_id"] = self.store.log_request("eval", "eval k=%d n=%d hit@k=%.3f" % (k, len(rows), agg["hit@k"]), trace,
                                                    out, {"toggles": self.s.toggles.__dict__}, keep=self.s.keep_requests)
         return out, trace

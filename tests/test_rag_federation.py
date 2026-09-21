@@ -217,6 +217,10 @@ class FederationAndPluginTest(_Base):
         with open(os.path.join(d, "hello.py"), "a", encoding="utf-8") as f:
             f.write("\n")
         os.utime(os.path.join(d, "hello.py"), None)
+        # 폴더 재검사는 plugin_rescan_s(server.json mcp, 기본 5초)마다 한 번만 한다 — tools/list 마다 listdir 를 돌지 않기 위한 것.
+        # 파일을 쓴 직후 5초 안에 부르면 스냅샷을 그대로 돌려주므로 "주기가 지났다" 를 흉내 내어 시그니처 변화 감지 경로를 그대로 검증한다
+        # (force=True 로 우회하면 그 경로를 잃는다).
+        M._PLUGIN_STATE["checked"] = 0
         M.load_plugins(self.p.s)
         self.assertIn("hello", {t["name"] for t in M.list_tools(self.p)})
         # 저장소 예시 파일은 밑줄이라 로드되지 않고, 이름을 바꾸면 로드된다
@@ -224,6 +228,7 @@ class FederationAndPluginTest(_Base):
         self.assertTrue(os.path.exists(ex))
         with open(os.path.join(d, "example_echo.py"), "w", encoding="utf-8") as f, open(ex, encoding="utf-8") as src:
             f.write(src.read())
+        M._PLUGIN_STATE["checked"] = 0      # 위와 같이 plugin_rescan_s 주기 경과를 흉내
         info = M.load_plugins(self.p.s)
         self.assertIn("echo", info["tools"])
         self.assertEqual(M.call_tool(self.p, "echo", {"text": "abc"})["structuredContent"]["chars"], 3)

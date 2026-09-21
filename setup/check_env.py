@@ -114,6 +114,15 @@ def main() -> int:
             c["reads_during_build"], rl["per_user_per_min"], rl["per_ip_per_min"], rl["query_per_user_per_min"], (rcfg["access"] or {}).get("maintenance_mode")),
             "" if os.path.exists(sp) else "copy setup\\server.example.json server.json (docs/CONCURRENCY.md)")
         line(OK, "SQLite 동시성: db_pool_size=%s busy_timeout=%ss WAL" % (s.db_pool_size, s.db_busy_timeout_s))
+        # ---- 불용어 파일 (2026-09-18 요청 2) ----
+        from llmwiki import textutil as _tu
+        sw_path = path_for("stopwords")
+        sw_exists = os.path.exists(sw_path)
+        sw = _tu.load_stopwords()           # 없으면 기본 목록으로 생성
+        line(OK, "stopwords.json %s — 불용어 %d개%s" % (
+            "있음" if sw_exists else "없음 → 기본 목록으로 생성", len(sw),
+            " (코드 기본값)" if sw == _tu.DEFAULT_STOPWORDS else " (편집됨)"),
+             "질의 키워드에서 제거할 단어를 stopwords.json 에 추가 (재시작 불필요)")
         from llmwiki import scheduler as _sc
         tasks = _sc.list_tasks_static()
         bad = [t for t in tasks if t.get("invalid")]

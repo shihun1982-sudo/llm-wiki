@@ -1,6 +1,6 @@
 # MCP — 외부 LLM(여러 개, 같은 PC 또는 원격) 이 LLM Wiki 를 도구로 쓰기
 
-> 대상: Claude Desktop/Claude Code/Cursor/opencode 같은 MCP 클라이언트나, 자체 에이전트에서 이 위키를 검색·질의 도구로 붙이려는 사람. Windows/Linux, 같은 PC/원격 서버 모두 다룬다. 권한·API 키는 [SECURITY.md](SECURITY.md) §4.4, 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §2.
+> 대상: Claude Desktop/Claude Code/Cursor/opencode 같은 MCP 클라이언트나, 자체 에이전트에서 이 위키를 검색·질의 도구로 붙이려는 사람. Windows/Linux, 같은 PC/원격 서버 모두 다룬다. 권한·API 키는 [SECURITY.md](SECURITY.md) §4.4, 설계 배경은 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §2.
 
 ## 0. 어떤 방식을 쓰나 (결정표)
 
@@ -13,7 +13,7 @@
 | **다른 RAG / 검색 API / MCP 서버를 이 서버 뒤에 붙이고** 싶다 (클라이언트는 우리 `/mcp` 하나만) | **페더레이션 + 외부 RAG 채널** — `mcp_sources.json` 에 소스(stdio/http/rest) 선언, 토글 `mcp_federation`(도구 노출) · `external_rag`(검색 채널) | [RAG_FEDERATION.md](RAG_FEDERATION.md) |
 | 코드 수정 없이 **도구를 추가**하고 싶다 | **플러그인** `plugins/mcp_tools/<이름>.py` 의 `register(add_tool)` | RAG_FEDERATION.md §3 |
 
-세 방식 모두 같은 도구(§2)와 같은 파이프라인(`Pipeline.query`)을 쓴다. HTTP 는 표준 라이브러리 `http.server` 만 사용한다(추가 패키지 없음). 확장성: 도구 목록은 built-in **14개** + 플러그인 + 페더레이션(`<source>__<tool>`)으로 늘어나며, 모두 같은 `tools/list`·`tools/call`·인증·감사 경로를 탄다.
+세 방식 모두 같은 도구(§2)와 같은 파이프라인(`Pipeline.query`)을 쓴다. HTTP 는 표준 라이브러리 `http.server` 만 사용한다(추가 패키지 없음). 확장성: 도구 목록은 built-in **18개** + 플러그인 + 페더레이션(`<source>__<tool>`)으로 늘어나며, 모두 같은 `tools/list`·`tools/call`·인증·감사 경로를 탄다.
 
 **붙기 전에 서버 쪽에서 먼저 확인**: `python -m llmwiki mcp --doctor` (§4). "왜 안 붙는가" 를 클라이언트 로그 대신 서버에서 답한다.
 
@@ -65,29 +65,70 @@ claude mcp add llmwiki-remote -- python -m llmwiki mcp --connect http://wiki-hos
 
 ## 2. 도구
 
-built-in 14개. 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 함께 돌려주는 MCP `annotations` 이며, 붙는 LLM 이
+built-in <!--live:mcp-->20개 (2026-09-18: `wiki_sweep` · `wiki_rules` · `wiki_graph_profile` · 2026-09-19: `wiki_graph_rules` · 2026-09-20: `wiki_evolve` 설명 인자와 `wiki_status(full)` 확장). 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 함께 돌려주는 MCP `annotations` 이며, 붙는 LLM 이
 "이 도구를 불러도 되는가" 를 스스로 판단하는 근거다(§2.2).
 
 | 도구 | 입력 | 돌려주는 것 | 등급 | 힌트 |
 |---|---|---|---|---|
 | `wiki_query` | `question`, `k`, `mode=fast|normal|deep`, `doc_types[]`, `preset` | 인용 `[C#]` 답변 + 판정/groundedness + 근거 목록(doc_expand 청크 표시) + **request_id / query_id** + (있으면) LLM 실행 보고 | read | 읽기 |
-| `wiki_search` | `channel=fts|vector|graph`, `query`, `k` | 단일 채널 결과 | read | 읽기 |
+| `wiki_search` | `channels[]`(fts/vector/graph, 또는 `channel` 하나), `mode=or\|and\|rrf`, `query`, `k`, `require[]`, `exclude[]`, **`doc_types[]`** | 고른 채널을 한 번에 돌려 조합한 결과. 행마다 **어느 채널이 몇 위로 찾았는지**가 함께 온다. `or` 합집합(커버리지) · `and` 교집합(채널 합의) · `rrf` 질의 경로와 같은 가중 융합. `doc_types` 는 여기서 **거르는** 조건이다(`wiki_query` 의 `doc_types` 는 가중치) — CLI `search --doc-types` · Web Ask › 채널 검색의 유형 칩과 같은 엔진 | read | 읽기 |
+| `wiki_evolve` | `status`(proposed 기본), `limit`, **`id`**, **`explain`** | **자가진화 제안 보기 (읽기 전용)**: 그 상태의 제안 목록 · 최근 적용 이력 · 자동 적용 설정과 허용 종류 · 제안 종류 목록. **`id=<번호>` 또는 `explain=true`** 를 주면 제안마다 **무엇이 · 어느 파일에서 · 어떻게(before/after) · 영향 · 리빌드가 드는가 · 왜 적용 못 하는가**가 붙는다(CLI `evolve show` · Web 제안 카드와 같은 모듈). `wiki_propose` 로 올린 제안이 어떻게 됐는지 확인한다. 적용·거절은 사람이 한다 — [EVOLVE.md §1.5](EVOLVE.md) | read | 읽기 |
+| `wiki_inspect` | `query` | **질의 해부 (LLM 없음)**: 토큰화·키워드·불용어, 규칙 확장(동의어·약어·별칭·제외), 시간 표현 범위, 채널 라우팅 가중치, 고정 근거(pin). 답이 이상할 때 "질문이 제대로 이해됐는지" 를 먼저 본다 | read | 읽기 |
 | `wiki_related` | `text`, `doc_types[]`, `k` | 유사 문서 + 그래프 연결(CL↔Issue↔TC) | read | 읽기 |
 | `wiki_doc` | `id`(ISSUE-2041 / doc_id) | 문서 전문 + 메타 + 관계 | read | 읽기 |
 | `wiki_entity` | `name` | 엔티티 상세(관계·provenance·문서 참조) | read | 읽기 |
 | `wiki_propose` | `kind`, `payload`, `reason`, `confidence` | 자가진화 제안 id (HITL; `pin`/`query_rule` 등) | read | **쓰기**(비파괴) |
 | `wiki_feedback` | `query_id`, `feedback=+1/-1`, `note` | 피드백 기록(부정+메모 → 위키 노트 제안) | read | **쓰기**(비파괴) |
 | `wiki_forensic` | `request_id`(생략=마지막), `expected_docs[]`, `expected_terms[]`, `expected_chunks[]`, `note`, `propose` | **기대 결과 포렌식** 표(어느 단계에서 탈락했나 + 수정안) — [FORENSIC.md](FORENSIC.md) | read | 읽기 |
-| `wiki_status` | – | 색인 통계·프로바이더 | read | 읽기 |
+| `wiki_status` | `full`, `days`(기본 7), `sections[]`, `bucket`, `top` | 색인 통계·프로바이더. **`full=true` 면 `ops` 아래에 운영 통계**가 함께 온다 — 단계별 빌드 ms · 질의 시간대/창구 분포 · p50/p95 와 가장 느린 질의 · 토큰 · 근거 부족률 · 폴더별 용량과 정리 힌트 · 임베딩 캐시 적중률. 섹션: `index·build·queries·latency·tokens·quality·users·storage·embed·trend`. **`sections=["trend"]` + `bucket=day\|week\|month`** 은 구간별 추세(질의량·지연·토큰·빌드·근거 부족률)를 주며 기간은 묶음에 맞춰 자동으로 넓어진다. `users` 절은 **admin 키에만** 나가고 아니면 `redacted` 에 이유가 담긴다. CLI `stats --full` · Web 옵저빌리티 › 시스템 과 **같은 함수**(읽기 전용, 기간·표본 상한 있음) — [OPS_STATS.md](OPS_STATS.md) | read | 읽기 |
 | `wiki_analysis` | `request_id`(생략=마지막), `focus=quality|speed|tokens|all` | **상세 분석 리포트**(마크다운): 설정 스냅샷·단계 타임라인·검색 상세·답변 판정·세 렌즈 소견과 조절점 — 튜닝 제안의 근거 자료 — [ANALYSIS_MODE.md](ANALYSIS_MODE.md) | read | 읽기 |
 | `wiki_sources` | `check` | 붙어 있는 외부 소스(다른 RAG) 목록·용도·(check) 연결 상태 + 토글·플러그인 상태 — [RAG_FEDERATION.md](RAG_FEDERATION.md) | read | 읽기 · **외부** |
 | `wiki_external_search` | `query`, `source`, `k` | 외부 소스에 직접 검색(융합 없음, 원 결과 id/제목/본문/점수/URL) | read | 읽기 · **외부** |
 | `wiki_requests` | `request_id`(생략=목록), `q`, `kind`, `limit` | **지난 요청과 그때의 답**: "전에 물어본 적 있나?" 를 확인하거나, 같은 질문을 다시 돌리지 않고 저장된 답을 가져온다 — [REQUEST_HISTORY.md](REQUEST_HISTORY.md) | read | 읽기 |
 | `wiki_rerun` | `request_id`, `from`, `overrides` | 지난 질의를 **특정 단계부터** 다시 (앞 단계는 저장된 결과를 재생). 인자 없이 부르면 재시작점 목록을 돌려준다 — [RERUN.md](RERUN.md) | read | 읽기 (색인을 바꾸지 않음) |
+| `wiki_sweep` | `request_id`(또는 `"last"`), `key`, `values[]` 또는 `range="a:b:s"`, `repeats`, `from` | **파라미터 스윕**: 키 하나의 값을 바꿔 가며 값마다 그 키의 단계부터 재생 재실행하고 값별 단계 시간·순위·컨텍스트·답변·groundedness 를 기준(첫 값)과 비교. `key` 없이 부르면 스윕 가능한 키 목록. 값 개수는 `sweep_max_values` 로 제한 — [SWEEP.md](SWEEP.md) | read | 읽기 (색인을 바꾸지 않음; `data/sweeps` 에 기록 저장) |
+| `wiki_rules` | `action=explain\|test`, `term`, `q` | 질의 확장 사전(query_rules.json) 읽기 전용. `explain` = 용어 하나가 어느 유형·어느 **방향**(acronym/synonym 양방향 · alias/related/exclude 일방)으로 무엇을 끌어오나, `test` = 질의 전체의 확장 결과. 사전을 바꾸지 않는다 — [QUERY_RULES.md](QUERY_RULES.md) | read | 읽기 |
+| `wiki_graph_profile` | `eval`, `compare` | **그래프 진단 프로파일**: 규모·연결성(성분/고립/허브)·문서 커버리지·품질 신호·규칙 기여(죽은 규칙)·질의 활용·개선 제안(어느 파일·키). `compare` 는 직전 실행과 diff, `eval` 은 그래프 채널만 켠 hit@k — [GRAPH_PROFILE.md](GRAPH_PROFILE.md) | read | 읽기 (이력을 `data/graph_profiles` 에 저장) |
+| `wiki_graph_rules` | `action=types\|lint\|test`, `q`, `doc_type`, `ext_id` | **그래프 빌드 규칙**(`data/rules.json`) 읽기 전용 — `wiki_rules`(질의 확장)와 짝. `types` = 엔티티 type 목록·값 종류(`relation_patterns[*].value` 에 쓸 수 있는 것)·관계 어휘(`schema.relations`, inverse 포함), `lint` = 빌드 전 정적 점검(깨진 정규식·없는 type·가려진 `link_rules`·겹치는 별칭·inverse 짝), `test` = 문장 하나를 실제로 추출해 생기는 노드·관계. 규칙을 바꾸지 않는다 — [GRAPH_RULES.md](GRAPH_RULES.md) | read | 읽기 |
 | `<source>__<tool>` | 원격 스키마 그대로 | 페더레이션: `mcp_sources.json` 에서 `expose` 한 외부 서버의 tool 을 그대로 중계 (토글 `mcp_federation`) | read | 원격 spec 그대로 |
 | (플러그인) | 플러그인 정의 | `plugins/mcp_tools/*.py` 가 등록한 도구 (§6) | read | 플러그인 spec 그대로 |
 
 외부 LLM 의 권장 사용 순서: `wiki_query` → 답변이 부족하면 `wiki_forensic(request_id, expected_docs/terms)` 로 원인 확인 → `wiki_propose`/`wiki_feedback` 으로 개선 제안. **색인을 바꾸는 도구는 없다** — `wiki_propose`/`wiki_feedback` 도 제안 큐에 쌓을 뿐이고 반영은 사람이 Web/CLI 로 승인한다.
+
+### 2.01 `structuredContent` — 산문을 파싱하지 않아도 되게 (2026-09-19)
+
+도구 응답은 사람이 읽는 `content[0].text` 와 기계가 읽는 `structuredContent` 를 **둘 다** 준다.
+예전에는 `wiki_query` 만 `output_mode` 가 `answer` 가 **아닐 때만** 구조화 결과를 줘서, 정작 가장 많이 쓰는
+기본 경로에서 붙은 LLM 이 한국어 산문에서 인용과 판정을 되짚어야 했다. 지금은 기본 모드에도 준다.
+
+`wiki_query`(기본 모드)의 `structuredContent` — 필드 이름은 Web `/api/query` 의 `result` 와 같다:
+
+| 필드 | 뜻 |
+|---|---|
+| `answer` | 인용 `[C#]` 이 들어간 답변 본문 |
+| `citations[]` | `{n, chunk_id, doc_id, heading, doc_type, ext_id, date, why}` — **컨텍스트에 들어간 근거만**. `n` 이 답변의 `[C#]` 번호다 |
+| `evidence` | 근거 판정(`verdict`: sufficient/weak/insufficient 등) |
+| `groundedness` · `result_type` · `answer_mode` | 품질 지표와 어떤 경로로 답했는지 |
+| `n_hits` · `fallback` | 후보 수 · fallback 라운드 수 |
+| `request_id` · `query_id` · `run_id` · `ms` | `wiki_forensic`·`wiki_feedback`·`wiki_rerun` 에 그대로 넘긴다 |
+
+같은 질문을 Web·CLI·MCP 로 물으면 **인용 매핑(`[C#] → chunk_id`)·근거 순서·판정이 같아야 한다.**
+그것을 고정하는 테스트가 `tests/test_surface_consistency.py`(8항목)다 — 도구가 **존재하는가**는
+`tools/verify/verify_surface_align.py`, **같은 것을 돌려주는가**는 이 테스트가 본다.
+
+### 2.05 다른 팀의 stdio MCP 서버를 붙일 때 — 우리가 멈추지 않는다 (2026-09-19)
+
+`mcp_sources.json` 에 `transport: "stdio"` 로 남의 서버를 붙이면 그 서버는 **우리 프로세스의 자식**이 된다. 자식이 이상하게 굴어도 우리는 살아 있어야 한다.
+
+| 자식의 행동 | 예전 | 지금 |
+|---|---|---|
+| 응답하지 않는다 | `stdout.readline()` 이 락 안에서 **영원히** 멈췄다(마감은 줄 사이에서만 검사돼 `timeout_s` 가 무의미) | 리더 스레드가 읽고 `request()` 는 큐에서 기다린다 → **`timeout_s` 안에 오류** |
+| stderr 에 많이 쓴다 | stderr 파이프를 세션 중 비우지 않아 버퍼가 차면 자식이 write 에서 멈추고 우리는 stdout 을 기다려 **교착** | stderr 전용 리더 스레드가 계속 비우고 마지막 줄들을 오류 메시지에 붙인다 |
+| 도중에 죽는다 | 남은 시간만큼 기다렸다 | `poll()` 로 즉시 알아채고 **stderr 꼬리와 함께** 보고 |
+| 우리에게 요청을 보낸다(`sampling/*` 등) | 무시 → 상대가 기다린다 | `-32601 method not found` 로 **즉답** |
+
+설정: 소스별 `timeout_s`(없으면 `server.json` 의 `mcp.source_timeout_s_default`, ingest 는 `ingest_timeout_s_default`).
+검증: `python -m unittest tests.test_mcp_stdio_client` — 네 경우를 진짜 자식 프로세스로 재현한다.
 
 ### 2.1 인자 검증 — 붙는 LLM 이 실패 이유를 읽을 수 있게
 
@@ -99,7 +140,7 @@ built-in 14개. 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 �
 | 부른 모습 | 돌아오는 메시지(요지) |
 |---|---|
 | `wiki_query {}` · `{"question": "   "}` | `필수 인자 'question' 가 없습니다. inputSchema: {…}` |
-| `wiki_search {"channel": "nope", …}` | `인자 'channel' 는 ['fts', 'vector', 'graph'] 중 하나여야 합니다 (받은 값: 'nope')` |
+| `wiki_search {"channel": "nope", …}` | `인자 'channel' 는 ['fts', 'vector', 'graph'] 중 하나여야 합니다 (받은 값: 'nope')` — `channels` 로 준 알 수 없는 이름은 조용히 버려지고, 하나도 남지 않으면 `fts` 로 떨어진다 |
 | `wiki_search {"k": "많이"}` | `인자 'k' 는 integer 여야 합니다 (받은 값: '많이')` — 다만 `"8"` 처럼 **숫자로 읽히는 문자열은 받아 준다** |
 | `wiki_propose {"kind": "정체불명"}` | `unsupported kind 정체불명` |
 | 없는 도구 | `unknown tool <이름> — 사용 가능: wiki_query, …` |
@@ -135,6 +176,8 @@ built-in 14개. 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 �
 - ⚠ `security.json` 의 `mode` 가 기본값 `auto` 면 **`127.0.0.1` 에 바인드한 서버는 인증을 하지 않는다**(개발 편의 — 모든 요청이 로컬 admin). 사내에 내놓을 때는 `0.0.0.0` 바인드라 자동으로 켜지지만, 루프백에서 인증 동작을 확인하려면 `mode: "on"` 으로 두고 봐야 한다. 그렇지 않으면 "잘못된 키가 거부되는가" 를 시험해도 늘 통과한다.
 - **키는 붙는 클라이언트마다 따로** 발급한다 — 역할 분리와 폐기뿐 아니라 동시성 제한이 키 단위이기 때문이다(§2.3).
 - 권한: MCP 도구는 모두 `read` 등급 → `permissions.levels.read`(기본 viewer). 특정 클라이언트에게만 열려면 `anonymous_role: ""` + 키 발급.
+- **문서 단위 접근 제어 적용** (2026-09-19): `read` 등급을 통과해도 **키의 역할로 근거가 걸러진다**. `wiki_query` 의 인용, `wiki_search` 의 행·채널별 snippet, `wiki_doc` 의 전문, `wiki_related` 의 문서 목록이 모두 `docacl.json` 의 경로 규칙과 문서 front matter 의 `acl:` 로 제한된다 — 키 하나로 전 문서가 열리지 않는다. 규칙 **편집**은 MCP 에 노출하지 않는다(admin 전용 설정: CLI `security docacl`, Web Settings › 보안). 설계는 [SECURITY.md §6.2](SECURITY.md). 예전처럼 전부 보여 주려면 그 키의 역할을 `admin` 으로 두거나 규칙을 비운다.
+- **프롬프트 인젝션**: MCP 로 들어온 외부 문서도 답변 컨텍스트에 들어갈 때 같은 펜스·무력화를 거친다(토글 `context_guard`). 수집한 글이 모델에게 직접 지시하지 못한다.
 - 전송 보안: HTTPS 는 리버스 프록시에서(SECURITY.md §8). 사내망 밖으로 열 때는 반드시 프록시 + 키.
 - 감사: 모든 인증 실패와 도구 호출(질의는 requests 테이블, 거부는 audit.jsonl)이 남는다.
 
@@ -179,7 +222,7 @@ MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 20
   OK  인증                 anonymous_role=viewer · API 키 0개 · 계정 1개
   OK  전송                 stdio: `python -m llmwiki mcp` · http: serve 의 POST /mcp (mcp_host=127.0.0.1 mcp_port=8766) · 브리지: mcp --connect <url>
 
-도구 14개: wiki_query, wiki_search, wiki_related, wiki_doc, wiki_entity, wiki_propose, wiki_feedback, wiki_forensic, wiki_status, wiki_analysis, wiki_sources, wiki_external_search, wiki_requests, wiki_rerun
+도구 20개: wiki_query, wiki_search, wiki_inspect, wiki_evolve, wiki_related, wiki_doc, wiki_entity, wiki_propose, wiki_feedback, wiki_forensic, wiki_status, wiki_analysis, wiki_sources, wiki_external_search, wiki_requests, wiki_rerun, wiki_sweep, wiki_rules, wiki_graph_profile, wiki_graph_rules
 
 결과: 정상 (오류 0 · 경고 0)
 클라이언트 설정: python -m llmwiki mcp --client-config   · 문서 docs/MCP.md
@@ -270,7 +313,7 @@ python -m unittest tests.test_features_0914  :: McpHttpTest · McpStdioFramingTe
 도구 13회 호출 · 잘못된 호출 7종 · 인증(익명·잘못된 Bearer·API 키) · 동시 접속 · 확장(플러그인 정상/깨짐,
 페더레이션 중계와 거부, 외부 RAG 융합, 재귀 방지) · `mcp --doctor`.
 결과는 `tools/verify/verify_mcp_result.json` 에 남고 실패가 있으면 종료 코드 1.
-실측 기록은 [VERIFICATION_0916.md](VERIFICATION_0916.md).
+실측 기록은 [VERIFICATION_0916.md](history/2026-09-16/VERIFICATION_0916.md).
 
 ## 8. 구현 파일
 
@@ -284,7 +327,7 @@ python -m unittest tests.test_features_0914  :: McpHttpTest · McpStdioFramingTe
 | `plugins/mcp_tools/` | 플러그인 도구 폴더 (`README.md`, `_example_echo.py`) — §6.1 |
 | `llmwiki/config.py` | Settings `web_host/web_port/mcp_transport/mcp_host/mcp_port/mcp_url` + 설명(`SETTING_HELP`) |
 | `setup/mcp_clients.example.json` | 클라이언트 설정 원본 4종 + 붙여 넣는 위치 |
-| `tools/verify/verify_web.py` | `/mcp` 도구·401/405/DELETE·잘못된 키 401 실측 ([VERIFICATION_0915.md](VERIFICATION_0915.md) §3.3) |
+| `tools/verify/verify_web.py` | `/mcp` 도구·401/405/DELETE·잘못된 키 401 실측 ([VERIFICATION_0915.md](history/2026-09-15/VERIFICATION_0915.md) §3.3) |
 | `tools/verify/verify_mcp.py` | **MCP 종단 검증** — 전송 3종·프로토콜·도구·잘못된 호출·인증·동시성·확장·doctor (§7) |
 | `llmwiki/auth.py` | API 키 발급/검증(`add_api_key/user_from_api_key`), `identify()` 의 Bearer 처리 |
 | `tests/test_features_0914.py::McpHttpTest` | 401/토큰/세션/배열 요청/GET 405/DELETE/쿠키/감사/브리지/익명/mcp_only |

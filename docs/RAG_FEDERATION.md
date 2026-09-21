@@ -1,6 +1,6 @@
 # RAG FEDERATION — 다른 RAG · 검색 API · MCP 서버를 붙이고, 외부 LLM 클라이언트에 한 곳으로 내주기
 
-> 대상: (1) 이 LLM Wiki 에 **다른 팀의 RAG / 사내 검색 API / 다른 MCP 서버**를 검색 소스로 붙이려는 운영자, (2) 외부 LLM 클라이언트(Claude Code/Desktop · Cursor · opencode · 자체 에이전트)가 **우리 `/mcp` 하나로 여러 RAG 를 쓰게** 하려는 사람, (3) 코드 수정 없이 MCP 도구를 늘리려는 사람. 인바운드(외부 LLM → 우리 MCP) 의 전송·인증은 [MCP.md](MCP.md), 권한은 [SECURITY.md](SECURITY.md). 2026-09-15 구현, 설계 근거는 [IMPLEMENTATION_PLAN_0914.md](IMPLEMENTATION_PLAN_0914.md) §9, 검증은 [VERIFICATION_0915.md](VERIFICATION_0915.md) §7.
+> 대상: (1) 이 LLM Wiki 에 **다른 팀의 RAG / 사내 검색 API / 다른 MCP 서버**를 검색 소스로 붙이려는 운영자, (2) 외부 LLM 클라이언트(Claude Code/Desktop · Cursor · opencode · 자체 에이전트)가 **우리 `/mcp` 하나로 여러 RAG 를 쓰게** 하려는 사람, (3) 코드 수정 없이 MCP 도구를 늘리려는 사람. 인바운드(외부 LLM → 우리 MCP) 의 전송·인증은 [MCP.md](MCP.md), 권한은 [SECURITY.md](SECURITY.md). 2026-09-15 구현, 설계 근거는 [IMPLEMENTATION_PLAN_0914.md](history/2026-09-14/IMPLEMENTATION_PLAN_0914.md) §9, 검증은 [VERIFICATION_0915.md](history/2026-09-15/VERIFICATION_0915.md) §7.
 
 ## 0. 한 장 요약
 
@@ -167,7 +167,7 @@ python -m llmwiki mcp-source retrieve "AGC 수렴" --source kb_rest --json      
 - **먼저 `python -m llmwiki mcp --doctor --check-sources`** — 소스 선언·연결·토글·페더레이션 이름·플러그인 적재를 한 번에 본다. 항목별 뜻은 [MCP.md](MCP.md) §4.
 - `tests/test_rag_federation.py` 7개: stdio retrieve·융합·inject·off 비교, 소스 오류 격리, when=fallback, rest 전송(retrieve·가중·expose·GET), 플러그인(로드·오류·재적재·예시 파일), http 전송(다른 llmwiki 를 원격으로; 잘못된 토큰 401 격리; 페더레이션; 재귀 방지 헤더).
 - 하네스: `tools/verify/verify_cli.py` 에 `mcp-source tools|retrieve|federated`, `query --external-rag/--no-external-rag`, stdio `mcp` 의 `mock__search`·`wiki_sources`; `verify_web.py` 에 `/api/mcp_sources retrieve|tools|federated`(게스트 401), `/api/query` external_rag 오버라이드, `/mcp` 의 `mock__search`·`wiki_external_search`·깊이 헤더 가드.
-- **`tools/verify/verify_mcp.py`** (2026-09-16 추가, 98/98 통과 — [VERIFICATION_0916.md](VERIFICATION_0916.md)): 이 문서의 확장 경로를 종단으로 돌린다 — 플러그인 등록·호출·인자 검증, **깨진 플러그인이 다른 플러그인을 막지 않음**, `mock__search` 중계, expose 목록 밖 도구 거부, 없는 소스 거부, 외부 RAG 직접 검색과 질의 융합, 재귀 방지(하위 프로세스는 `__` 도구를 내놓지도 중계하지도 않음), `wiki_sources` 의 `federated_tools`/`plugins.errors` 보고.
+- **`tools/verify/verify_mcp.py`** (2026-09-16 추가, 98/98 통과 — [VERIFICATION_0916.md](history/2026-09-16/VERIFICATION_0916.md)): 이 문서의 확장 경로를 종단으로 돌린다 — 플러그인 등록·호출·인자 검증, **깨진 플러그인이 다른 플러그인을 막지 않음**, `mock__search` 중계, expose 목록 밖 도구 거부, 없는 소스 거부, 외부 RAG 직접 검색과 질의 융합, 재귀 방지(하위 프로세스는 `__` 도구를 내놓지도 중계하지도 않음), `wiki_sources` 의 `federated_tools`/`plugins.errors` 보고.
 
 ## 7. 문제 해결
 | 증상 | 조치 |

@@ -6,9 +6,10 @@ FTS5 unicode61 토크나이저는 한국어 조사 결합 단어를 분리하지
 """
 from __future__ import annotations
 
+import os
 import re
 import hashlib
-from typing import Any, Dict, List
+from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Tuple
 
 _JOSA = [
     "으로부터", "에서는", "에게서", "으로써", "으로서", "이라고", "라고", "에서", "에게", "으로", "까지", "부터",
@@ -166,17 +167,103 @@ def fts_query(text: str, mode: str = "OR") -> str:
     return (" %s " % mode).join(toks)
 
 
-STOPWORDS = {"무엇", "어떤", "어떻게", "왜", "언제", "누가", "누구", "대해", "관련", "알려", "설명", "정리", "요약",
-             "the", "a", "an", "of", "is", "are", "what", "which", "who", "when", "how", "why", "and", "or", "to",
-             "있", "있는", "하는", "되는", "이후", "이전", "것", "수", "등", "및", "각", "때", "중", "무슨", "해줘",
-             "주세요", "인가", "인가요", "입니까", "뭐야", "뭔가", "얼마", "어디"}
+# ---------------------------------------------------------------- 불용어 (stopwords.json)
+# 질의 키워드 추출(keywords)·근거 토큰 비교(retrieval/forensic)에서 제거할 단어. 코드 기본값은 DEFAULT_STOPWORDS 이고,
+# 실제 목록은 <루트>/stopwords.json (경로 레지스트리 "stopwords", 환경변수 LLMWIKI_STOPWORDS_PATH) 에서 읽는다.
+# 파일이 없으면 기본값으로 생성하고, mtime 캐시로 수정 즉시 반영된다(prompts 와 같은 방식). 깨진 파일은 기본값으로 폴백.
+DEFAULT_STOPWORDS: FrozenSet[str] = frozenset({
+    "무엇", "어떤", "어떻게", "왜", "언제", "누가", "누구", "대해", "관련", "알려", "설명", "정리", "요약",
+    "the", "a", "an", "of", "is", "are", "what", "which", "who", "when", "how", "why", "and", "or", "to",
+    "있", "있는", "하는", "되는", "이후", "이전", "것", "수", "등", "및", "각", "때", "중", "무슨", "해줘",
+    "주세요", "인가", "인가요", "입니까", "뭐야", "뭔가", "얼마", "어디",
+})
+STOPWORDS_COMMENT = ("질의 키워드 추출에서 제거할 불용어 목록. 소문자·조사 제거 뒤의 토큰과 비교한다. "
+                     "수정하면 재시작 없이 다음 질의부터 반영된다. 삭제하면 코드 기본 목록으로 다시 생성된다. "
+                     "경로: config paths 의 stopwords (환경변수 LLMWIKI_STOPWORDS_PATH).")
+_STOP_CACHE: Dict[str, Tuple[Optional[float], FrozenSet[str]]] = {}   # path -> (mtime, set)
+
+
+def stopwords_path() -> str:
+    from .config import path_for   # 순환 import 회피 (config 가 textutil 을 간접 import 할 수 있음)
+    return path_for("stopwords")
+
+
+def _warn(msg: str, **data: Any) -> None:
+    try:
+        from .logging_setup import log
+        log("warning", msg, "textutil", **data)
+    except Exception:
+        pass
+
+
+def _parse_stopwords(obj: Any, path: str) -> Optional[FrozenSet[str]]:
+    """{"stopwords": [...]} 또는 [...] 를 집합으로. 형식이 틀리면 None."""
+    items = obj.get("stopwords") if isinstance(obj, dict) else obj
+    if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+        _warn("stopwords 파일 형식 오류 — 기본 목록 사용", path=path, hint='{"stopwords": ["단어", ...]} 형식이어야 함')
+        return None
+    return frozenset(x.strip().lower() for x in items if x and x.strip())
+
+
+def load_stopwords() -> FrozenSet[str]:
+    """불용어 집합. 파일이 있으면 파일(mtime 캐시), 없으면 기본값으로 파일을 만든 뒤 반환, 오류면 기본값."""
+    try:
+        p = stopwords_path()
+    except Exception:
+        return DEFAULT_STOPWORDS
+    try:
+        mt: Optional[float] = os.path.getmtime(p)
+    except OSError:
+        mt = None
+        try:
+            from .atomicio import write_json
+            write_json(p, {"_comment": STOPWORDS_COMMENT, "stopwords": sorted(DEFAULT_STOPWORDS)})
+            mt = os.path.getmtime(p)
+        except Exception as e:
+            _warn("stopwords 파일 생성 실패 — 기본 목록 사용", path=p, error=str(e)[:200])
+            return DEFAULT_STOPWORDS
+    c = _STOP_CACHE.get(p)
+    if c and c[0] == mt:
+        return c[1]
+    try:
+        from .atomicio import read_text
+        import json
+        text = read_text(p)
+        words_ = _parse_stopwords(json.loads(text), p) if text is not None else None
+    except Exception as e:
+        _warn("stopwords 파일 읽기 실패 — 기본 목록 사용", path=p, error=str(e)[:200])
+        words_ = None
+    result = DEFAULT_STOPWORDS if words_ is None else words_
+    _STOP_CACHE[p] = (mt, result)   # 깨진 파일도 mtime 으로 기억해 경고를 한 번만 남긴다
+    return result
+
+
+class _LiveStopwords:
+    """`from textutil import STOPWORDS` 후 `tok in STOPWORDS` 로 쓰던 기존 호출부 호환 — 매번 현재 파일 집합을 본다."""
+    __slots__ = ()
+
+    def __contains__(self, item: object) -> bool:
+        return item in load_stopwords()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(load_stopwords())
+
+    def __len__(self) -> int:
+        return len(load_stopwords())
+
+    def __repr__(self) -> str:
+        return "STOPWORDS(%d)" % len(self)
+
+
+STOPWORDS = _LiveStopwords()
 
 
 def keywords(text: str, min_len: int = 2) -> List[str]:
     """질의에서 의미 있는 키워드(조사 제거, 중복 제거, 불용어 제거, 복합어 부분·형태소 포함)."""
+    stop = load_stopwords()
     out: List[str] = []
     for n in analyze(text):
-        if len(n) < min_len or n in STOPWORDS:
+        if len(n) < min_len or n in stop:
             continue
         if n not in out:
             out.append(n)
