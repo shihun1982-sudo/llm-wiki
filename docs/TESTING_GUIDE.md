@@ -4,7 +4,7 @@
 > [VERIFICATION.md](VERIFICATION.md), 하네스 각각의 설명은 [tools/verify/README.md](../tools/verify/README.md).
 > 모든 테스트·하네스는 **격리 임시 환경**(임시 폴더 + `LLMWIKI_*_PATH`)에서 돌아 실제 색인·설정·로그를 건드리지 않는다.
 >
-> 지금 규모: 단위 테스트 <!--live:tests-->758개 · 검증 하네스 <!--live:harness-->27종.
+> 지금 규모: 단위 테스트 <!--live:tests-->773개 · 검증 하네스 <!--live:harness-->27종.
 > **테스트를 새로 쓸 거면 §2.5 를 먼저 읽는다** — 진짜 폴더를 건드리지 않는 법과, 그 테스트가 정말 무언가를 지키는지 확인하는 법.
 
 ## 0. 세 단계 규칙
@@ -25,7 +25,7 @@ Windows PowerShell 에서 한글 출력이 깨지면 `$env:PYTHONIOENCODING='utf
 | **규칙 확장** `query_rules.py` `textutil.py` (불용어) | `tests.test_query_rules_explain` `tests.test_stopwords` `tests.test_features_0916` | `verify_cli.py`(rules explain/test/lint) | [QUERY_RULES.md](QUERY_RULES.md) · [STOPWORDS.md](STOPWORDS.md) |
 | **튜닝 레지스트리 · 구조 레지스트리** `tuning.py` `architecture.py` `config.py`(토글·설정 도움말) `progress.py`(단계 라벨) | `tests.test_tuning_arch` | **`verify_stage_align.py`**(단계 이름이 코드·레지스트리·라벨·손잡이 네 곳에서 같은가) · `verify_surface_align.py` · `python -m llmwiki tuning doc` / `arch doc` 재생성 뒤 `verify_docs.py` | [TUNING.md](TUNING.md) · [PIPELINE_PAGE.md §4.7](PIPELINE_PAGE.md) · [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) |
 | **설정 파일·기본값** `config.py`(Settings 키·`fill_defaults`·`apply_overrides`) | `tests.test_overrides_guard` `tests.test_phase0` | `verify_settings_sync.py`(UI ↔ 파일 ↔ 서버 양방향) · `verify_cli.py`(`config fill-defaults --dry-run`, `config env`) | [SETTINGS_SYNC.md](SETTINGS_SYNC.md) · [BRINGUP_GUIDE.md §3.2](BRINGUP_GUIDE.md) |
-| **프로바이더 · 앙상블 · 카탈로그** `providers.py` `models_catalog.py` `prompts.py` (+ `answer.summarize_ensemble`) | `tests.test_providers` `tests.test_features_0914`(LlmRetryTest) · **`tests.test_ensemble_visible`**(앙상블로 돌았다는 것이 trace 에 보이는가 · 단일 호출에는 안 붙는가) | `verify_cli.py`(`models test --catalog`, `models ensemble`) · `verify_web.py`(`/api/models/test_catalog`) · 실환경: `python -m llmwiki models test --live` | [ENSEMBLE.md](ENSEMBLE.md) · [BRINGUP_GUIDE.md §4](BRINGUP_GUIDE.md) |
+| **프로바이더 · 앙상블 · 카탈로그** `providers.py` `models_catalog.py` `prompts.py` (+ `answer.summarize_ensemble`) | `tests.test_providers` `tests.test_features_0914`(LlmRetryTest) · **`tests.test_ensemble_visible`**(앙상블로 돌았다는 것이 trace 에 보이는가 · 단일 호출에는 안 붙는가) · **`tests.test_ensemble_fallback`**(실패 시 역할 모델로 되돌리기 15건 — 설정 계층 · 실제 호출 · `merge`/`rerun` 차이 · 정상일 때 안 불리는지) | `verify_cli.py`(`models test --catalog`, `models ensemble`) · `verify_web.py`(`/api/models/test_catalog`) · **`verify_ensemble_ui.py`**(편집기를 실제로 클릭 — 멤버 켜기·폴백 on/off·모드 왕복) · `verify_tri_surface.py` §2.8(폴백 설정이 세 창구에서 같은가) · 실환경: `python -m llmwiki models test --live` | [ENSEMBLE.md](ENSEMBLE.md) §2.3 · §2.35 · §2.4 · [BRINGUP_GUIDE.md §4](BRINGUP_GUIDE.md) |
 | **headless 에이전트** `headless.py` `agents.json` | `tests.test_headless_switch` `tests.test_providers`(-k headless) `tests.test_console_0915` | 목업: `python -m llmwiki.headless --mock --stall 30` · 실환경 `models test --live` | [HEADLESS.md](HEADLESS.md) |
 | **스윕 · 재실행** `sweep.py` `rerun.py` | `tests.test_sweep` `tests.test_rerun_0917` | `verify_cli.py`(sweep run/list/show/compare) · `verify_web.py`(`/api/sweep`) · `verify_rerun_ui.py`(브라우저) | [SWEEP.md](SWEEP.md) · [RERUN.md](RERUN.md) |
 | **그래프** `graph_rules.py` `graph_build.py` `graph_profile.py` | `tests.test_graph_profile` `tests.test_phase2` `tests.test_pipeline` | `verify_cli.py`(`graph profile`, `build graph`) · `verify_web.py`(`/api/graph/profile`) | [GRAPH_PROFILE.md](GRAPH_PROFILE.md) |

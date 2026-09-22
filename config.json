@@ -1,619 +1,641 @@
 {
-  "corpus_dirs": [
-    "corpus"
-  ],
-  "corpus_exclude": [],
-  "data_dir": "data",
-  "wiki_dir": "wiki",
-  "db_name": "llmwiki.sqlite3",
-  "chunk_max_chars": 900,
-  "chunk_overlap_chars": 120,
-  "top_k_fts": 20,
-  "top_k_vector": 20,
-  "top_k_graph": 16,
-  "top_k_final": 10,
-  "graph_hops": 1,
-  "rrf_k": 60,
-  "llm_provider": "openai",
-  "llm_model": "llama3.1",
-  "llm_effort": "low",
-  "answer_effort": "medium",
-  "answer_mode": "grounded",
-  "output_mode": "answer",
-  "llm_fallbacks": true,
-  "ollama_url": "http://localhost:11434",
-  "ollama_model": "llama3.1",
-  "embed_provider": "ollama",
-  "embed_model": "bge-m3",
-  "embed_dim": 4096,
-  "llm_roles": {
-    "answer": {
-      "ensemble": {
-        "enabled": true,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "llama3.1",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
+ "corpus_dirs": [
+  "corpus"
+ ],
+ "corpus_exclude": [],
+ "data_dir": "data",
+ "wiki_dir": "wiki",
+ "db_name": "llmwiki.sqlite3",
+ "chunk_max_chars": 900,
+ "chunk_overlap_chars": 120,
+ "top_k_fts": 20,
+ "top_k_vector": 20,
+ "top_k_graph": 16,
+ "top_k_final": 10,
+ "graph_hops": 1,
+ "rrf_k": 60,
+ "llm_provider": "openai",
+ "llm_model": "llama3.1",
+ "llm_effort": "low",
+ "answer_effort": "medium",
+ "answer_mode": "grounded",
+ "output_mode": "answer",
+ "llm_fallbacks": true,
+ "ollama_url": "http://localhost:11434",
+ "ollama_model": "llama3.1",
+ "embed_provider": "ollama",
+ "embed_model": "bge-m3",
+ "embed_dim": 4096,
+ "llm_roles": {
+  "answer": {
+   "ensemble": {
+    "enabled": true,
+    "members": [
+     {
+      "enabled": true,
       "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "fallback_role_model": "",
+    "aggregator": {
+     "provider": "",
+     "model": "llama3.1",
+     "effort": ""
     },
-    "rerank": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "extract": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "summary": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "review": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "expand": {
-      "ensemble": {
-        "enabled": true,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "llama3.1",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "verify": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "forensic": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "fusion": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    },
-    "select": {
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": false,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        },
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": ""
-      },
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": ""
-    }
+    "fallback_mode": "",
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
   },
-  "llm_ensemble_defaults": {
-    "wait": "all",
-    "timeout_s": 120,
-    "min_results": 1,
-    "prompt": "ensemble_merge"
+  "rerank": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
   },
-  "rerank_candidates": 24,
-  "rerank_chunk_chars": 600,
-  "context_max_chars": 14000,
-  "context_chunk_chars": 1200,
-  "answer_max_tokens": 4000,
-  "llm_graph_budget": 0,
-  "llm_graph_min_chars": 80,
-  "graph_profile_keep": 30,
-  "graph_profile_requests": 200,
-  "graph_profile_hubs": 10,
-  "query_cache_size": 200,
-  "requests_dir": "data/requests",
-  "requests_keep_days": 90,
-  "rerun_dir": "data/reruns",
-  "rerun_keep": 50,
-  "rerun_max_mb": 4.0,
-  "sweep_dir": "data/sweeps",
-  "sweep_keep": 30,
-  "sweep_max_values": 20,
-  "sweep_max_parallel": 1,
-  "auto_build_interval": 30,
-  "embed_batch": 64,
-  "debug_level": 1,
-  "keep_requests": 2000,
-  "evolve_min_confidence": 0.8,
-  "evolve_low_score_threshold": 0.05,
-  "evolve_auto_apply_kinds": [],
-  "evolve_snapshot_keep": 20,
-  "timezone": "Asia/Seoul",
-  "week_start": "mon",
-  "console_encoding": "auto",
-  "console_set_codepage": true,
-  "log_level": "INFO",
-  "log_max_mb": 10,
-  "log_backups": 10,
-  "log_console": false,
-  "log_total_max_mb": 500,
-  "log_limit_action": "warn",
-  "log_check_interval_s": 60,
-  "audit_max_mb": 20,
-  "audit_backups": 5,
-  "analysis_keep": 200,
-  "openai_base_url": "http://localhost:11434/v1",
-  "openai_api_key_header": "authorization",
-  "openai_extra_headers": {},
-  "openai_embed_base_url": "",
-  "openai_embed_model": "",
-  "anthropic_base_url": "",
-  "rerank_url": "",
-  "rerank_api_model": "BAAI/bge-reranker-v2-m3",
-  "rerank_api_style": "cohere",
-  "embed_batch_max": 256,
-  "embed_batch_target_ms": 8000,
-  "embed_commit_every": 10,
-  "wal_checkpoint_mb": 64,
-  "embed_store_dtype": "float32",
-  "build_lock_timeout": 172800,
-  "build_lock_stale_s": 172800,
-  "db_busy_timeout_s": 60.0,
-  "db_pool_size": 16,
-  "db_max_live_connections": 64,
-  "db_pool_wait_timeout_s": 2.0,
-  "llm_timeout": 600,
-  "llm_retries": 3,
-  "llm_retry_backoff_s": 2.0,
-  "llm_retry_backoff": "exponential",
-  "llm_retry_backoff_max_s": 60.0,
-  "llm_budget_s": 0,
-  "llm_frequency_penalty": 0.3,
-  "llm_presence_penalty": 0.0,
-  "llm_repeat_penalty": 1.1,
-  "llm_http_retries": 2,
-  "llm_circuit_failures": 3,
-  "llm_circuit_cooldown_s": 60,
-  "web_host": "0.0.0.0",
-  "web_port": 8765,
-  "mcp_transport": "stdio",
-  "mcp_host": "127.0.0.1",
-  "mcp_port": 8766,
-  "mcp_url": "",
-  "mcp_plugins_dir": "plugins/mcp_tools",
-  "toggles": {
-    "rule_graph": true,
-    "llm_graph": false,
-    "embed": true,
-    "communities": true,
-    "community_summary": true,
-    "wiki_pages": true,
-    "incremental": true,
-    "fts": true,
-    "vector": true,
-    "graph": true,
-    "router": true,
-    "rerank": true,
-    "llm_answer": true,
-    "evolve_capture": true,
-    "evolve_auto_apply": false,
-    "stat_skip": true,
-    "idf_refit_incremental": false,
-    "incremental_communities": false,
-    "wiki_full_rewrite": false,
-    "warm_cache": true,
-    "fts_optimize": true,
-    "rerank_llm": true,
-    "query_cache": false,
-    "embed_query_cache": true,
-    "context_trim": false,
-    "dedupe_hits": true,
-    "query_rules": true,
-    "time_scope": true,
-    "query_expand": true,
-    "query_decompose": true,
-    "evidence_check": true,
-    "evidence_check_llm": true,
-    "fallback_loop": true,
-    "claim_check": true,
-    "claim_check_llm": true,
-    "answer_refine": true,
-    "evidence_compress": false,
-    "router_llm": false,
-    "pins": true,
-    "precompute": false,
-    "doc_vector": true,
-    "feedback_boost": false,
-    "forensic_auto": true,
-    "collab": true,
-    "rerun_capture": true,
-    "mcp_sources": false,
-    "external_rag": false,
-    "mcp_federation": false,
-    "embed_adaptive": true,
-    "fts_trigram": false,
-    "schema_lint": true,
-    "explicit_relations": true,
-    "precompute_after_build": false,
-    "verify_after_build": true,
-    "memory_decay": true,
-    "evolve_from_forensics": true,
-    "auto_build": true,
-    "health_check": true,
-    "log_stages": true,
-    "profile_expansion": false,
-    "context_guard": true,
-    "doc_acl": true,
-    "build_fts": true,
-    "doc_expand": true,
-    "llm_failure_report": true,
-    "analysis_mode": false,
-    "llm_after_fusion": false,
-    "llm_after_rerank": false,
-    "degrade_on_llm_failure": true
+  "extract": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "summary": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "review": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "expand": {
+   "ensemble": {
+    "enabled": true,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "llama3.1",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "verify": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "forensic": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "fusion": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
+  },
+  "select": {
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": false,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   },
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": ""
   }
+ },
+ "llm_ensemble_defaults": {
+  "wait": "all",
+  "timeout_s": 120,
+  "min_results": 1,
+  "prompt": "ensemble_merge",
+  "fallback_role_model": true,
+  "fallback_mode": "auto"
+ },
+ "rerank_candidates": 24,
+ "rerank_chunk_chars": 600,
+ "context_max_chars": 14000,
+ "context_chunk_chars": 1200,
+ "answer_max_tokens": 4000,
+ "llm_graph_budget": 0,
+ "llm_graph_min_chars": 80,
+ "graph_profile_keep": 30,
+ "graph_profile_requests": 200,
+ "graph_profile_hubs": 10,
+ "query_cache_size": 200,
+ "requests_dir": "data/requests",
+ "requests_keep_days": 90,
+ "rerun_dir": "data/reruns",
+ "rerun_keep": 50,
+ "rerun_max_mb": 4.0,
+ "sweep_dir": "data/sweeps",
+ "sweep_keep": 30,
+ "sweep_max_values": 20,
+ "sweep_max_parallel": 1,
+ "auto_build_interval": 30,
+ "embed_batch": 64,
+ "debug_level": 1,
+ "keep_requests": 2000,
+ "evolve_min_confidence": 0.8,
+ "evolve_low_score_threshold": 0.05,
+ "evolve_auto_apply_kinds": [],
+ "evolve_snapshot_keep": 20,
+ "timezone": "Asia/Seoul",
+ "week_start": "mon",
+ "console_encoding": "auto",
+ "console_set_codepage": true,
+ "log_level": "INFO",
+ "log_max_mb": 10,
+ "log_backups": 10,
+ "log_console": false,
+ "log_total_max_mb": 500,
+ "log_limit_action": "warn",
+ "log_check_interval_s": 60,
+ "audit_max_mb": 20,
+ "audit_backups": 5,
+ "analysis_keep": 200,
+ "openai_base_url": "http://localhost:11434/v1",
+ "openai_api_key_header": "authorization",
+ "openai_extra_headers": {},
+ "openai_embed_base_url": "",
+ "openai_embed_model": "",
+ "anthropic_base_url": "",
+ "rerank_url": "",
+ "rerank_api_model": "BAAI/bge-reranker-v2-m3",
+ "rerank_api_style": "cohere",
+ "embed_batch_max": 256,
+ "embed_batch_target_ms": 8000,
+ "embed_commit_every": 10,
+ "wal_checkpoint_mb": 64,
+ "embed_store_dtype": "float32",
+ "build_lock_timeout": 172800,
+ "build_lock_stale_s": 172800,
+ "db_busy_timeout_s": 60.0,
+ "db_pool_size": 16,
+ "db_max_live_connections": 64,
+ "db_pool_wait_timeout_s": 2.0,
+ "llm_timeout": 600,
+ "llm_retries": 3,
+ "llm_retry_backoff_s": 2.0,
+ "llm_retry_backoff": "exponential",
+ "llm_retry_backoff_max_s": 60.0,
+ "llm_budget_s": 0,
+ "llm_frequency_penalty": 0.3,
+ "llm_presence_penalty": 0.0,
+ "llm_repeat_penalty": 1.1,
+ "llm_http_retries": 2,
+ "llm_circuit_failures": 3,
+ "llm_circuit_cooldown_s": 60,
+ "web_host": "0.0.0.0",
+ "web_port": 8765,
+ "mcp_transport": "stdio",
+ "mcp_host": "127.0.0.1",
+ "mcp_port": 8766,
+ "mcp_url": "",
+ "mcp_plugins_dir": "plugins/mcp_tools",
+ "toggles": {
+  "rule_graph": true,
+  "llm_graph": false,
+  "embed": true,
+  "communities": true,
+  "community_summary": true,
+  "wiki_pages": true,
+  "incremental": true,
+  "fts": true,
+  "vector": true,
+  "graph": true,
+  "router": true,
+  "rerank": true,
+  "llm_answer": true,
+  "evolve_capture": true,
+  "evolve_auto_apply": false,
+  "stat_skip": true,
+  "idf_refit_incremental": false,
+  "incremental_communities": false,
+  "wiki_full_rewrite": false,
+  "warm_cache": true,
+  "fts_optimize": true,
+  "rerank_llm": true,
+  "query_cache": false,
+  "embed_query_cache": true,
+  "context_trim": false,
+  "dedupe_hits": true,
+  "query_rules": true,
+  "time_scope": true,
+  "query_expand": true,
+  "query_decompose": true,
+  "evidence_check": true,
+  "evidence_check_llm": true,
+  "fallback_loop": true,
+  "claim_check": true,
+  "claim_check_llm": true,
+  "answer_refine": true,
+  "evidence_compress": false,
+  "router_llm": false,
+  "pins": true,
+  "precompute": false,
+  "doc_vector": true,
+  "feedback_boost": false,
+  "forensic_auto": true,
+  "collab": true,
+  "rerun_capture": true,
+  "mcp_sources": false,
+  "external_rag": false,
+  "mcp_federation": false,
+  "embed_adaptive": true,
+  "fts_trigram": false,
+  "schema_lint": true,
+  "explicit_relations": true,
+  "precompute_after_build": false,
+  "verify_after_build": true,
+  "memory_decay": true,
+  "evolve_from_forensics": true,
+  "auto_build": true,
+  "health_check": true,
+  "log_stages": true,
+  "profile_expansion": false,
+  "context_guard": true,
+  "doc_acl": true,
+  "build_fts": true,
+  "doc_expand": true,
+  "llm_failure_report": true,
+  "analysis_mode": false,
+  "llm_after_fusion": false,
+  "llm_after_rerank": false,
+  "degrade_on_llm_failure": true
+ }
 }

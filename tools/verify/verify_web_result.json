@@ -157,7 +157,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"request_id\": 2, \"run_id\": \"300644a4443e\", \"query\": \"ISSUE-2001 의 원인과 수정 CL 은?\", \"expecte"
+  "out": "{\"request_id\": 2, \"run_id\": \"3884337cd53e\", \"query\": \"ISSUE-2001 의 원인과 수정 CL 은?\", \"expecte"
  },
  {
   "name": "guest forensic llm",
@@ -285,7 +285,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"id\": 2, \"ts\": 1789876675.8567414, \"kind\": \"query\", \"summary\": \"ISSUE-2001 의 원인과 수정 CL 은?"
+  "out": "{\"id\": 2, \"ts\": 1789907065.5668354, \"kind\": \"query\", \"summary\": \"ISSUE-2001 의 원인과 수정 CL 은?"
  },
  {
   "name": "guest GET /api/models",
@@ -309,7 +309,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"enabled\": true, \"last_scan\": 1789876675.2848318, \"last_result\": \"…\", \"last_build\": \"…\"}"
+  "out": "{\"enabled\": true, \"last_scan\": 1789907065.0150807, \"last_result\": \"…\", \"last_build\": \"…\"}"
  },
  {
   "name": "guest GET /api/tuning",
@@ -317,7 +317,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"tunables\": \"…\", \"stages\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8"
+  "out": "{\"tunables\": \"…\", \"stages\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0o"
  },
  {
   "name": "guest GET /api/architecture",
@@ -405,7 +405,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"presets\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\presets.j"
+  "out": "{\"presets\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\presets.j"
  },
  {
   "name": "guest GET /api/presets/diff",
@@ -437,7 +437,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\logs\", \"files\": \"…\", \"quot"
+  "out": "{\"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\logs\", \"files\": \"…\", \"quot"
  },
  {
   "name": "guest GET /api/logs",
@@ -445,7 +445,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"file\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\logs\\\\llmwiki.log\", \"rows"
+  "out": "{\"file\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\logs\\\\llmwiki.log\", \"rows"
  },
  {
   "name": "guest GET /api/forensics",
@@ -493,7 +493,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"rules\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\query_rules"
+  "out": "{\"rules\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\query_rules"
  },
  {
   "name": "guest GET /api/query_rules/test",
@@ -541,7 +541,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"schemas\": \"…\", \"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\schemas\", "
+  "out": "{\"schemas\": \"…\", \"dir\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\schemas\", "
  },
  {
   "name": "guest GET /api/mcp_sources",
@@ -549,7 +549,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"sources\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\mcp_sourc"
+  "out": "{\"sources\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\mcp_sourc"
  },
  {
   "name": "guest GET /api/memory",
@@ -573,7 +573,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"agents\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\agents.jso"
+  "out": "{\"agents\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\agents.jso"
  },
  {
   "name": "guest GET /api/themes",
@@ -629,7 +629,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"name\": \"query\", \"ms\": 47.23, \"self_ms\": 11.77, \"offset_ms\": 0.0}"
+  "out": "{\"name\": \"query\", \"ms\": 46.34, \"self_ms\": 11.68, \"offset_ms\": 0.0}"
  },
  {
   "name": "guest GET queries (사용자 정보 포함)",
@@ -760,7 +760,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"85180623\"}"
+  "out": "{\"job\": \"da60cdfc\"}"
  },
  {
   "name": "c1 pins add (edit) → 428",
@@ -792,7 +792,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"e775f60b\"}"
+  "out": "{\"job\": \"245fd35c\"}"
  },
  {
   "name": "c1 build full → 403",
@@ -888,7 +888,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"security\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\security"
+  "out": "{\"security\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\security"
  },
  {
   "name": "admin GET apikeys",
@@ -1056,7 +1056,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"markdown\": \"# 최적화 자료 묶음 (LLM 에게 그대로 주세요)\\n\\n> 생성 2026-09-20 12:57 · 이 파일 하나면 됩니다. **아래 C"
+  "out": "{\"markdown\": \"# 최적화 자료 묶음 (LLM 에게 그대로 주세요)\\n\\n> 생성 2026-09-20 21:24 · 이 파일 하나면 됩니다. **아래 C"
  },
  {
   "name": "guest GET /api/optimize/bundle (unknown) → 404",
@@ -1120,7 +1120,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\prompts\\\\rerank.md\", \"con"
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\prompts\\\\rerank.md\", \"con"
  },
  {
   "name": "admin prompts reset",
@@ -1128,7 +1128,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\prompts\\\\rerank.md\", \"con"
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\prompts\\\\rerank.md\", \"con"
  },
  {
   "name": "admin query_rules add",
@@ -1224,7 +1224,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"proposals_decayed\": 0, \"proposals_archived\": 0, \"pins_decayed\": 0}"
+  "out": "{\"proposals_decayed\": 0, \"proposals_archived\": 0, \"pins_decayed\": 2}"
  },
  {
   "name": "admin memory consolidate",
@@ -1248,7 +1248,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"f9068cef\"}"
+  "out": "{\"job\": \"acc76cf3\"}"
  },
  {
   "name": "admin precompute doc_vectors",
@@ -1272,7 +1272,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"vacuum\", \"ms\": 70.5, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"vacuum\", \"ms\": 68.7, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance fts_optimize",
@@ -1280,7 +1280,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"fts_optimize\", \"ms\": 1.5, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"fts_optimize\", \"ms\": 0.9, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance wal_checkpoint",
@@ -1288,7 +1288,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 1.6, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"wal_checkpoint\", \"ms\": 1.3, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance clear_cache",
@@ -1296,7 +1296,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"clear_cache\", \"ms\": 2.2, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"clear_cache\", \"ms\": 2.3, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance warm_cache",
@@ -1304,7 +1304,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"warm_cache\", \"ms\": 1.3, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"warm_cache\", \"ms\": 0.9, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance refresh_doc_refs",
@@ -1312,7 +1312,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"refresh_doc_refs\", \"ms\": 1.5, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"refresh_doc_refs\", \"ms\": 1.4, \"stats\": \"…\"}"
  },
  {
   "name": "admin maintenance purge → 428",
@@ -1328,7 +1328,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"action\": \"purge_requests\", \"ms\": 3.9, \"stats\": \"…\"}"
+  "out": "{\"ok\": true, \"action\": \"purge_requests\", \"ms\": 4.1, \"stats\": \"…\"}"
  },
  {
   "name": "admin trials run job",
@@ -1336,7 +1336,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"2e7143cc\"}"
+  "out": "{\"job\": \"cffa0f0b\"}"
  },
  {
   "name": "admin trials compare",
@@ -1352,7 +1352,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"trial_id\": 1, \"name\": \"w1\", \"ts\": 1789876681.7796266, \"build_version\": 2}"
+  "out": "{\"trial_id\": 1, \"name\": \"w1\", \"ts\": 1789907071.8659325, \"build_version\": 2}"
  },
  {
   "name": "admin trials delete",
@@ -1368,7 +1368,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"c67bb96a\"}"
+  "out": "{\"job\": \"70410176\"}"
  },
  {
   "name": "admin watch scan",
@@ -1384,7 +1384,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"enabled\": true, \"last_scan\": 1789876682.7306378, \"last_result\": \"…\", \"last_build\": \"…\"}"
+  "out": "{\"enabled\": true, \"last_scan\": 1789907072.584636, \"last_result\": \"…\", \"last_build\": \"…\"}"
  },
  {
   "name": "admin watch tick",
@@ -1400,7 +1400,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"enabled\": false, \"last_scan\": 1789876682.7528539, \"last_result\": \"…\", \"last_build\": \"…\"}"
+  "out": "{\"enabled\": false, \"last_scan\": 1789907072.606307, \"last_result\": \"…\", \"last_build\": \"…\"}"
  },
  {
   "name": "admin snapshot create",
@@ -1408,7 +1408,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"name\": \"20260920-125802_w\", \"tag\": \"w\", \"ts\": 1789876682.8233328, \"actor\": \"kh82.kim\"}"
+  "out": "{\"name\": \"20260920-212432_w\", \"tag\": \"w\", \"ts\": 1789907072.6550138, \"actor\": \"kh82.kim\"}"
  },
  {
   "name": "admin snapshot restore → 428",
@@ -1424,7 +1424,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"restored\": \"20260920-125802_w\", \"stats\": \"…\"}"
+  "out": "{\"restored\": \"20260920-212432_w\", \"stats\": \"…\"}"
  },
  {
   "name": "admin snapshot prune",
@@ -1448,7 +1448,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"0fdfcbaa\"}"
+  "out": "{\"job\": \"97050b3e\"}"
  },
  {
   "name": "admin build full confirmed",
@@ -1456,7 +1456,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"1650b4b0\"}"
+  "out": "{\"job\": \"95589ff2\"}"
  },
  {
   "name": "admin build purge_logs wrong pw → 428",
@@ -1560,7 +1560,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"id\": \"48b30b81\", \"token\": \"lwk_48b30b81_dpc4u0DtFFgneg8k85JgdhCtFv3aQinj\", \"name\": \"w-ke"
+  "out": "{\"id\": \"82e692af\", \"token\": \"lwk_82e692af_TvW4OnkAbxU2RM_ty5Anshg-sI4Pqd6S\", \"name\": \"w-ke"
  },
  {
   "name": "apikey query",
@@ -1989,7 +1989,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\models.json\", \"models\": \""
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\models.json\", \"models\": \""
  },
  {
   "name": "admin catalog remove (rerank)",
@@ -2061,7 +2061,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "request_id=120 rerun={\"saved\": true, \"bytes\": 82053, \"pruned\": 1}"
+  "out": "request_id=120 rerun={\"saved\": true, \"bytes\": 82054, \"pruned\": 1}"
  },
  {
   "name": "재실행 정보 (재시작점 표 + 저장 여부)",
@@ -2256,7 +2256,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"posts\": \"…\", \"total\": 1, \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\"
+  "out": "{\"posts\": \"…\", \"total\": 1, \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\"
  },
  {
   "name": "collab 댓글",
@@ -2312,7 +2312,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"removed\": \"3eed63690b\"}"
+  "out": "{\"ok\": true, \"removed\": \"97707775b9\"}"
  },
  {
   "name": "admin 글 삭제 (확인 필요 → 428)",
@@ -2328,7 +2328,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"removed\": \"6172d4d1c1\"}"
+  "out": "{\"ok\": true, \"removed\": \"ab6b6217e6\"}"
  },
  {
   "name": "collab 말풍선 글자 크기 설정이 내려옴",
@@ -2356,8 +2356,8 @@
     "C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\setup\\sample_corpus_modem"
    ],
    "corpus_exclude": [],
-   "data_dir": "C:\\Users\\user\\AppData\\Local\\Temp\\lwweb_cu8ua1_6\\data",
-   "wiki_dir": "C:\\Users\\user\\AppData\\Local\\Temp\\lwweb_cu8ua1_6\\wiki",
+   "data_dir": "C:\\Users\\user\\AppData\\Local\\Temp\\lwweb_d0ogyx44\\data",
+   "wiki_dir": "C:\\Users\\user\\AppData\\Local\\Temp\\lwweb_d0ogyx44\\wiki",
    "db_name": "llmwiki.sqlite3",
    "chunk_max_chars": 900,
    "chunk_overlap_chars": 120,
@@ -2388,7 +2388,9 @@
     "wait": "all",
     "timeout_s": 120,
     "min_results": 1,
-    "prompt": "ensemble_merge"
+    "prompt": "ensemble_merge",
+    "fallback_role_model": true,
+    "fallback_mode": "auto"
    },
    "rerank_candidates": 24,
    "rerank_chunk_chars": 600,
@@ -2567,7 +2569,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\models.json\", \"models\": \""
+  "out": "{\"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\models.json\", \"models\": \""
  },
  {
   "name": "admin catalog remove",
@@ -2615,7 +2617,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\schedule.js"
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\schedule.js"
  },
  {
   "name": "guest schedule 수정 → 401",
@@ -2639,7 +2641,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\schedule.js"
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\schedule.js"
  },
  {
   "name": "admin schedule 즉시 실행",
@@ -2647,7 +2649,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"job\": \"sch-web_verify-9eeb5d\", \"tasks\": \"…\"}"
+  "out": "{\"ok\": true, \"job\": \"sch-web_verify-2331a6\", \"tasks\": \"…\"}"
  },
  {
   "name": "schedule 이력",
@@ -2655,7 +2657,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_cu8ua1_6\\\\schedule.js"
+  "out": "{\"tasks\": \"…\", \"path\": \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\lwweb_d0ogyx44\\\\schedule.js"
  },
  {
   "name": "admin schedule disable",
@@ -2703,15 +2705,15 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"b4f1ea31\"}"
+  "out": "{\"job\": \"0c8156c5\"}"
  },
  {
   "name": "admin 작업 취소 (DELETE /api/jobs)",
-  "path": "DELETE /api/jobs/b4f1ea31",
+  "path": "DELETE /api/jobs/0c8156c5",
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"ok\": true, \"token\": \"b4f1ea31\", \"status\": \"running\"}"
+  "out": "{\"ok\": true, \"token\": \"0c8156c5\", \"status\": \"running\"}"
  },
  {
   "name": "취소된 작업 상태",
@@ -2727,7 +2729,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"26469171\"}"
+  "out": "{\"job\": \"79afea73\"}"
  },
  {
   "name": "취소 후 빌드 복구",
@@ -2881,7 +2883,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"8438a8c0\"}"
+  "out": "{\"job\": \"750be309\"}"
  },
  {
   "name": "스윕 잡 완료 → record/compare/text",
@@ -2893,11 +2895,11 @@
  },
  {
   "name": "GET /api/sweep?id=<id> (기록+비교+텍스트)",
-  "path": "GET /api/sweep?id=20260920-125807-8c68",
+  "path": "GET /api/sweep?id=20260920-212437-baf1",
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"record\": \"…\", \"compare\": \"…\", \"text\": \"스윕 sw_20260920-125807-8c68 — rrf_k = 10, 60  (con"
+  "out": "{\"record\": \"…\", \"compare\": \"…\", \"text\": \"스윕 sw_20260920-212437-baf1 — rrf_k = 10, 60  (con"
  },
  {
   "name": "GET /api/sweep?id=nope → 404",
@@ -2921,7 +2923,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"da1d448e\"}"
+  "out": "{\"job\": \"c67937df\"}"
  },
  {
   "name": "스윕 잡(토글 claim_check) 완료 → [false,true]",
@@ -2937,7 +2939,7 @@
   "status": 200,
   "expect": 200,
   "ok": true,
-  "out": "{\"job\": \"e3099083\"}"
+  "out": "{\"job\": \"725aadcd\"}"
  },
  {
   "name": "스윕 잡(range · query 기준) 완료",

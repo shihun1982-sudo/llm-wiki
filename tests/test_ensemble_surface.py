@@ -113,8 +113,14 @@ class EnsembleWebSurfaceTest(unittest.TestCase):
         src = open(S.__file__, encoding="utf-8").read()
         i = src.find('u.path == "/api/models"')
         self.assertGreater(i, 0)
-        block = src[i:i + 1600]
-        for key in ('"ensemble"', '"ensemble_defaults"', '"ensemble_max_members"', "effective_ensemble"):
+        # 고정 길이(1600자)로 자르면 핸들러에 줄이 늘 때마다 뒤쪽 키가 창 밖으로 밀려 **엉뚱하게 실패**한다.
+        # 다음 경로 분기까지를 이 핸들러의 범위로 본다 (2026-09-20).
+        j = src.find('u.path == "/api/', i + 10)
+        block = src[i:j if j > i else i + 4000]
+        self.assertGreater(len(block), 400, "핸들러 범위를 잡지 못했다")
+        for key in ('"ensemble"', '"ensemble_defaults"', '"ensemble_max_members"', "effective_ensemble",
+                    # 화면이 "비우면 무엇을 상속하나"·"최악 몇 초 걸리나" 를 말하려면 이 셋도 있어야 한다
+                    '"role"', '"budget"', '"query_timeout_s"'):
             self.assertIn(key, block, "GET /api/models 응답에 %s 가 없습니다" % key)
 
     def test_settings_js_has_editor_and_saves_it(self):

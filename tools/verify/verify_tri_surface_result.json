@@ -116,6 +116,41 @@
    "detail": "verdict 가 전부 비어 있다 — 거르기(근거 약함/못 찾음)가 아무것도 못 고른다"
   },
   {
+   "check": "CLI models ensemble show --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "폴백 설정 fallback_role_model",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "폴백 설정 fallback_mode",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "폴백이 돌아갈 역할 모델",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "기본값이 '켜짐 · auto' 다 (앙상블 탓에 답이 아예 안 나오는 일이 없게)",
+   "ok": true,
+   "detail": "유효값={\"fallback_role_model\": true, \"fallback_mode\": \"auto\"}"
+  },
+  {
+   "check": "폴백을 끄면 되돌릴 대상이 없어진다 (CLI → 파일 → reload → Web)",
+   "ok": true,
+   "detail": "껐는데 fallback=null"
+  },
+  {
+   "check": "CLI 로 바꾼 모드가 Web 유효값에 그대로 온다 (CLI → 파일 → reload → Web)",
+   "ok": true,
+   "detail": "web 유효값=rerun"
+  },
+  {
    "check": "CLI inspect --json 이 파싱된다",
    "ok": true,
    "detail": ""
@@ -292,7 +327,7 @@
   }
  ],
  "failed": [],
- "n": 58,
- "ok": 58,
- "sec": 4.8
+ "n": 65,
+ "ok": 65,
+ "sec": 5.5
 }

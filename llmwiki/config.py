@@ -549,7 +549,18 @@ class Settings:
     LLM_ROLE_ATTRS = ("provider", "model", "effort", "timeout_s", "retries", "backoff_s", "backoff", "backoff_max_s", "budget_s",
                       "circuit_failures", "circuit_cooldown_s", "ensemble")   # ensemble 은 dict (단축키·환경변수로는 JSON 문자열)
     # 앙상블 기본값 (llm_ensemble_defaults 가 비어 있거나 키가 빠졌을 때)
-    ENSEMBLE_DEFAULTS = {"wait": "all", "timeout_s": 120, "min_results": 1, "prompt": "ensemble_merge"}
+    # fallback_role_model: 멤버가 min_results 를 못 채워 앙상블이 실패했을 때 **역할 모델로 한 번 더** 시도할지.
+    #   켜 두면 "앙상블을 켠 탓에 답이 아예 안 나오는" 경우가 없어진다 — 앙상블 이전 동작으로 조용히 되돌아간다.
+    #   끄면 예전처럼 LLMError 로 끝나고 호출부의 대체 경로(answer 는 추출식)로 간다.
+    # fallback_mode: 그때 역할 모델이 **무엇을 받을지**.
+    #   auto(기본) = 성공한 멤버 답이 있으면 그것들을 취합(merge), 하나도 없으면 원래 프롬프트로 다시(rerun)
+    #   merge      = 되도록 살아남은 답을 취합한다 (하나도 없으면 취합할 것이 없으므로 rerun 으로 떨어진다)
+    #   rerun      = 멤버 답을 쓰지 않고 항상 원래 프롬프트로 처음부터 다시 돈다
+    # 왜 고르게 하나: merge 는 이미 쓴 토큰을 살리고 빠르지만 실패한 답에 끌려갈 수 있고,
+    #   rerun 은 깨끗한 답을 얻지만 컨텍스트를 다시 넣어 비용·시간이 더 든다. 환경마다 답이 다르다.
+    ENSEMBLE_FALLBACK_MODES = ("auto", "merge", "rerun")
+    ENSEMBLE_DEFAULTS = {"wait": "all", "timeout_s": 120, "min_results": 1, "prompt": "ensemble_merge",
+                         "fallback_role_model": True, "fallback_mode": "auto"}
     ENSEMBLE_MAX_MEMBERS = 3
     LLM_ROLE_POLICY_ATTRS = ("timeout_s", "retries", "backoff_s", "backoff", "backoff_max_s", "budget_s",
                              "circuit_failures", "circuit_cooldown_s", "max_tokens")
@@ -591,7 +602,9 @@ class Settings:
         raw = raw if isinstance(raw, dict) else {}
         d = dict(self.ENSEMBLE_DEFAULTS)
         d.update({k: v for k, v in (self.llm_ensemble_defaults or {}).items() if v not in (None, "")})
-        d.update({k: v for k, v in raw.items() if k in ("wait", "timeout_s", "min_results", "prompt") and v not in (None, "")})
+        d.update({k: v for k, v in raw.items()
+                  if k in ("wait", "timeout_s", "min_results", "prompt", "fallback_role_model", "fallback_mode")
+                  and v not in (None, "")})
         role_provider, _ = self._resolve_provider(r.get("provider"), r.get("model"), str(self.llm_provider), "role")
         members: List[Dict[str, Any]] = []
         for m in (raw.get("members") or []):
@@ -622,10 +635,70 @@ class Settings:
         except (TypeError, ValueError):
             min_results = 1
         wait = "timeout" if str(d.get("wait") or "all").lower().startswith("time") else "all"
+        # 앙상블이 실패했을 때 돌아갈 역할 모델. 화면·CLI 가 "무엇으로 되돌아가는지" 를 그대로 보여 줄 수 있게 함께 싣는다.
+        fb_on = bool(_to_bool(d.get("fallback_role_model", True)))
+        fb_mode = str(d.get("fallback_mode") or "auto").strip().lower()
+        if fb_mode not in self.ENSEMBLE_FALLBACK_MODES:
+            fb_mode = "auto"
+        role_model = str(r.get("model") or self.llm_model or "")
         return {"enabled": bool(_to_bool(raw.get("enabled", False))) and bool(members), "members": members,
                 "wait": wait, "timeout_s": timeout_s, "min_results": min_results,
                 "aggregator": {"provider": agg_prov, "model": agg_model, "effort": str(agg_raw.get("effort") or ""), "provider_source": agg_src if agg_src != "global" else "role"},
+                "fallback_role_model": fb_on, "fallback_mode": fb_mode,
+                "fallback": ({"provider": role_provider, "model": role_model, "mode": fb_mode} if (fb_on and role_model) else None),
                 "prompt": str(d.get("prompt") or "ensemble_merge")}
+
+    def ensemble_time_budget(self, role: str) -> Dict[str, Any]:
+        """이 역할의 앙상블이 **최악의 경우 몇 초** 걸리는지 (2026-09-20).
+
+        왜 계산해서 보여 주나: 곱셈이 눈에 안 보인다. 멤버 하나가 `timeout_s` 만큼 걸리는 것이 아니라
+        **(1+retries)회 × timeout_s + 백오프** 다. 거기에 실패하면 폴백이 **같은 정책으로 한 번 더** 돈다.
+        기본값(llm_timeout=600 · llm_retries=3)이면 한 단계가 최악 80분이 되는데, 화면에는
+        `ensemble.timeout_s=120` 만 보여서 2분이 상한인 줄 알기 쉽다 — 그 값은 `wait=timeout` 일 때만 쓰인다.
+
+        `role_llm()` 을 부르지 않는다 — 그쪽이 `effective_ensemble()` 을 부르므로 재귀가 된다.
+        headless 멤버는 `agents.json` 의 timeout/retries 가 우선일 수 있어(역할에 명시가 없을 때) 실제 값은 더 짧을 수 있다.
+        """
+        r = dict((self.llm_roles or {}).get(role) or {})
+
+        def num(key: str, default: Any, typ=float) -> Any:
+            v = r.get(key)
+            if v in (None, ""):
+                return default
+            try:
+                return typ(v)
+            except (TypeError, ValueError):
+                return default
+
+        timeout_s = num("timeout_s", int(self.llm_timeout or 600), int)
+        retries = max(0, num("retries", int(self.llm_retries), int))
+        backoff_s = num("backoff_s", float(self.llm_retry_backoff_s), float)
+        backoff_max = num("backoff_max_s", float(self.llm_retry_backoff_max_s), float)
+        expo = str(r.get("backoff") or self.llm_retry_backoff or "exponential").lower().startswith("exp")
+        attempts = 1 + retries
+        waits = 0.0
+        for i in range(1, attempts):
+            w = backoff_s * (2 ** (i - 1)) if expo else backoff_s * i
+            waits += min(w, backoff_max) if backoff_max > 0 else w
+        one_call = attempts * timeout_s + waits          # complete() 한 번의 최악 (재시도 포함)
+        eff = self.effective_ensemble(role)
+        if not eff.get("enabled"):
+            return {"enabled": False, "one_call_s": one_call, "attempts": attempts, "timeout_s": timeout_s,
+                    "members_s": 0.0, "aggregate_s": 0.0, "fallback_s": 0.0, "worst_s": one_call, "notes": []}
+        # 멤버는 병렬이므로 가장 느린 하나가 상한. wait=timeout 이면 거기서 끊는다.
+        members_s = one_call if eff.get("wait") != "timeout" else min(float(eff.get("timeout_s") or 0) or one_call, one_call)
+        aggregate_s = one_call if len(eff.get("members") or []) > 1 else 0.0
+        fallback_s = one_call if eff.get("fallback_role_model") else 0.0
+        notes: List[str] = []
+        if eff.get("wait") != "timeout":
+            notes.append("wait=all 이라 ensemble.timeout_s(%s초)는 쓰이지 않는다 — 상한은 가장 느린 멤버다"
+                         % eff.get("timeout_s"))
+        if fallback_s:
+            notes.append("실패하면 폴백이 같은 정책으로 한 번 더 돈다 (+%.0f초)" % fallback_s)
+        return {"enabled": True, "one_call_s": one_call, "attempts": attempts, "timeout_s": timeout_s,
+                "members_s": members_s, "aggregate_s": aggregate_s, "fallback_s": fallback_s,
+                # 정상 경로(멤버 → 취합)와 실패 경로(멤버 → 폴백) 중 긴 쪽
+                "worst_s": members_s + max(aggregate_s, fallback_s), "notes": notes}
 
     def role_llm(self, role: str) -> Dict[str, Any]:
         """역할별 (provider, model, effort + 재시도 정책 + ensemble) 해석: llm_roles[role] 의 값이 비어 있으면 전역값.
@@ -1030,6 +1103,11 @@ def _norm_ensemble_raw(v: Any) -> Dict[str, Any]:
     for key in ("wait", "prompt"):
         if v.get(key) not in (None, ""):
             out[key] = str(v[key])
+    if v.get("fallback_role_model") not in (None, ""):      # "" = llm_ensemble_defaults 상속
+        out["fallback_role_model"] = _to_bool(v["fallback_role_model"])
+    if v.get("fallback_mode") not in (None, ""):
+        m = str(v["fallback_mode"]).strip().lower()
+        out["fallback_mode"] = m if m in Settings.ENSEMBLE_FALLBACK_MODES else "auto"
     for key in ("timeout_s", "min_results"):
         if v.get(key) not in (None, ""):
             try:
@@ -1342,7 +1420,7 @@ def ensemble_template() -> Dict[str, Any]:
     wait/timeout_s/min_results/prompt 는 "" = llm_ensemble_defaults 상속."""
     return {"enabled": False,
             "members": [{"enabled": True, "provider": "", "model": "", "weight": 1.0, "effort": ""} for _ in range(Settings.ENSEMBLE_MAX_MEMBERS)],
-            "wait": "", "timeout_s": "", "min_results": "", "prompt": "",
+            "wait": "", "timeout_s": "", "min_results": "", "prompt": "", "fallback_role_model": "", "fallback_mode": "",
             "aggregator": {"provider": "", "model": "", "effort": ""}}
 
 

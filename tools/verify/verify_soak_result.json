@@ -8,27 +8,27 @@
   {
    "ok": true,
    "name": "부하 중 증분 빌드 시작",
-   "detail": "HTTP 200 job=3772cb81"
+   "detail": "HTTP 200 job=1a2b6281"
   },
   {
    "ok": true,
    "name": "빌드 중에도 질의가 응답한다 (soft 락)",
-   "detail": "HTTP 200 · 1.0s"
+   "detail": "HTTP 200 · 23.7s"
   },
   {
    "ok": true,
    "name": "예상 밖 오류(5xx·연결실패) 0건",
-   "detail": "요청 3774건 · 200=3774 · 거절(429/503)=0 · 5xx=0"
+   "detail": "요청 5323건 · 200=5323 · 거절(429/503)=0 · 5xx=0"
   },
   {
    "ok": true,
    "name": "정상 처리된 요청이 있다",
-   "detail": "200 3774건 · 창구별 {\"web:poll\": 224, \"mcp:query\": 1307, \"mcp:list\": 1307, \"web:search\": 755, \"cli:search\": 60, \"web:query\": 107, \"web:write\": 14}"
+   "detail": "200 5323건 · 창구별 {\"web:poll\": 376, \"mcp:query\": 1654, \"mcp:list\": 1654, \"web:search\": 1339, \"cli:search\": 83, \"web:query\": 193, \"web:write\": 24}"
   },
   {
    "ok": true,
    "name": "p95 지연이 60초 미만",
-   "detail": "p50=9ms p95=956ms max=23461ms"
+   "detail": "p50=21ms p95=960ms max=24428ms"
   },
   {
    "ok": true,
@@ -53,20 +53,20 @@
  ],
  "stats": {
   "codes": {
-   "200": 3774
+   "200": 5323
   },
   "err": [],
-  "n": 3774,
+  "n": 5323,
   "by_kind": {
-   "web:poll": 224,
-   "mcp:query": 1307,
-   "mcp:list": 1307,
-   "web:search": 755,
-   "cli:search": 60,
-   "web:query": 107,
-   "web:write": 14
+   "web:poll": 376,
+   "mcp:query": 1654,
+   "mcp:list": 1654,
+   "web:search": 1339,
+   "cli:search": 83,
+   "web:query": 193,
+   "web:write": 24
   }
  },
- "p50_ms": 8.588671684265137,
- "p95_ms": 956.3682079315186
+ "p50_ms": 20.75648307800293,
+ "p95_ms": 959.7060680389404
 }

@@ -1404,6 +1404,21 @@ class Pipeline:
                "tuning": _tuning.T.to_dict(), "day": time.strftime("%Y-%m-%d") if t.time_scope else ""}
         return hashlib.sha1(json.dumps(sig, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
+    def _content_llm_sig(self, role: str) -> Dict[str, Any]:
+        """캐시 키에 넣을 **답 내용을 바꾸는** LLM 설정만 (2026-09-20).
+
+        예전에는 `role_llm(role)["model"]` 하나만 넣었다. 그런데 앙상블을 켜면 그 역할의 모델은
+        **불리지도 않고**(make_llm 이 EnsembleLLM 을 돌려준다) 값도 그대로라, 앙상블을 켜거나 멤버를
+        바꿔도 키가 변하지 않았다 — precompute 캐시가 **앙상블 이전에 만든 답**을 계속 돌려준다.
+        "설정은 바꿨는데 아무 일도 안 일어난다" 가 되는 자리다.
+
+        타임아웃·재시도·회로 차단은 답 **내용**을 바꾸지 않으므로 넣지 않는다 (넣으면 무의미한 캐시 미스가 된다).
+        앙상블의 wait/timeout_s/min_results 는 어떤 멤버가 취합에 들어가는지를 바꾸므로 넣는다.
+        """
+        rc = self.s.role_llm(role)
+        return {"provider": rc.get("provider"), "model": rc.get("model"), "effort": rc.get("effort"),
+                "max_tokens": rc.get("max_tokens"), "ensemble": rc.get("ensemble")}
+
     def answer_signature(self) -> Dict[str, Any]:
         """답변 결과에 영향을 주는 설정 요약 (precompute 캐시 키)."""
         s, t = self.s, self.s.toggles
@@ -1411,7 +1426,7 @@ class Pipeline:
                 "toggles": {k: v for k, v in t.__dict__.items() if not k.startswith(("evolve", "log_", "forensic", "health", "profile"))},
                 "k": [s.top_k_fts, s.top_k_vector, s.top_k_graph, s.top_k_final, s.graph_hops, s.rrf_k],
                 "ctx": [s.context_max_chars, s.context_chunk_chars, s.rerank_candidates, s.answer_max_tokens],
-                "llm": [self.s.role_llm("answer")["model"], self.s.role_llm("rerank")["model"]], "emb": self.s.embed_provider,
+                "llm": [self._content_llm_sig("answer"), self._content_llm_sig("rerank")], "emb": self.s.embed_provider,
                 "tuning": _tuning.T.to_dict()}
 
     def query(self, q: str, log: bool = True, overrides: Optional[Dict[str, Any]] = None,

@@ -1,652 +1,674 @@
 {
-  "_comment": "opencode(또는 claude / codex CLI)를 headless(비대화형 subprocess)로 쓰는 예시. setup/config.example.json 을 config.json 으로 복사한 뒤 **이 파일의 llm_* 키만 덮어쓰면** 된다 — 코드 변경·재시작 없이 `config reload`(Web 설정 › 다시 읽기) 로 적용된다. 실행 파일은 PATH 에 있거나 agents.json command[0] 에 절대 경로. 적용 후: python -m llmwiki health (headless_agents) → python -m llmwiki models test --live",
-  "_note_switch": "API ↔ headless 전환은 두 줄이다. 전체를 바꾸려면 llm_provider(예 \"openai\" ↔ \"headless:opencode\"), 역할 하나만 바꾸려면 llm_roles.<role>.provider. 되돌릴 때도 같은 키만 고친다. 종단 증명: tests/test_headless_switch.py",
-  "_note_model": "llm_model / llm_roles.<role>.model 은 opencode 의 provider/model 표기(예 anthropic/claude-sonnet-4-5, openai/gpt-4o-mini). 비우면 agents.json 의 model, 그것도 비면 opencode 의 기본 모델. claude CLI 는 claude-sonnet-5 같은 모델 id, codex 는 gpt-5 같은 id.",
-  "_note_scope": "권장: answer/expand/verify 처럼 질의 시 역할에만 headless 를 두고, 빌드 역할(extract/summary)은 API 프로바이더나 끄기 — llm_graph 는 청크당 프로세스 1개를 띄우므로 매우 느리다. 전역 llm_provider 를 headless 로 두는 예는 아래 _example_global.",
-  "_note_windows": "Windows 에서 npm/bun 으로 설치한 opencode 는 opencode.cmd 이며 PATH 에서 자동 해석된다(.cmd 셸 포함). 안 되면 agents.json 의 command[0] 을 C:\\\\Users\\\\<me>\\\\AppData\\\\Roaming\\\\npm\\\\opencode.cmd 처럼 절대 경로로. health 의 headless_agents 항목이 이것을 검사한다.",
-  "_note_auth": "opencode 자체 인증(opencode auth login 또는 provider 키 환경변수)은 별도. 자식 프로세스에는 agents.json env_passthrough 허용 목록(기본: PATH/HOME/USERPROFILE/APPDATA/LOCALAPPDATA/TEMP/TMP/SYSTEMROOT/COMSPEC/LANG/LC_ALL/PYTHONIOENCODING/*_PROXY)의 환경변수만 넘어간다 — .env 의 PAT·LLMWIKI_PASSWORD 는 넘어가지 않는다. 에이전트가 키를 환경변수로 받아야 하면 env_passthrough 에 패턴(예 \"ANTHROPIC_*\", \"OPENCODE_*\")을 추가하거나 opencode.env 에 값을 적는다.",
-  "llm_provider": "auto",
-  "llm_model": "",
+ "_comment": "opencode(또는 claude / codex CLI)를 headless(비대화형 subprocess)로 쓰는 예시. setup/config.example.json 을 config.json 으로 복사한 뒤 **이 파일의 llm_* 키만 덮어쓰면** 된다 — 코드 변경·재시작 없이 `config reload`(Web 설정 › 다시 읽기) 로 적용된다. 실행 파일은 PATH 에 있거나 agents.json command[0] 에 절대 경로. 적용 후: python -m llmwiki health (headless_agents) → python -m llmwiki models test --live",
+ "_note_switch": "API ↔ headless 전환은 두 줄이다. 전체를 바꾸려면 llm_provider(예 \"openai\" ↔ \"headless:opencode\"), 역할 하나만 바꾸려면 llm_roles.<role>.provider. 되돌릴 때도 같은 키만 고친다. 종단 증명: tests/test_headless_switch.py",
+ "_note_model": "llm_model / llm_roles.<role>.model 은 opencode 의 provider/model 표기(예 anthropic/claude-sonnet-4-5, openai/gpt-4o-mini). 비우면 agents.json 의 model, 그것도 비면 opencode 의 기본 모델. claude CLI 는 claude-sonnet-5 같은 모델 id, codex 는 gpt-5 같은 id.",
+ "_note_scope": "권장: answer/expand/verify 처럼 질의 시 역할에만 headless 를 두고, 빌드 역할(extract/summary)은 API 프로바이더나 끄기 — llm_graph 는 청크당 프로세스 1개를 띄우므로 매우 느리다. 전역 llm_provider 를 headless 로 두는 예는 아래 _example_global.",
+ "_note_windows": "Windows 에서 npm/bun 으로 설치한 opencode 는 opencode.cmd 이며 PATH 에서 자동 해석된다(.cmd 셸 포함). 안 되면 agents.json 의 command[0] 을 C:\\\\Users\\\\<me>\\\\AppData\\\\Roaming\\\\npm\\\\opencode.cmd 처럼 절대 경로로. health 의 headless_agents 항목이 이것을 검사한다.",
+ "_note_auth": "opencode 자체 인증(opencode auth login 또는 provider 키 환경변수)은 별도. 자식 프로세스에는 agents.json env_passthrough 허용 목록(기본: PATH/HOME/USERPROFILE/APPDATA/LOCALAPPDATA/TEMP/TMP/SYSTEMROOT/COMSPEC/LANG/LC_ALL/PYTHONIOENCODING/*_PROXY)의 환경변수만 넘어간다 — .env 의 PAT·LLMWIKI_PASSWORD 는 넘어가지 않는다. 에이전트가 키를 환경변수로 받아야 하면 env_passthrough 에 패턴(예 \"ANTHROPIC_*\", \"OPENCODE_*\")을 추가하거나 opencode.env 에 값을 적는다.",
+ "llm_provider": "auto",
+ "llm_model": "",
+ "llm_roles": {
+  "answer": {
+   "provider": "headless:opencode",
+   "model": "anthropic/claude-sonnet-4-5",
+   "effort": "medium",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "expand": {
+   "provider": "headless:opencode",
+   "model": "anthropic/claude-haiku-4-5",
+   "effort": "low",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "verify": {
+   "provider": "headless:opencode",
+   "model": "anthropic/claude-haiku-4-5",
+   "effort": "low",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "rerank": {
+   "provider": "none",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "extract": {
+   "provider": "none",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "summary": {
+   "provider": "none",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "review": {
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "forensic": {
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "fusion": {
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  },
+  "select": {
+   "provider": "",
+   "model": "",
+   "effort": "",
+   "timeout_s": "",
+   "retries": "",
+   "max_tokens": "",
+   "ensemble": {
+    "enabled": false,
+    "members": [
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     },
+     {
+      "enabled": true,
+      "provider": "",
+      "model": "",
+      "weight": 1.0,
+      "effort": ""
+     }
+    ],
+    "wait": "",
+    "timeout_s": "",
+    "min_results": "",
+    "prompt": "",
+    "aggregator": {
+     "provider": "",
+     "model": "",
+     "effort": ""
+    },
+    "fallback_role_model": "",
+    "fallback_mode": ""
+   }
+  }
+ },
+ "llm_timeout": 300,
+ "llm_retries": 1,
+ "output_mode": "answer",
+ "web_host": "0.0.0.0",
+ "web_port": 8765,
+ "toggles": {
+  "llm_graph": false,
+  "community_summary": false,
+  "rerank_llm": false,
+  "llm_failure_report": true,
+  "rule_graph": true,
+  "embed": true,
+  "communities": true,
+  "wiki_pages": true,
+  "incremental": true,
+  "fts": true,
+  "vector": true,
+  "graph": true,
+  "router": true,
+  "rerank": true,
+  "llm_answer": true,
+  "evolve_capture": true,
+  "evolve_auto_apply": false,
+  "stat_skip": true,
+  "idf_refit_incremental": false,
+  "incremental_communities": false,
+  "wiki_full_rewrite": false,
+  "warm_cache": true,
+  "fts_optimize": true,
+  "query_cache": false,
+  "context_trim": true,
+  "dedupe_hits": true,
+  "query_rules": true,
+  "time_scope": true,
+  "query_expand": false,
+  "query_decompose": false,
+  "evidence_check": true,
+  "evidence_check_llm": false,
+  "fallback_loop": false,
+  "claim_check": true,
+  "claim_check_llm": false,
+  "answer_refine": false,
+  "evidence_compress": false,
+  "router_llm": false,
+  "pins": true,
+  "precompute": false,
+  "doc_vector": false,
+  "feedback_boost": false,
+  "forensic_auto": true,
+  "collab": true,
+  "rerun_capture": true,
+  "mcp_sources": false,
+  "external_rag": false,
+  "mcp_federation": false,
+  "embed_adaptive": true,
+  "fts_trigram": false,
+  "schema_lint": true,
+  "explicit_relations": true,
+  "precompute_after_build": false,
+  "verify_after_build": true,
+  "memory_decay": true,
+  "evolve_from_forensics": true,
+  "auto_build": false,
+  "health_check": true,
+  "log_stages": true,
+  "profile_expansion": false,
+  "build_fts": true,
+  "doc_expand": true,
+  "analysis_mode": false,
+  "llm_after_fusion": false,
+  "llm_after_rerank": false,
+  "degrade_on_llm_failure": true
+ },
+ "_example_global": {
+  "llm_provider": "headless:opencode",
+  "llm_model": "anthropic/claude-sonnet-4-5",
+  "_why": "모든 역할을 opencode 로. 빌드도 프로세스 실행이 되므로 llm_graph 는 끈 채로 둔다."
+ },
+ "_example_claude_cli": {
   "llm_roles": {
-    "answer": {
-      "provider": "headless:opencode",
-      "model": "anthropic/claude-sonnet-4-5",
-      "effort": "medium",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "expand": {
-      "provider": "headless:opencode",
-      "model": "anthropic/claude-haiku-4-5",
-      "effort": "low",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "verify": {
-      "provider": "headless:opencode",
-      "model": "anthropic/claude-haiku-4-5",
-      "effort": "low",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "rerank": {
-      "provider": "none",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "extract": {
-      "provider": "none",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "summary": {
-      "provider": "none",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "review": {
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "forensic": {
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "fusion": {
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    },
-    "select": {
-      "provider": "",
-      "model": "",
-      "effort": "",
-      "timeout_s": "",
-      "retries": "",
-      "max_tokens": "",
-      "ensemble": {
-        "enabled": false,
-        "members": [
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          },
-          {
-            "enabled": true,
-            "provider": "",
-            "model": "",
-            "weight": 1.0,
-            "effort": ""
-          }
-        ],
-        "wait": "",
-        "timeout_s": "",
-        "min_results": "",
-        "prompt": "",
-        "aggregator": {
-          "provider": "",
-          "model": "",
-          "effort": ""
-        }
-      }
-    }
+   "answer": {
+    "provider": "headless:claude",
+    "model": "claude-sonnet-5"
+   }
+  }
+ },
+ "_example_codex_cli": {
+  "llm_roles": {
+   "answer": {
+    "provider": "headless:codex",
+    "model": "gpt-5"
+   }
+  }
+ },
+ "_example_back_to_api": {
+  "llm_provider": "openai",
+  "llm_model": "claude-sonnet-5",
+  "llm_roles": {
+   "answer": {
+    "provider": "openai"
+   }
   },
-  "llm_timeout": 300,
-  "llm_retries": 1,
-  "output_mode": "answer",
-  "web_host": "0.0.0.0",
-  "web_port": 8765,
-  "toggles": {
-    "llm_graph": false,
-    "community_summary": false,
-    "rerank_llm": false,
-    "llm_failure_report": true,
-    "rule_graph": true,
-    "embed": true,
-    "communities": true,
-    "wiki_pages": true,
-    "incremental": true,
-    "fts": true,
-    "vector": true,
-    "graph": true,
-    "router": true,
-    "rerank": true,
-    "llm_answer": true,
-    "evolve_capture": true,
-    "evolve_auto_apply": false,
-    "stat_skip": true,
-    "idf_refit_incremental": false,
-    "incremental_communities": false,
-    "wiki_full_rewrite": false,
-    "warm_cache": true,
-    "fts_optimize": true,
-    "query_cache": false,
-    "context_trim": true,
-    "dedupe_hits": true,
-    "query_rules": true,
-    "time_scope": true,
-    "query_expand": false,
-    "query_decompose": false,
-    "evidence_check": true,
-    "evidence_check_llm": false,
-    "fallback_loop": false,
-    "claim_check": true,
-    "claim_check_llm": false,
-    "answer_refine": false,
-    "evidence_compress": false,
-    "router_llm": false,
-    "pins": true,
-    "precompute": false,
-    "doc_vector": false,
-    "feedback_boost": false,
-    "forensic_auto": true,
-    "collab": true,
-    "rerun_capture": true,
-    "mcp_sources": false,
-    "external_rag": false,
-    "mcp_federation": false,
-    "embed_adaptive": true,
-    "fts_trigram": false,
-    "schema_lint": true,
-    "explicit_relations": true,
-    "precompute_after_build": false,
-    "verify_after_build": true,
-    "memory_decay": true,
-    "evolve_from_forensics": true,
-    "auto_build": false,
-    "health_check": true,
-    "log_stages": true,
-    "profile_expansion": false,
-    "build_fts": true,
-    "doc_expand": true,
-    "analysis_mode": false,
-    "llm_after_fusion": false,
-    "llm_after_rerank": false,
-    "degrade_on_llm_failure": true
-  },
-  "_example_global": {
-    "llm_provider": "headless:opencode",
-    "llm_model": "anthropic/claude-sonnet-4-5",
-    "_why": "모든 역할을 opencode 로. 빌드도 프로세스 실행이 되므로 llm_graph 는 끈 채로 둔다."
-  },
-  "_example_claude_cli": {
-    "llm_roles": {
-      "answer": {
-        "provider": "headless:claude",
-        "model": "claude-sonnet-5"
-      }
-    }
-  },
-  "_example_codex_cli": {
-    "llm_roles": {
-      "answer": {
-        "provider": "headless:codex",
-        "model": "gpt-5"
-      }
-    }
-  },
-  "_example_back_to_api": {
-    "llm_provider": "openai",
-    "llm_model": "claude-sonnet-5",
-    "llm_roles": {
-      "answer": {
-        "provider": "openai"
-      }
-    },
-    "_why": "게이트웨이(URL+PAT)로 되돌리기: provider 만 바꾸고 openai_base_url 과 .env OPENAI_API_KEY 는 그대로."
-  },
-  "_agents_json_hint": "agents.json 의 opencode 항목: {\"command\": [\"opencode\", \"run\", \"--format\", \"json\", \"-m\", \"{model}\", \"{prompt}\"], \"prompt_mode\": \"stdin\", \"output\": \"ndjson\", \"timeout_s\": 300, \"env_passthrough\": [...]}. 출력이 plain text 로 나오는 버전이면 \"output\": \"text\" 로. 배선만 확인하려면 provider 를 headless:mock 으로.",
-  "corpus_dirs": [
-    "corpus"
-  ],
-  "corpus_exclude": [],
-  "data_dir": "data",
-  "wiki_dir": "wiki",
-  "db_name": "llmwiki.sqlite3",
-  "chunk_max_chars": 900,
-  "chunk_overlap_chars": 120,
-  "top_k_fts": 12,
-  "top_k_vector": 12,
-  "top_k_graph": 12,
-  "top_k_final": 8,
-  "graph_hops": 2,
-  "rrf_k": 60,
-  "llm_effort": "low",
-  "answer_effort": "medium",
-  "answer_mode": "grounded",
-  "llm_fallbacks": true,
-  "ollama_url": "http://localhost:11434",
-  "ollama_model": "llama3.1",
-  "embed_provider": "auto",
-  "embed_model": "",
-  "embed_dim": 4096,
-  "llm_ensemble_defaults": {
-    "wait": "all",
-    "timeout_s": 120,
-    "min_results": 1,
-    "prompt": "ensemble_merge"
-  },
-  "rerank_candidates": 16,
-  "rerank_chunk_chars": 600,
-  "context_max_chars": 9000,
-  "context_chunk_chars": 1200,
-  "answer_max_tokens": 3000,
-  "llm_graph_budget": 0,
-  "llm_graph_min_chars": 80,
-  "graph_profile_keep": 30,
-  "graph_profile_requests": 200,
-  "graph_profile_hubs": 10,
-  "query_cache_size": 200,
-  "requests_dir": "data/requests",
-  "requests_keep_days": 90,
-  "rerun_dir": "data/reruns",
-  "rerun_keep": 50,
-  "rerun_max_mb": 4.0,
-  "sweep_dir": "data/sweeps",
-  "sweep_keep": 30,
-  "sweep_max_values": 20,
-  "sweep_max_parallel": 1,
-  "auto_build_interval": 300,
-  "embed_batch": 64,
-  "debug_level": 1,
-  "keep_requests": 2000,
-  "evolve_min_confidence": 0.8,
-  "evolve_low_score_threshold": 0.05,
-  "timezone": "Asia/Seoul",
-  "week_start": "mon",
-  "console_encoding": "auto",
-  "console_set_codepage": true,
-  "log_level": "INFO",
-  "log_max_mb": 10,
-  "log_backups": 10,
-  "log_console": false,
-  "log_total_max_mb": 500,
-  "log_limit_action": "warn",
-  "log_check_interval_s": 60,
-  "audit_max_mb": 20,
-  "audit_backups": 5,
-  "analysis_keep": 200,
-  "openai_base_url": "http://localhost:11434/v1",
-  "openai_api_key_header": "authorization",
-  "openai_extra_headers": {},
-  "openai_embed_base_url": "",
-  "openai_embed_model": "",
-  "anthropic_base_url": "",
-  "rerank_url": "",
-  "rerank_api_model": "",
-  "rerank_api_style": "cohere",
-  "embed_batch_max": 256,
-  "embed_batch_target_ms": 8000,
-  "embed_commit_every": 10,
-  "wal_checkpoint_mb": 64,
-  "embed_store_dtype": "float32",
-  "build_lock_timeout": 172800,
-  "build_lock_stale_s": 172800,
-  "db_busy_timeout_s": 60.0,
-  "db_pool_size": 16,
-  "llm_retry_backoff_s": 2.0,
-  "llm_retry_backoff": "exponential",
-  "llm_retry_backoff_max_s": 60.0,
-  "llm_budget_s": 0,
-  "llm_frequency_penalty": 0.3,
-  "llm_presence_penalty": 0.0,
-  "llm_repeat_penalty": 1.1,
-  "llm_http_retries": 2,
-  "llm_circuit_failures": 3,
-  "llm_circuit_cooldown_s": 60,
-  "mcp_transport": "stdio",
-  "mcp_host": "127.0.0.1",
-  "mcp_port": 8766,
-  "mcp_url": "",
-  "mcp_plugins_dir": "plugins/mcp_tools",
-  "evolve_auto_apply_kinds": [],
-  "evolve_snapshot_keep": 20
+  "_why": "게이트웨이(URL+PAT)로 되돌리기: provider 만 바꾸고 openai_base_url 과 .env OPENAI_API_KEY 는 그대로."
+ },
+ "_agents_json_hint": "agents.json 의 opencode 항목: {\"command\": [\"opencode\", \"run\", \"--format\", \"json\", \"-m\", \"{model}\", \"{prompt}\"], \"prompt_mode\": \"stdin\", \"output\": \"ndjson\", \"timeout_s\": 300, \"env_passthrough\": [...]}. 출력이 plain text 로 나오는 버전이면 \"output\": \"text\" 로. 배선만 확인하려면 provider 를 headless:mock 으로.",
+ "corpus_dirs": [
+  "corpus"
+ ],
+ "corpus_exclude": [],
+ "data_dir": "data",
+ "wiki_dir": "wiki",
+ "db_name": "llmwiki.sqlite3",
+ "chunk_max_chars": 900,
+ "chunk_overlap_chars": 120,
+ "top_k_fts": 12,
+ "top_k_vector": 12,
+ "top_k_graph": 12,
+ "top_k_final": 8,
+ "graph_hops": 2,
+ "rrf_k": 60,
+ "llm_effort": "low",
+ "answer_effort": "medium",
+ "answer_mode": "grounded",
+ "llm_fallbacks": true,
+ "ollama_url": "http://localhost:11434",
+ "ollama_model": "llama3.1",
+ "embed_provider": "auto",
+ "embed_model": "",
+ "embed_dim": 4096,
+ "llm_ensemble_defaults": {
+  "wait": "all",
+  "timeout_s": 120,
+  "min_results": 1,
+  "prompt": "ensemble_merge",
+  "fallback_role_model": true,
+  "fallback_mode": "auto"
+ },
+ "rerank_candidates": 16,
+ "rerank_chunk_chars": 600,
+ "context_max_chars": 9000,
+ "context_chunk_chars": 1200,
+ "answer_max_tokens": 3000,
+ "llm_graph_budget": 0,
+ "llm_graph_min_chars": 80,
+ "graph_profile_keep": 30,
+ "graph_profile_requests": 200,
+ "graph_profile_hubs": 10,
+ "query_cache_size": 200,
+ "requests_dir": "data/requests",
+ "requests_keep_days": 90,
+ "rerun_dir": "data/reruns",
+ "rerun_keep": 50,
+ "rerun_max_mb": 4.0,
+ "sweep_dir": "data/sweeps",
+ "sweep_keep": 30,
+ "sweep_max_values": 20,
+ "sweep_max_parallel": 1,
+ "auto_build_interval": 300,
+ "embed_batch": 64,
+ "debug_level": 1,
+ "keep_requests": 2000,
+ "evolve_min_confidence": 0.8,
+ "evolve_low_score_threshold": 0.05,
+ "timezone": "Asia/Seoul",
+ "week_start": "mon",
+ "console_encoding": "auto",
+ "console_set_codepage": true,
+ "log_level": "INFO",
+ "log_max_mb": 10,
+ "log_backups": 10,
+ "log_console": false,
+ "log_total_max_mb": 500,
+ "log_limit_action": "warn",
+ "log_check_interval_s": 60,
+ "audit_max_mb": 20,
+ "audit_backups": 5,
+ "analysis_keep": 200,
+ "openai_base_url": "http://localhost:11434/v1",
+ "openai_api_key_header": "authorization",
+ "openai_extra_headers": {},
+ "openai_embed_base_url": "",
+ "openai_embed_model": "",
+ "anthropic_base_url": "",
+ "rerank_url": "",
+ "rerank_api_model": "",
+ "rerank_api_style": "cohere",
+ "embed_batch_max": 256,
+ "embed_batch_target_ms": 8000,
+ "embed_commit_every": 10,
+ "wal_checkpoint_mb": 64,
+ "embed_store_dtype": "float32",
+ "build_lock_timeout": 172800,
+ "build_lock_stale_s": 172800,
+ "db_busy_timeout_s": 60.0,
+ "db_pool_size": 16,
+ "llm_retry_backoff_s": 2.0,
+ "llm_retry_backoff": "exponential",
+ "llm_retry_backoff_max_s": 60.0,
+ "llm_budget_s": 0,
+ "llm_frequency_penalty": 0.3,
+ "llm_presence_penalty": 0.0,
+ "llm_repeat_penalty": 1.1,
+ "llm_http_retries": 2,
+ "llm_circuit_failures": 3,
+ "llm_circuit_cooldown_s": 60,
+ "mcp_transport": "stdio",
+ "mcp_host": "127.0.0.1",
+ "mcp_port": 8766,
+ "mcp_url": "",
+ "mcp_plugins_dir": "plugins/mcp_tools",
+ "evolve_auto_apply_kinds": [],
+ "evolve_snapshot_keep": 20
 }

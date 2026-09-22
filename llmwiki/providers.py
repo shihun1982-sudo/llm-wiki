@@ -836,8 +836,16 @@ class EnsembleLLM(BaseLLM):
     name = "ensemble"
 
     def __init__(self, members: List[Tuple[BaseLLM, float]], aggregator: Optional[BaseLLM] = None, wait: str = "all",
-                 timeout_s: float = 120, min_results: int = 1, prompt: str = "ensemble_merge", role: str = "default") -> None:
+                 timeout_s: float = 120, min_results: int = 1, prompt: str = "ensemble_merge", role: str = "default",
+                 fallback: Optional[BaseLLM] = None, fallback_mode: str = "auto") -> None:
         BaseLLM.__init__(self)
+        # 멤버가 min_results 를 못 채웠을 때 **역할 모델로 한 번 더** 부를 LLM (ensemble.fallback_role_model).
+        # 앙상블을 켠 탓에 답이 아예 안 나오는 상황을 막는다 — 앙상블 이전 동작으로 조용히 되돌아간다.
+        # fallback_mode: auto = 살아남은 답이 있으면 취합, 없으면 새로 · merge = 되도록 취합 · rerun = 항상 새로
+        self.fallback: Optional[BaseLLM] = fallback
+        self.fallback_mode = str(fallback_mode or "auto").strip().lower()
+        if self.fallback_mode not in ("auto", "merge", "rerun"):
+            self.fallback_mode = "auto"
         self.members: List[Tuple[BaseLLM, float]] = [(m, float(w if w not in (None, "") else 1.0)) for m, w in list(members)[:ENSEMBLE_MAX_MEMBERS]]
         self.aggregator: Optional[BaseLLM] = aggregator if aggregator is not None else (self.members[0][0] if self.members else None)
         self.wait = "timeout" if str(wait or "all").lower().startswith("time") else "all"
@@ -937,6 +945,24 @@ class EnsembleLLM(BaseLLM):
         out["incidents"] = drain_incidents()
         return out
 
+    def _merge_prompt(self, system: str, user: str, ok_rows: List[Dict[str, Any]], json_mode: bool) -> Tuple[str, str]:
+        """성공한 멤버 답 → 취합기에게 줄 (규칙 프롬프트, 사용자 프롬프트).
+
+        정상 취합과 **폴백 취합**(멤버가 min_results 를 못 채웠을 때 역할 모델이 대신 합치는 경우)이
+        같은 프롬프트를 쓰도록 한 곳에 둔다 — 둘이 갈리면 폴백 답만 형식이 달라진다.
+        """
+        from . import prompts as _prompts
+        merge_rules = _prompts.get(self.prompt_name) or _prompts.DEFAULTS.get("ensemble_merge", "")
+        parts = ["[원래 작업의 시스템 프롬프트]", system.strip(), "", "[원래 작업의 사용자 프롬프트]", user.strip(), "",
+                 "[후보 답변 %d개]" % len(ok_rows)]
+        for n, r in enumerate(ok_rows, 1):
+            parts.append("")
+            parts.append("후보 %d — 모델 %s (%s), 가중치 %.2f:" % (n, r["model"], r["provider"], float(r["weight"])))
+            parts.append(r["text"].strip())
+        parts.append("")
+        parts.append("위 규칙에 따라 원래 작업의 형식 그대로 최종 답변 하나만 출력하세요." + (" 출력은 JSON 만." if json_mode else ""))
+        return merge_rules, "\n".join(parts)
+
     def _complete(self, system: str, user: str, max_tokens: int, effort: str, json_mode: bool) -> Dict[str, Any]:
         if not self.members:
             raise LLMError(self.reason)
@@ -986,6 +1012,40 @@ class EnsembleLLM(BaseLLM):
         policy = {"wait": self.wait, "timeout_s": self.timeout_s, "min_results": self.min_results, "prompt": self.prompt_name}
         if len(ok_rows) < self.min_results:
             errs = "; ".join("%s/%s: %s" % (r["provider"], r["model"], r.get("error", "")[:120]) for r in rows if not r.get("ok"))
+            # 역할 모델로 한 번 더 (ensemble.fallback_role_model). 앙상블을 켠 탓에 답이 아예 안 나오는 것을 막는다.
+            # 실패하면 원래대로 LLMError — 호출부의 대체 경로(answer 는 추출식)로 간다.
+            fb = self.fallback
+            if fb is not None and getattr(fb, "available", False):
+                # 무엇을 줄지는 설정으로 고른다 (ensemble.fallback_mode).
+                #   rerun = 멤버 답을 쓰지 않고 원래 프롬프트로 처음부터
+                #   merge/auto = 살아남은 답을 역할 모델이 취합 (하나도 없으면 취합할 것이 없어 rerun)
+                partial = bool(ok_rows) and self.fallback_mode != "rerun"
+                _pg.note("앙상블(%s) 실패 — 역할 모델 %s/%s 로 %s" % (
+                    self.role, fb.name, fb.model,
+                    ("성공한 멤버 %d개를 취합합니다" % len(ok_rows)) if partial else "처음부터 다시 돌립니다"))
+                t_fb = time.perf_counter()
+                try:
+                    if partial:
+                        sys_fb, usr_fb = self._merge_prompt(system, user, ok_rows, json_mode)
+                        rf = fb.complete(sys_fb, usr_fb, max_tokens=max_tokens, effort=effort, json_mode=json_mode)
+                    else:
+                        rf = fb.complete(system, user, max_tokens=max_tokens, effort=effort, json_mode=json_mode, files=files)
+                    text_fb = rf.get("text") or ""
+                    if text_fb.strip():
+                        _count("llm_calls", 1)
+                        fb_meta = {"provider": fb.name, "model": str(rf.get("model") or fb.model or ""),
+                                   "ms": round((time.perf_counter() - t_fb) * 1000, 1),
+                                   "usage": dict(rf.get("usage") or {}), "attempts": rf.get("attempts", 1),
+                                   "mode": "merge" if partial else "rerun", "used_members": len(ok_rows),
+                                   "why": "멤버 %d/%d 성공 (min_results=%d)" % (len(ok_rows), len(rows), self.min_results)}
+                        out_fb = {"text": text_fb, "usage": usage_sum, "ms": (time.perf_counter() - t_start) * 1000,
+                                  "model": fb_meta["model"],
+                                  "ensemble": {"members": meta_members, "aggregator": None, "policy": policy,
+                                               "aggregated": partial, "fallback": fb_meta}}
+                        _note_ensemble(out_fb["ensemble"], self.role)
+                        return out_fb
+                except Exception as e:                    # 폴백까지 실패하면 원래 오류로 끝낸다
+                    errs += "; fallback %s/%s: %s" % (fb.name, fb.model, str(e)[:120])
             raise LLMError("ensemble(%s): %d/%d 멤버만 성공 (min_results=%d) — %s" % (self.role, len(ok_rows), len(rows), self.min_results, errs),
                            transient=bool(rows) and all(r.get("transient") or r.get("timed_out") for r in rows if not r.get("ok")), kind="ensemble")
         if len(ok_rows) == 1:
@@ -996,20 +1056,11 @@ class EnsembleLLM(BaseLLM):
             _note_ensemble(out1["ensemble"], self.role)
             return out1
         # 2개 이상 → 취합
-        from . import prompts as _prompts
-        merge_rules = _prompts.get(self.prompt_name) or _prompts.DEFAULTS.get("ensemble_merge", "")
-        parts = ["[원래 작업의 시스템 프롬프트]", system.strip(), "", "[원래 작업의 사용자 프롬프트]", user.strip(), "",
-                 "[후보 답변 %d개]" % len(ok_rows)]
-        for n, r in enumerate(ok_rows, 1):
-            parts.append("")
-            parts.append("후보 %d — 모델 %s (%s), 가중치 %.2f:" % (n, r["model"], r["provider"], float(r["weight"])))
-            parts.append(r["text"].strip())
-        parts.append("")
-        parts.append("위 규칙에 따라 원래 작업의 형식 그대로 최종 답변 하나만 출력하세요." + (" 출력은 JSON 만." if json_mode else ""))
+        merge_rules, merged_user = self._merge_prompt(system, user, ok_rows, json_mode)
         agg = self.aggregator if self.aggregator is not None else self.members[0][0]
-        ar = agg.complete(merge_rules, "\n".join(parts), max_tokens=max_tokens, effort=str(getattr(agg, "_ens_effort", "") or effort), json_mode=json_mode)
+        ar = agg.complete(merge_rules, merged_user, max_tokens=max_tokens, effort=str(getattr(agg, "_ens_effort", "") or effort), json_mode=json_mode)
         agg_meta = {"model": str(ar.get("model") or agg.model or ""), "provider": agg.name, "ms": float(ar.get("ms", 0) or 0),
-                    "usage": dict(ar.get("usage") or {}), "attempts": ar.get("attempts", 1), "prompt_chars": len(merge_rules) + sum(len(x) for x in parts)}
+                    "usage": dict(ar.get("usage") or {}), "attempts": ar.get("attempts", 1), "prompt_chars": len(merge_rules) + len(merged_user)}
         out = {"text": ar.get("text") or "", "usage": usage_sum, "ms": (time.perf_counter() - t_start) * 1000, "model": self.model,
                "ensemble": {"members": meta_members, "aggregator": agg_meta, "policy": policy, "aggregated": True}}
         _note_ensemble(out["ensemble"], self.role)
@@ -1039,13 +1090,21 @@ def summarize_ensemble(ens: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]
                         "input_tokens": _u(m, "input_tokens"), "output_tokens": _u(m, "output_tokens"),
                         "error": (str(m.get("error"))[:160] if m.get("error") else None)})
     agg = ens.get("aggregator") or None
+    # 폴백(역할 모델로 되돌아간 경우)도 반드시 싣는다 — 이것이 안 보이면 "앙상블이 돈 줄 알았는데
+    # 실은 역할 모델 답" 인 상태를 아무도 모른다.
+    fb = ens.get("fallback") or None
     return {"members": members, "n_members": len(members), "n_ok": sum(1 for m in members if m["ok"]),
             "aggregated": bool(ens.get("aggregated")), "policy": ens.get("policy"),
             "member_ms_max": max([m["ms"] for m in members] or [0]),
             "aggregator": ({"model": agg.get("model"), "provider": agg.get("provider"),
                             "ms": round(float(agg.get("ms") or 0)),
                             "input_tokens": _u(agg, "input_tokens"),
-                            "output_tokens": _u(agg, "output_tokens")} if agg else None)}
+                            "output_tokens": _u(agg, "output_tokens")} if agg else None),
+            "fallback": ({"model": fb.get("model"), "provider": fb.get("provider"),
+                          "ms": round(float(fb.get("ms") or 0)), "mode": fb.get("mode"),
+                          "used_members": fb.get("used_members"), "why": fb.get("why"),
+                          "input_tokens": _u(fb, "input_tokens"),
+                          "output_tokens": _u(fb, "output_tokens")} if fb else None)}
 
 
 def _note_ensemble(ens: Dict[str, Any], role: str) -> None:
@@ -1088,8 +1147,21 @@ def _make_ensemble(settings, role: str, cfg: Dict[str, Any], ens: Dict[str, Any]
             aggregator._ens_effort = str(agg_cfg.get("effort") or "")
     # 취합 프롬프트: config 에 적은 이름 > 역할 전용 파일(ensemble_merge_<role>.md) > 공용 ensemble_merge.md
     prompt_name = _prompts.ensemble_prompt_name(role, ens.get("prompt", ""))
+    # 실패 시 되돌아갈 역할 모델 (ensemble.fallback_role_model). 멤버와 같은 provider/model 이면 인스턴스를 공유한다
+    # — 회로 차단·통계가 하나로 모이고, 방금 끊긴 회로를 폴백이 다시 두드리지 않는다.
+    fallback: Optional[BaseLLM] = None
+    if ens.get("fallback_role_model", True) and cfg.get("model"):
+        for llm, _ in members:
+            if llm.name == cfg["provider"] and str(llm.model) == str(cfg["model"]):
+                fallback = llm
+                break
+        if fallback is None:
+            fallback = _make_llm(cfg["provider"], cfg["model"], settings)
+            fallback.role = role
+            apply_policy(fallback, settings, role)
     ens_llm = EnsembleLLM(members, aggregator, wait=ens.get("wait", "all"), timeout_s=ens.get("timeout_s", 120),
-                          min_results=ens.get("min_results", 1), prompt=prompt_name, role=role)
+                          min_results=ens.get("min_results", 1), prompt=prompt_name, role=role,
+                          fallback=fallback, fallback_mode=str(ens.get("fallback_mode") or "auto"))
     return ens_llm
 
 

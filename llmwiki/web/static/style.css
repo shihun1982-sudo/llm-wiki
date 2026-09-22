@@ -1000,4 +1000,14 @@ table.roles button[data-ens-toggle]{margin-top:3px}
 .ens-barcell{width:38%;min-width:90px}
 .ens-bar{display:block;height:8px;border-radius:3px;background:var(--s1);opacity:.8}
 .ens-bar.agg{background:var(--warn)}
+/* 폴백 = 앙상블이 실패해 역할 모델이 대신 답한 것. 멤버·취합과 색으로 구분해야 오해하지 않는다 */
+.ens-bar.fb{background:var(--critical)}
+.ens-fb-note{margin-top:6px;padding:6px 8px;background:var(--banner-warn-bg);border:1px solid var(--warn);
+  border-radius:4px;font-size:11px;line-height:1.6;color:var(--ink)}
+/* 최악 소요 — (1+retries)×timeout + 폴백. query_s 를 넘으면 또렷하게 경고한다 */
+.ens-budget{margin-top:6px;padding:6px 8px;background:var(--perf-bg);border:1px solid var(--perf-border);
+  border-radius:4px;font-size:11px;line-height:1.6}
+.ens-budget>b{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink2);margin-right:6px}
+.ens-budget.over{background:var(--banner-warn-bg);border-color:var(--warn)}
+.ens-budget .warn-line{margin-top:4px;color:var(--ink);font-weight:500}
 .ens-bad td{opacity:.7}

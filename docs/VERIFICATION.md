@@ -24,34 +24,36 @@ python tools\verify\verify_all.py --only unit,web,mcp
 
 <!-- VERIFY_ALL_TABLE -->
 
-> 2026-09-20 11:02 기준 · Python 3.14.7 · 모두 격리 임시 환경에서 실행 (실제 색인·설정은 건드리지 않는다)
+> 2026-09-20 14:01 기준 · Python 3.14.7 · 모두 격리 임시 환경에서 실행 (실제 색인·설정은 건드리지 않는다)
 
 | 무엇 | 명령 | 결과 |
 |---|---|---|
-| 단위 테스트 | `python -m unittest discover -s tests` | **738/738 통과** (168s) |
+| 단위 테스트 | `python -m unittest discover -s tests` | **758/758 통과** (161s) |
 | 스트레스 (30명 동시) | `python -m unittest tests.test_concurrency_0915.StressTest` | **9/9 통과** (24s) |
-| 문서 ↔ 코드 정합 | `python tools/verify/verify_docs.py` | **실패** (0s) |
+| 문서 ↔ 코드 정합 | `python tools/verify/verify_docs.py` | **OK** (0s) |
 | CLI · Web · MCP 정렬 | `python tools/verify/verify_surface_align.py` | **OK** (0s) |
-| 세 창구 동작 동등성 (CLI 프로세스 · Web · MCP) | `python tools/verify/verify_tri_surface.py --port 8879` | **54/54 통과** (5s) |
+| 세 창구 동작 동등성 (CLI 프로세스 · Web · MCP) | `python tools/verify/verify_tri_surface.py --port 8879` | **58/58 통과** (5s) |
 | 단계 정렬 (코드 ↔ 레지스트리 ↔ 라벨 ↔ 손잡이) | `python tools/verify/verify_stage_align.py` | **16/16 통과** (0s) |
 | 설정 UI ↔ 파일 ↔ 서버 양방향 | `python tools/verify/verify_settings_sync.py --port 8934` | **64/64 통과** (3s) |
 | LLM 연결 전환 (API ↔ headless, 세 창구) | `python tools/verify/verify_llm_switch.py --port 8973` | **18/18 통과** (5s) |
 | 빌드 중 서비스 (30명 동시 · 채널별) | `python tools/verify/verify_build_load.py --port 8975 --users 30` | **26/26 통과** (18s) |
-| CLI 전수 | `python tools/verify/verify_cli.py` | **361/361 통과** (162s) |
+| CLI 전수 | `python tools/verify/verify_cli.py` | **361/361 통과** (163s) |
 | Web API 전수 | `python tools/verify/verify_web.py` | **379/379 통과** (40s) |
 | MCP 종단 | `python tools/verify/verify_mcp.py --quick` | **129/129 통과** (7s) |
 | UI 배선 | `python tools/verify/verify_ui_wiring.py` | **OK** (0s) |
-| 브라우저 렌더 | `python tools/verify/verify_browser.py --port 8901 --cdp 9401` | **OK** (25s) |
+| 브라우저 렌더 | `python tools/verify/verify_browser.py --port 8901 --cdp 9401` | **OK** (24s) |
 | 창 크기 대응 (폭 5종) | `python tools/verify/verify_responsive.py --port 8904` | **30/30 통과** (20s) |
-| 버튼 전수 | `python tools/verify/verify_buttons.py --port 8902 --cdp 9402` | **135/135 통과** (425s) |
+| 버튼 전수 | `python tools/verify/verify_buttons.py --port 8902 --cdp 9402` | **136/136 통과** (428s) |
+| 앙상블 편집기 (실제 클릭) | `python tools/verify/verify_ensemble_ui.py` | **18/18 통과** (6s) |
+| 워터폴 기하 (픽셀 측정) | `python tools/verify/verify_trace_waterfall.py` | **11/11 통과** (2s) |
 | 보안 · 사용자 화면 | `python tools/verify/verify_security_ui.py --port 8903 --cdp 9403` | **58/58 통과** (140s) |
 | 단계 재실행 · 작업 상세 | `python tools/verify/verify_rerun_ui.py --port 8905 --cdp 9405` | **27/27 통과** (44s) |
 | 협업 다중 접속 (10명) | `python tools/verify/verify_collab_many.py --people 10 --port 8906 --cdp 9406` | **20/20 통과** (32s) |
 | 작업 상세 로딩 시간 | `python tools/verify/verify_act_detail_load.py --port 8909 --cdp 9409` | **7/7 통과** (18s) |
 | 스케줄 화면 | `python tools/verify/verify_schedule_ui.py --port 8910 --cdp 9410` | **14/14 통과** (20s) |
-| 타임아웃 · 취소 내성 | `python tools/verify/verify_timeouts.py --port 8907` | **47/47 통과** (142s) |
+| 타임아웃 · 취소 내성 | `python tools/verify/verify_timeouts.py --port 8907` | **47/47 통과** (140s) |
 | 다중 클라이언트 혼합 부하 | `python tools/verify/verify_soak.py --port 8971 --seconds 60 --clients 16` | **10/10 통과** (87s) |
-| 무작위 입력 내성 | `python tools/verify/verify_monkey.py` | **OK** (869s) |
+| 무작위 입력 내성 | `python tools/verify/verify_monkey.py` | **OK** (1849s) |
 <!-- /VERIFY_ALL_TABLE -->
 
 ## 2. 무엇을 보는 검사인가 (층별로)

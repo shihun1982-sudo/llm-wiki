@@ -542,7 +542,7 @@ window.LW = (function () {
    */
   function ensembleBlock(e) {
     if (!e || !e.members || !e.members.length) return '';
-    const base = Math.max(1, e.member_ms_max || 0, (e.aggregator || {}).ms || 0);
+    const base = Math.max(1, e.member_ms_max || 0, (e.aggregator || {}).ms || 0, (e.fallback || {}).ms || 0);
     const row = (label, model, prov, ms, itok, otok, ok, err, kind) =>
       `<tr class="${ok === false ? 'ens-bad' : ''}">`
       + `<td class="small">${esc(label)}</td>`
@@ -551,15 +551,23 @@ window.LW = (function () {
       + `<td class="num small">${fmt(ms || 0)} ms</td>`
       + `<td class="num small muted">${fmtK((itok || 0) + (otok || 0))} tok</td>`
       + `<td class="small">${ok === false ? `<span class="errtxt" title="${esc(err || '')}">실패</span>` : ''}</td></tr>`;
+    // 폴백으로 답이 나왔는데 화면이 그대로면 "앙상블 답" 으로 오해한다 — 가장 먼저 눈에 띄게 알린다.
+    const fb = e.fallback;
     let h = `<div class="mb ens"><b>앙상블</b>${e.role ? ` <span class="muted">역할 ${esc(e.role)}</span>` : ''} `
       + `<span class="pill ${e.n_ok === e.n_members ? 'ok' : 'warn'}">멤버 ${e.n_ok}/${e.n_members} 성공</span> `
+      + (fb ? `<span class="pill bad" title="멤버가 min_results 를 못 채워 역할 모델이 대신 답했습니다 (${esc(fb.why || '')}). 이 답은 앙상블 결과가 아닙니다.">폴백 · 역할 모델이 답함</span> ` : '')
       + (e.aggregated ? '<span class="pill">취합 1회</span>' : '<span class="pill warn" title="성공 멤버가 1개뿐이면 취합 없이 그 답을 그대로 씁니다">취합 없음</span>')
       + (e.policy && e.policy.wait ? ` <span class="muted small">대기 ${esc(e.policy.wait)}</span>` : '')
       + '<div class="tbl-wrap"><table class="ens-tbl"><tr><th></th><th>모델</th>'
       + '<th title="멤버는 병렬로 돕니다 — 막대는 가장 느린 것 기준입니다">시간</th><th>ms</th><th>토큰</th><th></th></tr>';
     e.members.forEach((m, i) => { h += row('멤버 ' + (i + 1), m.model, m.provider, m.ms, m.input_tokens, m.output_tokens, m.ok, m.error, 'mem'); });
     if (e.aggregator) h += row('취합', e.aggregator.model, e.aggregator.provider, e.aggregator.ms, e.aggregator.input_tokens, e.aggregator.output_tokens, true, '', 'agg');
-    h += '</table></div><div class="muted small">멤버는 <b>동시에</b> 실행됩니다 — 단계 시간 ≈ 가장 느린 멤버 + 취합.</div></div>';
+    if (fb) h += row('폴백', fb.model, fb.provider, fb.ms, fb.input_tokens, fb.output_tokens, true, '', 'fb');
+    h += '</table></div><div class="muted small">멤버는 <b>동시에</b> 실행됩니다 — 단계 시간 ≈ 가장 느린 멤버 + 취합.</div>'
+      + (fb ? `<div class="ens-fb-note">이 답은 <b>${esc(fb.model || '')}</b>(역할 모델)이 만들었습니다 — ${esc(fb.why || '')}. `
+             + (fb.mode === 'merge' ? `성공한 멤버 ${fb.used_members}개의 답을 <b>취합</b>했습니다.` : '멤버 답을 쓰지 않고 <b>원래 프롬프트로 다시</b> 돌렸습니다.')
+             + ` <span class="muted">(설정: <code>ensemble.fallback_mode=${esc(fb.mode || '')}</code>)</span></div>` : '')
+      + '</div>';
     return h;
   }
 

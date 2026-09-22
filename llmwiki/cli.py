@@ -440,6 +440,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait", dest="ens_wait", choices=["all", "timeout", ""], default=None, help="ensemble set: all | timeout ('' = llm_ensemble_defaults 상속)")
     p.add_argument("--timeout", dest="ens_timeout", default=None, help="ensemble set: timeout_s (초, '' = 상속)")
     p.add_argument("--min", dest="ens_min", default=None, help="ensemble set: min_results ('' = 상속)")
+    p.add_argument("--fallback", dest="ens_fallback", choices=["true", "false", ""], default=None,
+                   help="ensemble set: 앙상블이 실패하면 역할 모델로 한 번 더 (fallback_role_model, '' = 상속)")
+    p.add_argument("--fallback-mode", dest="ens_fallback_mode", choices=["auto", "merge", "rerun", ""], default=None,
+                   help="ensemble set: 폴백이 무엇을 받나 — auto(있으면 취합) | merge(되도록 취합) | rerun(항상 새 프롬프트) ('' = 상속)")
     p.add_argument("--role", default=None, help="list: 역할 필터")
     p.add_argument("--provider", default=None, help="list/catalog add: provider")
     p.add_argument("--label", default=None, help="catalog add: 표시 이름")
@@ -745,7 +749,8 @@ def _cmd_models_ensemble(ns: argparse.Namespace, p, as_json: bool) -> int:
             raw = (p.s.llm_roles.get(role) or {}).get("ensemble")
             _rl = p.s.role_llm(role)
             out[role] = {"raw": raw, "effective": p.s.effective_ensemble(role),
-                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")}}
+                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")},
+                         "budget": p.s.ensemble_time_budget(role)}
         if as_json:
             _out(out, True)
             return 0
@@ -755,6 +760,13 @@ def _cmd_models_ensemble(ns: argparse.Namespace, p, as_json: bool) -> int:
                 role, "ON " if e["enabled"] else "off", e["wait"], e["timeout_s"], e["min_results"], e["prompt"],
                 "" if d["raw"] else "  (설정 없음 — llm_ensemble_defaults 상속)"))
             print("    역할 모델: %s/%s  (멤버가 provider/model 을 비우면 이 값을 상속)" % (d["role"]["provider"] or "-", d["role"]["model"] or "-"))
+            if e.get("fallback"):
+                _fbm = {"auto": "살아남은 답이 있으면 취합, 없으면 새 프롬프트", "merge": "되도록 살아남은 답을 취합",
+                        "rerun": "항상 새 프롬프트로 다시"}.get(e.get("fallback_mode"), e.get("fallback_mode"))
+                print("    실패 시 폴백: %s/%s (%s — %s)" % (e["fallback"]["provider"], e["fallback"]["model"],
+                                                         e.get("fallback_mode"), _fbm))
+            else:
+                print("    실패 시 폴백: 없음 (fallback_role_model=false — 앙상블이 실패하면 호출부의 대체 경로로)")
             for i, m in enumerate(e["members"], 1):
                 print("    member %d: %s/%s weight=%s effort=%s (provider: %s)" % (i, m["provider"], m["model"], m["weight"], m["effort"] or "-", m["provider_source"]))
             # 켜 놓았는데 쓸 멤버가 없는 상태 — 조용히 단일 LLM 으로 돌기 때문에 반드시 말해 준다.
@@ -767,10 +779,31 @@ def _cmd_models_ensemble(ns: argparse.Namespace, p, as_json: bool) -> int:
                 print("    aggregator: %s/%s" % (e["aggregator"]["provider"], e["aggregator"]["model"]))
             elif e["enabled"]:
                 print("    aggregator: (첫 멤버가 취합)")
-        print("변경: models ensemble set <role> --enabled true --member 1 provider=anthropic model=claude-sonnet-5 weight=1.5 --member 2 … --aggregator model=… --wait all|timeout --timeout 120 --min 1")
+            # 최악 소요 — (1+retries)×timeout + 백오프, 실패하면 폴백이 한 번 더. 곱셈이 눈에 안 보여서 적어 준다.
+            b = d["budget"]
+            if e["enabled"]:
+                try:
+                    from . import reqmgr as _rq
+                    _q = float(((_rq.load_config().get("timeouts") or {}).get("query_s")) or 0)
+                except Exception:
+                    _q = 0.0
+                print("    최악 소요: %.0f초 (%.1f분) = 멤버 %.0f초 + %s %.0f초   [한 번 = %d회 × %d초 + 백오프]"
+                      % (b["worst_s"], b["worst_s"] / 60.0, b["members_s"],
+                         "폴백" if b["fallback_s"] >= b["aggregate_s"] else "취합",
+                         max(b["aggregate_s"], b["fallback_s"]), b["attempts"], b["timeout_s"]))
+                for note in b["notes"]:
+                    print("      · %s" % note)
+                if _q and b["worst_s"] > _q:
+                    print("      ! server.json timeouts.query_s=%.0f초 가 먼저 요청을 끊는다 — 최악 소요(%.0f초)를 다 쓰지 못하고,"
+                          % (_q, b["worst_s"]))
+                    print("        **느린 멤버 때문에 실패하는 상황에서는 폴백이 실행되기 전에 잘린다.**")
+                    print("        줄이려면: llm_roles.%s.timeout_s / retries 를 낮추거나, wait=timeout + ensemble.timeout_s 를 쓴다." % role)
+        print("변경: models ensemble set <role> --enabled true --member 1 provider=anthropic model=claude-sonnet-5 weight=1.5 --member 2 … --aggregator model=… "
+              "--wait all|timeout --timeout 120 --min 1 --fallback true|false --fallback-mode auto|merge|rerun")
         return 0
     if sub != "set" or len(ns.kv) < 2:
-        print("usage: models ensemble show [role] | models ensemble set <role> [--enabled true|false] [--member N k=v …] [--aggregator k=v …] [--wait all|timeout] [--timeout N] [--min N]")
+        print("usage: models ensemble show [role] | models ensemble set <role> [--enabled true|false] [--member N k=v …] [--aggregator k=v …] "
+              "[--wait all|timeout] [--timeout N] [--min N] [--fallback true|false] [--fallback-mode auto|merge|rerun]")
         return 1
     role = ns.kv[1]
     cur = (p.s.llm_roles.get(role) or {}).get("ensemble")
@@ -814,6 +847,16 @@ def _cmd_models_ensemble(ns: argparse.Namespace, p, as_json: bool) -> int:
                 ens["wait"] = ns.ens_wait
             else:
                 ens.pop("wait", None)
+        if ns.ens_fallback is not None:
+            if ns.ens_fallback:
+                ens["fallback_role_model"] = (ns.ens_fallback == "true")
+            else:
+                ens.pop("fallback_role_model", None)          # '' = llm_ensemble_defaults 상속
+        if ns.ens_fallback_mode is not None:
+            if ns.ens_fallback_mode:
+                ens["fallback_mode"] = ns.ens_fallback_mode
+            else:
+                ens.pop("fallback_mode", None)
         for attr, val in (("timeout_s", ns.ens_timeout), ("min_results", ns.ens_min)):
             if val is None:
                 continue
@@ -916,6 +959,16 @@ def _print_trace(trace: Dict[str, Any], depth: int = 0, total: Optional[float] =
             print("%s     취합  %-22s %8.0f ms  tok %d/%d"
                   % (pad, "%s%s" % (ag.get("model") or "-", ("/" + ag["provider"]) if ag.get("provider") else ""),
                      ag.get("ms") or 0, ag.get("input_tokens") or 0, ag.get("output_tokens") or 0))
+        fbk = ens.get("fallback")
+        if fbk:
+            # 폴백으로 나온 답을 "앙상블 답" 으로 읽으면 안 된다 — Web 의 빨간 배지와 같은 값을 글로 적는다.
+            print("%s     폴백  %-22s %8.0f ms  tok %d/%d   << 이 답은 **역할 모델**이 만들었습니다"
+                  % (pad, "%s%s" % (fbk.get("model") or "-", ("/" + fbk["provider"]) if fbk.get("provider") else ""),
+                     fbk.get("ms") or 0, fbk.get("input_tokens") or 0, fbk.get("output_tokens") or 0))
+            print("%s           %s · %s (fallback_mode=%s)"
+                  % (pad, fbk.get("why") or "",
+                     ("성공한 멤버 %s개를 취합" % fbk.get("used_members")) if fbk.get("mode") == "merge" else "원래 프롬프트로 다시 실행",
+                     fbk.get("mode")))
         print("%s     (멤버는 동시에 실행 — 단계 시간 ≈ 가장 느린 멤버 + 취합)" % pad)
     lim = 2000 if verbose else 220
     if meta and depth > 0:

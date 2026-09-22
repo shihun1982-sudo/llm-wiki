@@ -298,6 +298,48 @@ def compare_all(env, web, mcp):
     check("판정이 실제로 채워진다", any(x.get("verdict") for x in cands),
           "verdict 가 전부 비어 있다 — 거르기(근거 약함/못 찾음)가 아무것도 못 고른다")
 
+    # ── 2.8 앙상블 폴백 (실패하면 역할 모델로 되돌리기) ──────────────
+    # 왜: 앙상블을 켜면 역할 모델은 **불리지 않는다**. 멤버가 전부 죽으면 그 역할은 답을 못 낸다.
+    # 그래서 `fallback_role_model` 로 되돌리되, 세 창구가 **같은 값**을 보고 같은 설명을 해야 한다.
+    print("\n[2.8] 앙상블 폴백 (CLI `models ensemble show --json` · GET /api/models · wiki_query trace)")
+    c, why = cli_json(env, ["models", "ensemble", "show", "answer", "--json"])
+    check("CLI models ensemble show --json 이 파싱된다", c is not None, why)
+    w = web.get("/api/models")
+    c_ans = (c or {}).get("answer") or {}
+    w_ans = ((w or {}).get("ensemble") or {}).get("answer") or {}
+    for k in ("fallback_role_model", "fallback_mode"):
+        same("폴백 설정 %s" % k, {"cli": (c_ans.get("effective") or {}).get(k),
+                               "web": (w_ans.get("effective") or {}).get(k)})
+    same("폴백이 돌아갈 역할 모델", {"cli": ((c_ans.get("effective") or {}).get("fallback") or {}).get("model"),
+                          "web": ((w_ans.get("effective") or {}).get("fallback") or {}).get("model")})
+    check("기본값이 '켜짐 · auto' 다 (앙상블 탓에 답이 아예 안 나오는 일이 없게)",
+          (w_ans.get("effective") or {}).get("fallback_role_model") is True
+          and (w_ans.get("effective") or {}).get("fallback_mode") == "auto",
+          "유효값=%s" % json.dumps({k: (w_ans.get("effective") or {}).get(k) for k in ("fallback_role_model", "fallback_mode")},
+                                 ensure_ascii=False))
+    # 끄면 되돌릴 대상이 사라져야 한다 (설정이 실제로 먹는가 — 값만 바뀌고 동작이 그대로면 안 된다).
+    # config.json 은 **mtime 자동 재적재가 아니다** — 떠 있는 서버는 reload 를 받아야 새 파일을 읽는다
+    # (docs/SETTINGS_SYNC.md 의 how=reload). 그래서 운영자가 하는 그대로 reload 를 거쳐 확인한다.
+    def _reload():
+        try:
+            web.post("/api/config", {"action": "reload", "_confirm": True})
+        except Exception:
+            pass
+
+    cli_json(env, ["models", "ensemble", "set", "answer", "--fallback", "false"])
+    _reload()
+    e2 = (((web.get("/api/models") or {}).get("ensemble") or {}).get("answer") or {}).get("effective") or {}
+    check("폴백을 끄면 되돌릴 대상이 없어진다 (CLI → 파일 → reload → Web)",
+          e2.get("fallback_role_model") is False and e2.get("fallback") is None,
+          "껐는데 fallback=%s" % json.dumps(e2.get("fallback"), ensure_ascii=False))
+    cli_json(env, ["models", "ensemble", "set", "answer", "--fallback", "true", "--fallback-mode", "rerun"])
+    _reload()
+    e3 = (((web.get("/api/models") or {}).get("ensemble") or {}).get("answer") or {}).get("effective") or {}
+    check("CLI 로 바꾼 모드가 Web 유효값에 그대로 온다 (CLI → 파일 → reload → Web)",
+          e3.get("fallback_mode") == "rerun", "web 유효값=%s" % e3.get("fallback_mode"))
+    cli_json(env, ["models", "ensemble", "set", "answer", "--fallback", "", "--fallback-mode", ""])   # 되돌리기
+    _reload()
+
     # ── 3. 질의 해부 ────────────────────────────────────────────────
     print("\n[3] 질의 해부 (CLI `inspect` · POST /api/debug/query · wiki_inspect)")
     q = "지난주 DMA 오버런 원인"

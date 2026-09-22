@@ -28,7 +28,7 @@
 | 설정 | 파일 4층(`config.json` 109키 · `tuning.json` 166키 · `presets.json` · 요청 단위 overrides) — **코드 수정 없이 이식** |
 | 권한 | 역할 6단계 × 작업 등급 7단계 + **문서 단위 접근 제어**(무엇을 읽을 수 있는가) |
 | 관측 | 모든 질의가 단계별 trace(이름 82종) · 진행 표시 · 분석 리포트 · 기대 결과 포렌식을 남긴다 |
-| 검증 | 단위 테스트 <!--live:tests-->758개 + 검증 하네스 <!--live:harness-->27종(`verify_all.py` 한 줄) |
+| 검증 | 단위 테스트 <!--live:tests-->773개 + 검증 하네스 <!--live:harness-->27종(`verify_all.py` 한 줄) |
 
 > 이 표의 굵은 규모 숫자 다섯 개(<!--live:--> 표시가 붙은 것)는 **하네스가 지킨다** — 코드와 어긋나면
 > `verify_docs.py` 가 "지금은 N 다" 라고 찍는다. 표시가 없는 숫자는 사람이 §17 의 세는 법으로 확인한다.
@@ -82,7 +82,7 @@
 | FastAPI / Flask | 의존성. `BaseHTTPRequestHandler` + `ThreadingHTTPServer` 로 충분하고, 요청 하나당 스레드 하나라 동시성 모델이 단순하다 |
 | Chroma / Milvus / FAISS | 문서 수만 건 규모에서 numpy 행렬 한 번의 행렬곱이 충분히 빠르다. 별도 프로세스·인덱스 파일·버전 호환 문제가 없다 |
 | LangChain / LlamaIndex | 추상화가 우리 파이프라인(단계별 trace·재실행·스윕)과 맞지 않는다. 단계를 직접 쥐고 있어야 관측과 재실행이 된다 |
-| pytest | 의존성. `unittest` 로 <!--live:tests-->758개를 돌리고 있고 모자란 적이 없다 |
+| pytest | 의존성. `unittest` 로 <!--live:tests-->773개를 돌리고 있고 모자란 적이 없다 |
 | 스트리밍(SSE) | 답변을 흘리면 **인용 검증(claim_check)을 답변 완성 뒤에 할 수 없다**. 대신 `/api/progress` 폴링으로 단계 진행을 보여 준다. SSE 요청은 명시적으로 405 |
 | ORM | 쿼리가 곧 성능이다. SQL 을 직접 보는 편이 진단에 낫다 |
 | 마이크로서비스 | 사내 한 대에 올리는 시스템이다. 프로세스 하나가 운영·백업·이식이 가장 쉽다 |

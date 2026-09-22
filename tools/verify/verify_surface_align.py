@@ -107,10 +107,24 @@ CAPS = [
      "Web Settings › 에이전트에서 편집한다(`command`·`prompt_mode`·`timeout_s`·`retries`). "
      "CLI 전용 명령은 두지 않았다 — 위치는 `config paths` 가 알려 주고 편집은 파일을 직접 여는 편이 낫다(JSON 한 덩어리라 한 줄씩 넣는 CLI 가 오히려 불편하다). "
      "MCP 에는 두지 않는다: LLM 실행 방법 자체를 붙은 LLM 이 바꾸게 할 수 없다 — docs/HEADLESS.md"),
-    ("앙상블 (역할 단위 다중 LLM)", "models", "/api/models", "", "설정 변경은 admin 화면/CLI 에서만 — CLI `models ensemble show|set`, Web Settings › 모델 역할 표의 '앙상블' 칸"),
+    ("앙상블 (역할 단위 다중 LLM)", "models", "/api/models", "",
+     "설정 변경은 admin 화면/CLI 에서만 — CLI `models ensemble show|set`, Web 은 **🧭 Pipeline › 앙상블 한 곳**에서만 편집한다 "
+     "(Settings › 모델 의 역할 표에는 상태 줄과 '앙상블 설정으로' 버튼만 둔다 — 같은 값을 두 화면에서 받으면 어느 쪽이 적용됐는지 알 수 없다). "
+     "둘 다 역할 모델(멤버가 비운 칸이 상속하는 값)을 함께 보여 준다: CLI 는 '역할 모델:' 줄, Web 은 `/api/models` 의 `ensemble.<role>.role`. "
+     "MCP 에는 두지 않는다: 붙은 LLM 이 자기를 부르는 LLM 구성을 바꾸게 할 수 없다"),
+    ("앙상블 실패 시 역할 모델로 되돌리기", "models", "/api/models", "",
+     "앙상블을 켜면 역할 모델은 **불리지 않으므로**, 멤버가 min_results 를 못 채우면 그 역할은 답을 못 낸다. "
+     "`ensemble.fallback_role_model`(켜짐 기본)로 역할 모델이 한 번 더 돌고, `fallback_mode` 로 **무엇을 받을지** 고른다 — "
+     "auto(살아남은 답이 있으면 취합) · merge(되도록 취합) · rerun(항상 원래 프롬프트). "
+     "CLI `models ensemble show|set --fallback --fallback-mode`, Web 🧭 Pipeline › 앙상블 의 「실패 시」 줄. "
+     "MCP 는 설정 도구를 두지 않는(위 행과 같은 이유) 대신 `overrides.llm_roles.<role>.ensemble` 로 요청 단위 지정과 "
+     "결과 `meta.ensemble.fallback` 관측이 된다 (2026-09-20)"),
     ("앙상블로 돌았는지 **보이기** (멤버·취합 내역)", "query", "/api/query", "wiki_query",
      "세 창구가 같은 trace 를 본다 — `answer_llm` 단계 meta 의 `ensemble`(멤버별 모델·프로바이더·ms·토큰·성공 여부 + 취합기). "
-     "CLI `query --trace` 는 멤버별 줄로, Web 은 그 줄에 `앙상블 n/m+취합` 배지와 펼쳤을 때 표로, MCP 는 응답 trace 에 같은 값으로. "
+     "CLI `query --trace` 는 멤버별 줄로, Web 은 그 줄 오른쪽에 `앙상블 n/m+취합` **글씨**(배경·테두리 없음 — 알약이면 워터폴에서 "
+     "막대 조각으로 읽힌다)와 펼쳤을 때 표로, MCP 는 응답 trace 에 같은 값으로. "
+     "**폴백으로 역할 모델이 대신 답했으면 그것도 같이 보인다** — Web 은 빨간 `폴백 · 역할 모델이 답함` 배지 + 표의 '폴백' 줄, "
+     "CLI 는 '폴백 … << 이 답은 역할 모델이 만들었습니다' 줄, MCP 는 `meta.ensemble.fallback`. "
      "예전에는 `model` 이 `llama3.1+llama3.1+llama3.1` 처럼 `+` 로 이어 붙은 것을 보고 **사람이 유추**해야 했다 (2026-09-20)"),
     ("스케줄", "schedule", "/api/schedule", "", "서버 운영 — 화면/CLI"),
     ("사용자·권한", "users", "/api/auth/users", "", "보안 — 화면/CLI"),

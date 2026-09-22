@@ -5,7 +5,7 @@
   // 그 줄을 그리다 ReferenceError 가 나고, `innerHTML = …` 자체가 실패해 **표가 통째로 옛 내용으로 남았다**.
   // 저장은 서버에 됐는데 화면만 안 바뀌어서 "스케줄 저장이 안 된다" 로 보였다.
   // switchGroup/switchTab: 모델 표의 '앙상블 설정으로' 버튼이 🧭 Pipeline › 앙상블 로 건너뛴다 (2026-09-19).
-  const { $, $$, esc, fmt, fmtK, ts, dt, api, toast, STATE, setTogglesFrom, loadStatus, loaders, switchGroup, switchTab } = LW;
+  const { $, $$, esc, fmt, fmtK, fmtS, ts, dt, api, toast, STATE, setTogglesFrom, loadStatus, loaders, switchGroup, switchTab } = LW;
 
   // ---------------- MODELS ----------------
   function sel(id, opts, cur, allowEmpty) { return `<select id="${id}">${allowEmpty ? '<option value="">(상속)</option>' : ''}${opts.map((o) => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`; }
@@ -100,6 +100,8 @@
   // 역할 행 아래에 접이식으로 붙인다. 저장은 `llm_roles.<role>.ensemble` 로 config.json 에 들어가고
   // CLI `models ensemble show|set <role>` 과 **같은 값**을 읽고 쓴다.
   let ENS = {}, ENS_DEF = { wait: 'all', timeout_s: 120, min_results: 1, prompt: 'ensemble_merge' }, ENS_MAX = 3;
+  // server.json timeouts.query_s — 요청이 실제로 잘리는 지점. 앙상블 최악 소요와 견줘 경고한다.
+  let QTO = 0;
   /** 모델·프로바이더 표의 앙상블 **상태 줄** (2026-09-19).
    *  여기서는 켜고 끄지 않는다 — 같은 값을 두 화면에서 받으면 어느 쪽이 적용됐는지 알 수 없기 때문이다.
    *  편집은 🧭 Pipeline › 앙상블 한 곳에서만 하고, 여기서는 "지금 어떤 상태인지" 와 "어디서 고치는지" 만 보여 준다. */
@@ -143,6 +145,7 @@
     (eff.members || []).forEach((m, k) => { effByModel[String(m.model)] = Object.assign({ order: k + 1 }, m); });
     const rm = e.role || {};                     // 멤버가 비운 칸이 상속하는 역할 모델
     const rmTxt = (rm.provider || rm.model) ? `${rm.provider || '?'}/${rm.model || '?'}` : '';
+    const bud = e.budget || null;                // 최악 소요 (재시도 × 타임아웃 + 폴백)
     const memberHtml = members.map((m, i) => {
       const model = String(m.model || '').trim();
       const use = !!m.enabled && !!model;
@@ -196,8 +199,11 @@
       `<div class="ens-members">${memberHtml}</div></div>` +
       `<div class="ens-line"><b class="lbl">취합 LLM</b>` +
       `<input class="p" data-ens="${role}" data-ens-f="agg_provider" list="dl-providers" value="${esc(agg.provider || '')}" placeholder="(역할 상속)">` +
-      modelSelect(`ens-${role}-agg-model`, agg.model || '', role, true, '역할 모델이 취합').replace('<select ', `<select class="m" data-ens="${role}" data-ens-f="agg_model" `) +
-      `<span class="muted small">멤버 답을 하나로 합치는 모델. 비우면 역할 모델이 합칩니다 (결과가 1개면 취합 자체를 건너뜁니다).</span></div>` +
+      // 비우면 **첫 멤버(#1)** 가 취합한다 — 역할 모델이 아니다 (providers.EnsembleLLM.__init__:
+      //   aggregator if aggregator is not None else self.members[0][0]).
+      //   화면이 "역할 모델이 취합" 이라고 적고 있었는데 사실과 달랐다 (2026-09-20).
+      modelSelect(`ens-${role}-agg-model`, agg.model || '', role, true, '첫 멤버(#1)가 취합').replace('<select ', `<select class="m" data-ens="${role}" data-ens-f="agg_model" `) +
+      `<span class="muted small">멤버 답을 하나로 합치는 모델. <b>비우면 첫 멤버(#1)가 취합합니다</b> — 역할 모델이 아닙니다. (성공한 결과가 1개면 취합 자체를 건너뜁니다.)</span></div>` +
       `<div class="ens-line"><b class="lbl">정책</b>` +
       `<label class="inline" title="all = 모든 멤버 응답을 기다림 · timeout = 제한 시간까지 온 것만으로 취합">대기 <select data-ens="${role}" data-ens-f="wait"><option value="">기본(${esc(ENS_DEF.wait)})</option><option value="all"${raw.wait === 'all' ? ' selected' : ''}>all · 전부 기다림</option><option value="timeout"${raw.wait === 'timeout' ? ' selected' : ''}>timeout · 온 것만</option></select></label>` +
       `<label class="inline" title="wait=timeout 일 때 기다리는 시간(초)">제한 <input type="number" data-ens="${role}" data-ens-f="timeout_s" value="${raw.timeout_s == null ? '' : raw.timeout_s}" placeholder="${ENS_DEF.timeout_s}" style="width:64px">초</label>` +
@@ -206,9 +212,31 @@
       `<label class="inline" title="취합 규칙을 적는 프롬프트 파일 (prompts/&lt;이름&gt;.md). 비우면 이 역할 전용 파일 prompts/ensemble_merge_${esc(role)}.md 를 쓰고, 그 파일이 없으면 공용 prompts/ensemble_merge.md 로 떨어집니다. 내용은 Settings › 프롬프트 에서 고칩니다.">프롬프트 <input data-ens="${role}" data-ens-f="prompt" value="${esc(raw.prompt || '')}" placeholder="${esc(eff.prompt || ('ensemble_merge_' + role))}" style="width:168px">.md` +
       `<button type="button" class="mini secondary" data-ens-prompt="${esc(eff.prompt || ('ensemble_merge_' + role))}" title="이 취합 프롬프트를 Settings › 프롬프트 에서 엽니다">편집</button></label>` +
       `</div>` +
+      // 앙상블이 실패했을 때(min_results 미달) 역할 모델로 되돌아갈지 — 켜 두면 "앙상블을 켠 탓에 답이 아예 안 나오는" 일이 없다
+      `<div class="ens-line"><b class="lbl">실패 시</b>` +
+      `<label class="inline" title="멤버가 min_results 를 못 채우면 역할 모델(${esc(rmTxt || '미정')})로 한 번 더 부릅니다. 끄면 앙상블 실패로 끝나고 호출부의 대체 경로(answer 는 추출식 답변)로 갑니다. config.json → llm_roles.${esc(role)}.ensemble.fallback_role_model">` +
+      `<input type="checkbox" data-ens="${role}" data-ens-f="fallback_role_model" ${raw.fallback_role_model === false ? '' : 'checked'}> 역할 모델로 되돌리기</label>` +
+      `<label class="inline" title="되돌릴 때 역할 모델이 무엇을 받나.&#10;auto = 성공한 멤버 답이 있으면 그것들을 취합, 하나도 없으면 원래 프롬프트로 다시&#10;merge = 되도록 살아남은 답을 취합 (이미 쓴 토큰을 살리고 빠르다)&#10;rerun = 멤버 답을 쓰지 않고 항상 원래 프롬프트로 (깨끗하지만 컨텍스트를 다시 넣어 비용이 든다)">` +
+      `받는 것 <select data-ens="${role}" data-ens-f="fallback_mode">` +
+      `<option value="">기본(${esc(ENS_DEF.fallback_mode || 'auto')})</option>` +
+      ['auto', 'merge', 'rerun'].map((m) => `<option value="${m}"${raw.fallback_mode === m ? ' selected' : ''}>${m}${m === 'auto' ? ' · 있으면 취합' : m === 'merge' ? ' · 되도록 취합' : ' · 항상 새 프롬프트'}</option>`).join('') +
+      `</select></label>` +
+      `<span class="muted small">${eff.fallback ? `실패하면 <b>${esc(eff.fallback.provider)}/${esc(eff.fallback.model)}</b> 가 대신 답합니다.` : '되돌리지 않습니다 — 앙상블이 실패하면 그 단계가 실패합니다.'}</span>` +
+      `</div>` +
+      // 최악 소요 — (1+retries)×timeout + 백오프, 실패하면 폴백이 한 번 더. 곱셈이 눈에 안 보인다.
+      (bud && bud.enabled ? `<div class="ens-budget${(QTO && bud.worst_s > QTO) ? ' over' : ''}">` +
+        `<b>최악 소요</b> ${fmtS(bud.worst_s)} <span class="muted">= 멤버 ${fmtS(bud.members_s)} + ${bud.fallback_s >= bud.aggregate_s ? '폴백' : '취합'} ${fmtS(Math.max(bud.aggregate_s, bud.fallback_s))}` +
+        ` · 한 번 = ${bud.attempts}회 × ${bud.timeout_s}초 + 백오프</span>` +
+        (bud.notes || []).map((n) => `<div class="muted small">· ${esc(n)}</div>`).join('') +
+        ((QTO && bud.worst_s > QTO)
+          ? `<div class="warn-line">▲ <b>server.json timeouts.query_s=${QTO}초</b> 가 먼저 요청을 끊습니다 — ` +
+            `느린 멤버 때문에 실패하는 상황에서는 <b>폴백이 실행되기 전에 잘립니다.</b><br>` +
+            `줄이려면 Settings › 모델 의 역할 표에서 <code>timeout_s</code>·<code>retries</code> 를 낮추거나, 위 「대기」를 <code>timeout</code> 으로 두세요.</div>`
+          : '') +
+        `</div>` : '') +
       (eff.enabled
         ? `<div class="ens-eff"><b>지금 유효</b> ${(eff.members || []).map((m, k) => `<span class="chip on" title="${k + 1}번째 멤버">${esc(m.provider)}/${esc(m.model)} <b>w${m.weight}</b></span>`).join('')}` +
-          `<span class="ar">→</span><span class="chip" title="취합 LLM">${eff.aggregator && eff.aggregator.model ? esc(eff.aggregator.provider) + '/' + esc(eff.aggregator.model) : '역할 모델이 취합'}</span>` +
+          `<span class="ar">→</span><span class="chip" title="취합 LLM">${eff.aggregator && eff.aggregator.model ? esc(eff.aggregator.provider) + '/' + esc(eff.aggregator.model) : ((eff.members || [])[0] ? '첫 멤버가 취합: ' + esc(eff.members[0].provider) + '/' + esc(eff.members[0].model) : '첫 멤버가 취합')}</span>` +
           `<span class="muted small">· ${esc(eff.wait)}${eff.wait === 'timeout' ? ' ' + eff.timeout_s + 's' : ''} · 최소 ${eff.min_results}개 · prompts/${esc(eff.prompt)}.md</span></div>`
         // 스위치는 켰는데 쓸 멤버가 0개 → 앙상블은 **돌지 않는다**. 조용히 넘어가면 켠 줄 알고 쓰게 되므로 크게 알린다.
         : on
@@ -318,6 +346,9 @@
     const num = (f) => { const v = ((get(f) || {}).value || '').trim(); return v === '' ? undefined : Number(v); };
     const out = { enabled: !!en.checked, members: members };
     const wait = ((get('wait') || {}).value || ''); if (wait) out.wait = wait;
+    // 실패 시 폴백: 체크는 항상 보내고(끈 상태를 파일에 남겨야 한다), 모드는 비우면 상속
+    const fbEl = get('fallback_role_model'); if (fbEl) out.fallback_role_model = !!fbEl.checked;
+    const fbm = ((get('fallback_mode') || {}).value || ''); if (fbm) out.fallback_mode = fbm;
     const t = num('timeout_s'); if (t !== undefined) out.timeout_s = t;
     const mr = num('min_results'); if (mr !== undefined) out.min_results = mr;
     const pr = ((get('prompt') || {}).value || '').trim(); if (pr) out.prompt = pr;
@@ -725,6 +756,7 @@
     ENS = j.ensemble || {};
     ENS_DEF = Object.assign({ wait: 'all', timeout_s: 120, min_results: 1, prompt: 'ensemble_merge' }, j.ensemble_defaults || {});
     ENS_MAX = j.ensemble_max_members || 3;
+    QTO = Number(j.query_timeout_s || 0) || 0;
     STATE.roles = j.roles || STATE.roles;
     $('#ens-diagram').innerHTML = ensDiagram();
     $('#ens-intro-note').innerHTML =

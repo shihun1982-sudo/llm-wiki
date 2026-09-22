@@ -166,6 +166,51 @@ def main() -> int:
               bool(eff2.get("enabled")) and len(eff2.get("members") or []) == 3,
               "enabled=%r members=%d" % (eff2.get("enabled"), len(eff2.get("members") or [])))
 
+        # ---- 8. 실패 시 폴백 (2026-09-20) — 켜고 끄고, 모드를 고르고, 파일까지 왕복하는가 ----
+        check("「실패 시」 줄에 폴백 스위치가 있다",
+              page.eval("!!document.querySelector('%s[data-ens-f=\"fallback_role_model\"]')" % q))
+        check("폴백 기본이 켜짐이다 (앙상블 탓에 답이 아예 안 나오는 일이 없게)",
+              page.eval("(function(){var c=document.querySelector('%s[data-ens-f=\"fallback_role_model\"]'); return !!c && c.checked;})()" % q))
+        check("되돌아갈 역할 모델을 화면이 말해 준다",
+              page.eval("(function(){var l=document.querySelector('%s[data-ens-f=\"fallback_role_model\"]').closest('.ens-line');"
+                        "return !!l && l.textContent.indexOf(%r)>=0;})()" % (q, role_model)))
+        modes = page.eval("(function(){var s=document.querySelector('%s[data-ens-f=\"fallback_mode\"]'); if(!s) return [];"
+                          "var o=[]; for(var i=0;i<s.options.length;i++) o.push(s.options[i].value); return o;})()" % q)
+        check("모드 세 가지를 고를 수 있다 (auto·merge·rerun)",
+              isinstance(modes, list) and all(m in modes for m in ("auto", "merge", "rerun")), "옵션=%r" % (modes,))
+        # 화면에서 끄고 모드를 바꾼 뒤 저장 → 서버 유효값이 실제로 바뀌는가 (UI → 파일 → 유효값)
+        page.eval("(function(){var c=document.querySelector('%s[data-ens-f=\"fallback_role_model\"]'); c.checked=false;"
+                  "c.dispatchEvent(new Event('change',{bubbles:true}));"
+                  "var s=document.querySelector('%s[data-ens-f=\"fallback_mode\"]'); s.value='rerun';"
+                  "s.dispatchEvent(new Event('change',{bubbles:true})); return 'ok';})()" % (q, q))
+        page.eval("(function(){var b=document.querySelector('#btn-ens-save'); if(b) b.click(); return 'ok';})()")
+        time.sleep(2.5)
+        api3 = json.load(urllib.request.urlopen(base + "/api/models", timeout=20))
+        eff3 = ((api3.get("ensemble") or {}).get(ROLE) or {}).get("effective") or {}
+        check("화면에서 폴백을 끄면 서버 유효값도 꺼진다 (UI → 파일 → 유효값)",
+              eff3.get("fallback_role_model") is False and eff3.get("fallback") is None,
+              "유효값 fallback_role_model=%r fallback=%r" % (eff3.get("fallback_role_model"), eff3.get("fallback")))
+        check("화면에서 고른 모드가 서버 유효값에 온다", eff3.get("fallback_mode") == "rerun",
+              "유효값 fallback_mode=%r" % eff3.get("fallback_mode"))
+
+        # ---- 9. 최악 소요가 화면에 보이는가 (곱셈이 눈에 안 보여서 함정이 된다) ----
+        check("API 가 최악 소요를 계산해 준다",
+              isinstance((ens.get("budget") or {}).get("worst_s"), (int, float)) and (ens.get("budget") or {}).get("worst_s") > 0,
+              "budget=%r" % (ens.get("budget"),))
+        check("API 가 요청 상한(query_s)도 함께 준다",
+              isinstance(api.get("query_timeout_s"), (int, float)), "query_timeout_s=%r" % api.get("query_timeout_s"))
+        page.eval("location.reload(); 'ok'")
+        for _ in range(40):
+            time.sleep(0.5)
+            if page.eval("!!document.querySelector('#ens-roles [data-ens-card=\"%s\"] .ens-budget')" % ROLE) is True:
+                break
+        check("화면에 「최악 소요」가 보인다",
+              page.eval("(function(){var b=document.querySelector('%s.ens-budget');"
+                        "return !!b && b.offsetParent !== null && b.textContent.indexOf('최악 소요')>=0;})()" % q))
+        check("최악 소요에 '한 번 = N회 × M초' 근거가 적혀 있다",
+              page.eval("(function(){var b=document.querySelector('%s.ens-budget');"
+                        "return !!b && /\\d+회 × \\d+초/.test(b.textContent);})()" % q))
+
         bad = [r for r in rows if r[0] == "FAIL"]
         print("\n%d개 중 %d개 통과" % (len(rows), len(rows) - len(bad)))
         print("ENSEMBLE-UI", "OK" if not bad else "PROBLEMS")

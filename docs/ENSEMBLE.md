@@ -161,6 +161,8 @@ complete(system, user) → 멤버를 스레드로 병렬 호출 → wait=all: �
 | `…ensemble.members[]` | 빈 뼈대 3행 | `enabled`(true) · `provider`("" = 카탈로그 → 역할 provider) · `model`("" = 이 멤버 사용 안 함) · `weight`(1.0) · `effort`("" = 호출 시점의 역할 effort) |
 | `…ensemble.wait` · `timeout_s` · `min_results` · `prompt` | `""` = 상속 | 비우면 `llm_ensemble_defaults` → 코드 `ENSEMBLE_DEFAULTS` 순 |
 | `…ensemble.aggregator` | `{"provider": "", "model": "", "effort": ""}` | 취합 LLM. `model` 비움 = 첫 멤버가 취합. provider 비움 = 카탈로그 → 역할 provider |
+| `llm_ensemble_defaults.fallback_role_model` · `…ensemble.fallback_role_model` | `true` · `""` = 상속 | 앙상블이 실패하면 역할 모델로 한 번 더 (§2.35) |
+| `llm_ensemble_defaults.fallback_mode` · `…ensemble.fallback_mode` | `"auto"` · `""` = 상속 | 폴백이 받는 것: `auto` \| `merge` \| `rerun` (§2.35) |
 
 정규화: 파일 저장 형태는 `config._norm_ensemble_raw`, 해석은 `Settings.effective_ensemble(role)`(기본값 병합·빈 멤버 제거·provider 해석·`provider_source` 표기).
 환경변수/단축키로는 JSON 문자열 — `LLMWIKI_ANSWER_ENSEMBLE='{"enabled":true,…}'`, `config set answer_ensemble=<json>`.
@@ -169,6 +171,162 @@ complete(system, user) → 멤버를 스레드로 병렬 호출 → wait=all: �
 
 `llm_roles` 와 역할 키 `ensemble` 은 Web/MCP `overrides` 허용 목록(`OVERRIDE_SAFE_KEYS`)에 있다: `{"overrides": {"llm_roles": {"answer": {"ensemble": {"enabled": true, "members": [...]}}}}}`.
 `Pipeline._llm_key` 가 `role_llm()` 결과(앙상블 포함)를 서명에 넣으므로 그 요청만 앙상블 인스턴스를 새로 만든다.
+
+### 2.3 타임아웃·재시도는 어디서 정해지나 — 멤버별로는 못 준다
+
+**멤버 항목에는 타임아웃·재시도 칸이 없다.** 멤버가 가진 것은 `enabled`·`provider`·`model`·`weight`·`effort`
+다섯 개뿐이다. 실행할 때 `providers._make_ensemble()` 이 멤버마다 `apply_policy(llm, settings, role)` 를 부르므로
+**모든 멤버와 취합기가 그 역할 하나의 정책을 똑같이** 물려받는다. 멤버 A 는 60초, 멤버 B 는 300초로 두는 방법은 없다.
+
+정책 키(`Settings.role_llm`)와 우선순위(`providers.apply_policy`):
+
+| 키 | 뜻 | 전역 기본값 키 |
+|---|---|---|
+| `timeout_s` | 호출 하나의 제한(초) | `llm_timeout` |
+| `retries` | 재시도 횟수 | `llm_retries` |
+| `backoff_s` · `backoff` · `backoff_max_s` | 재시도 대기(초) · 전략(`exponential`/`linear`) · 대기 상한 | `llm_retry_backoff_s` · `llm_retry_backoff` · `llm_retry_backoff_max_s` |
+| `budget_s` | 그 역할이 쓸 수 있는 총 시간 | `llm_budget_s` |
+| `circuit_failures` · `circuit_cooldown_s` | 연속 실패 몇 번에 회로를 끊나 · 끊긴 뒤 쉬는 시간 | `llm_circuit_failures` · `llm_circuit_cooldown_s` |
+| `max_tokens` | 출력 토큰 상한 | `answer_max_tokens`(answer) / `ROLE_DEFAULT_MAX_TOKENS` |
+
+**우선순위는 위에서부터 이긴다:**
+
+1. `llm_roles.<role>.<키>` 에 **명시된 값** — headless 고정값보다도 세다
+2. **headless `agents.json` 의 `timeout_s`/`retries`/`retry_backoff_s`** — 역할에 명시가 없으면 이 값이 유지된다(`_*_fixed` 표식)
+3. `config.json` 전역(`llm_timeout`·`llm_retries`…)
+4. 코드 기본값
+
+그래서 headless 멤버와 API 멤버를 한 역할에 섞으면, **역할에 `timeout_s` 를 적는 순간 headless 의
+`agents.json` 값까지 덮인다.** headless 에만 다른 값을 주고 싶으면 역할 칸을 비워 두고 `agents.json` 쪽을 고쳐야 한다.
+
+headless 에만 있는 키(`stall_timeout_s`·`first_output_timeout_s`·`keep_partial_on_timeout`·`retry_on`·
+`arg_max_chars` 등)는 역할 정책으로 덮을 수 없고 `agents.json` 에서만 정한다.
+
+#### 앙상블의 `timeout_s` 와 역할의 `timeout_s` 는 다른 것이다
+
+| | 무엇을 재나 | 어디에 |
+|---|---|---|
+| `llm_roles.<role>.timeout_s` | **멤버 호출 하나**의 제한. 멤버마다 각자 적용 | 역할 정책 |
+| `…ensemble.timeout_s` | `wait=timeout` 일 때 **앙상블 전체가 기다리는 마감**. 지나면 그때까지 온 것만으로 취합 | 앙상블 정책 |
+
+`wait=all` 이면 앙상블 `timeout_s` 는 쓰이지 않는다 — 상한은 **가장 느린 멤버의 역할 timeout** 이다.
+headless 처럼 느린 멤버를 섞었다면 `wait=timeout` 을 쓰는 편이 안전하다.
+
+#### Web UI 에서 고치는 자리
+
+| 무엇 | 자리 |
+|---|---|
+| 역할 `timeout_s`·`retries`·`backoff_s`·`budget_s`·`max_tokens` | Settings › 모델·프로바이더 › **역할 표** (「재시도·타임아웃 열 보기」 체크) |
+| 앙상블 `wait`·`timeout_s`·`min_results`·프롬프트·멤버·취합기 | 🧭 Pipeline › **앙상블** |
+| headless `timeout_s`·`retries`·`stall_timeout_s`·`retry_on` 등 | Settings › 모델·프로바이더 › **Headless agents (agents.json)** 텍스트 상자 |
+| `backoff`·`backoff_max_s`·`circuit_failures`·`circuit_cooldown_s` 의 **역할별** 값 | 역할 표에 열이 없다 → Settings › **config.json** 에서 `llm_roles.<role>` 에 직접 적거나 CLI `config set`. 전역값은 config.json 탭에서 바로 고친다 |
+
+### 2.35 앙상블이 실패하면 역할 모델로 되돌린다 (2026-09-20)
+
+앙상블을 켜면 역할 모델은 불리지 않는다(§2.4). 그래서 멤버가 `min_results` 를 못 채우면 **그 역할은 답을 못 낸다** —
+`answer` 라면 추출식 답변으로 떨어진다. 역할 모델은 멀쩡히 설정돼 있는데도 쓰이지 않는 것이다.
+`fallback_role_model` 이 그 자리를 메운다.
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `…ensemble.fallback_role_model` | `true` | 앙상블이 실패하면 **역할 모델로 한 번 더** 부른다. `false` 면 예전처럼 `LLMError` 로 끝나고 호출부의 대체 경로(answer 는 추출식)로 간다 |
+| `…ensemble.fallback_mode` | `auto` | 그때 역할 모델이 **무엇을 받는지** — 아래 표 |
+
+| `fallback_mode` | 역할 모델이 받는 것 | 언제 쓰나 |
+|---|---|---|
+| `auto` (기본) | 성공한 멤버 답이 있으면 그것들을 **취합**, 하나도 없으면 원래 프롬프트로 **다시** | 대개 이것으로 충분하다 |
+| `merge` | 되도록 살아남은 답을 취합 (하나도 없으면 취합할 것이 없어 `rerun` 으로 떨어진다) | 이미 쓴 토큰을 살리고 싶을 때. 빠르지만 부실한 답에 끌려갈 수 있다 |
+| `rerun` | 멤버 답을 쓰지 않고 **항상** 원래 프롬프트로 처음부터 | 깨끗한 답이 중요할 때. 컨텍스트를 다시 넣어 비용·시간이 더 든다 |
+
+취합 프롬프트는 정상 취합과 **같은 파일**을 쓴다(`providers.EnsembleLLM._merge_prompt` 한 곳). 둘이 갈리면 폴백 답만 형식이 달라진다.
+폴백 LLM 은 멤버와 같은 `provider/model` 이면 **인스턴스를 공유한다** — 회로 차단·통계가 하나로 모이고, 방금 끊긴 회로를 폴백이 다시 두드리지 않는다.
+폴백까지 실패하면 원래의 앙상블 오류로 끝난다(오류 메시지에 `fallback …` 이 덧붙는다).
+
+**폴백으로 나온 답은 앙상블 답이 아니다.** 그래서 세 창구가 모두 그 사실을 드러낸다:
+
+| 창구 | 어디에 |
+|---|---|
+| Web | trace 의 그 줄을 펼치면 빨간 **`폴백 · 역할 모델이 답함`** 배지 + 표의 **폴백** 줄 + 노란 설명 상자(무엇을 받았는지·모드) |
+| CLI | `query --trace` 의 `폴백 … << 이 답은 **역할 모델**이 만들었습니다` 줄과 그 아래 사유·모드 |
+| MCP | 응답 trace 의 `meta.ensemble.fallback` = `{model, provider, ms, mode, used_members, why, …}` |
+
+설정하는 곳:
+
+| 창구 | 방법 |
+|---|---|
+| CLI | `models ensemble set <role> --fallback true\|false --fallback-mode auto\|merge\|rerun` (`''` = 상속). `models ensemble show <role>` 이 `실패 시 폴백:` 줄로 보여 준다 |
+| Web | 🧭 Pipeline › 앙상블 의 **「실패 시」** 줄 — 「역할 모델로 되돌리기」 체크 + 「받는 것」 드롭다운 |
+| MCP | 설정 도구는 두지 않는다(§4 와 같은 이유). `overrides.llm_roles.<role>.ensemble` 로 요청 단위 지정은 된다 |
+| 전역 기본 | `config.json → llm_ensemble_defaults.fallback_role_model` / `.fallback_mode` |
+
+### 2.36 시간 계산 — 앙상블·폴백을 켤 때 반드시 보는 곳 (2026-09-20)
+
+**곱셈이 눈에 안 보이는 것이 함정이다.** 화면에는 `ensemble.timeout_s = 120` 만 보여서 2분이 상한인 줄 알기 쉽지만,
+실제 상한은 **역할 정책**에서 나오고 그 값은 기본이 훨씬 크다.
+
+```
+멤버 한 번  = (1 + retries) × timeout_s + 백오프
+            = (1 + 3) × 600초 + (2+4+8)초 = 2414초 ≈ 40분      ← llm_retries=3 · llm_timeout=600 (기본값)
+앙상블 단계 = 가장 느린 멤버       (멤버는 병렬)   ≈ 40분
+  + 취합    = 같은 정책으로 한 번 더              ≈ 40분
+  또는 폴백 = 같은 정책으로 한 번 더              ≈ 40분
+──────────────────────────────────────────────────────────
+한 단계 최악                                    ≈ 80분
+```
+
+기본값 그대로 `answer` 에 앙상블을 켜면 **그 단계 하나가 최악 80.5분**이다. 확인:
+
+```powershell
+python -m llmwiki models ensemble show answer      # '최악 소요: 4828초 (80.5분) = 멤버 2414초 + 폴백 2414초'
+```
+Web 은 🧭 Pipeline › 앙상블 의 **「최악 소요」** 줄에 같은 값을 보여 준다.
+
+#### 알아 둘 네 가지
+
+| # | 사실 | 왜 중요한가 |
+|---|---|---|
+| 1 | **`wait=all`(기본)은 `ensemble.timeout_s` 를 쓰지 않는다** | 그 값은 `wait=timeout` 일 때만 마감으로 쓰인다(`EnsembleLLM._complete` 의 `deadline`). `all` 이면 상한은 가장 느린 멤버의 **역할** `timeout_s` 다 |
+| 2 | **`(≤ 10m)` 같은 단계 제한은 표시 전용이다** | `architecture.stage_limits()` 는 관측용이고 아무것도 끊지 않는다 — 80분 단계가 조용히 지나간다 |
+| 3 | **실질 상한은 `server.json timeouts.query_s`(기본 900초)** | **협조적** 취소다. 워치독이 취소를 요청하고 앙상블이 0.25초마다 `check_cancel()` 로 잡는다. 진행 중인 LLM 호출 하나는 끝까지 기다리므로 실제로는 `query_s + 진행 중 호출의 잔여`(최대 `timeout_s`) 까지 간다 |
+| 4 | **그래서 정작 필요한 상황에서 폴백이 못 돈다** | 멤버가 *느려서* 실패하는 경우엔 `query_s` 가 먼저 터진다. 폴백이 도움이 되는 것은 멤버가 **빨리** 실패할 때(인증 오류·모델 없음·회로 차단)다 |
+
+#### 회로 차단과 폴백
+
+`circuit_key = provider/model` 이고 회로는 **프로세스 전역**이다. `complete()` 한 번이 실패 1회로 세어지므로
+`circuit_failures=3` 이면 **멤버 3개가 같은 모델일 때 한 질의로 회로가 열린다.**
+폴백이 같은 `provider/model` 이면 인스턴스를 공유하므로 즉시 `circuit_open` 으로 끝난다 —
+**멤버가 전부 역할 모델과 같은 구성에서는 폴백이 사실상 동작하지 않는다**(대신 시간도 더 쓰지 않는다).
+폴백을 쓰려면 **역할 모델을 멤버와 다른 것**으로 두어야 뜻이 있다.
+
+#### 권장 설정
+
+| 목표 | 방법 |
+|---|---|
+| 한 단계를 확실히 끊고 싶다 | 「대기」를 **`timeout`** 으로 두고 `ensemble.timeout_s` 를 정한다 (`wait=all` 은 안 끊는다) |
+| 재시도 폭주를 줄인다 | 앙상블을 켠 역할에는 `llm_roles.<role>.retries` 를 **1** 정도로, `timeout_s` 도 역할에 맞게 낮춘다. 멤버가 3개면 어차피 중복 시도다 |
+| 총 시간에 상한을 둔다 | `llm_budget_s`(기본 **0 = 없음**)를 켠다. 단 이 예산은 **`complete()` 한 번 단위**라 멤버와 폴백이 각각 그만큼 쓴다 — 총합은 대략 2배로 잡는다 |
+| headless 를 섞는다 | 역할 `timeout_s` 를 적으면 `agents.json` 의 `timeout_s`·`retries` 가 **덮인다**(§2.3). headless 쪽 보호(`stall_timeout_s`·`first_output_timeout_s`)를 살리려면 역할 칸을 비워 둔다 |
+| 폴백을 실제로 쓰고 싶다 | 역할 모델을 멤버와 **다른 모델**로 (위 '회로 차단' 참고) |
+
+`wait=timeout` 으로 끊어도 **버려진 멤버 스레드는 계속 돈다** — `Future.cancel()` 은 이미 시작한 작업을 멈추지 못하고
+`ThreadPoolExecutor.shutdown(wait=False)` 로 넘긴다. 그 멤버들은 자기 `timeout_s` 까지 연결을 물고 있으므로,
+`wait=timeout` 을 짧게 잡는다고 자원까지 바로 도는 것은 아니다(요청이 취소되면 멤버도 같은 토큰으로 멈춘다).
+
+### 2.4 역할 모델과 멤버는 중복이 아니다 — 앙상블이 켜지면 역할 모델은 **불리지 않는다**
+
+`providers.make_llm()` 은 역할의 앙상블이 켜져 있고 활성 멤버가 1개 이상이면
+단일 LLM 대신 `EnsembleLLM` 을 돌려준다. 즉 역할 표의 `provider`/`model` 은 **호출 대상에서 빠진다.**
+그 값은 사라지는 것이 아니라 **상속의 출처**로만 남는다:
+
+| 역할 표의 값 | 앙상블이 켜졌을 때의 쓰임 |
+|---|---|
+| `model` | **안 쓰인다.** 멤버는 자기 `model` 이 있어야 하고, 비면 그 멤버가 빠진다 |
+| `provider` | 멤버·취합기가 `provider` 를 비웠을 때 상속된다 |
+| `effort` | 멤버가 `effort` 를 비웠을 때 호출 시점에 상속된다 |
+| `timeout_s`·`retries`·`backoff*`·`budget_s`·`circuit_*`·`max_tokens` | **모든 멤버와 취합기에 그대로 적용된다**(§2.3) |
+
+앙상블을 끄면(`enabled=false` 또는 활성 멤버 0개) 역할 표의 `provider`/`model` 이 다시 **실제 호출 대상**이 된다.
+그래서 역할 표를 비워 두면 안 된다 — 앙상블을 껐을 때 돌아갈 자리이자, 멤버가 비운 칸의 상속원이기 때문이다.
 
 ## 3. 동작 상세 (`EnsembleLLM._complete`)
 
@@ -184,8 +342,8 @@ complete(system, user) → 멤버를 스레드로 병렬 호출 → wait=all: �
 | 창구 | 내용 |
 |---|---|
 | CLI | `models ensemble show [role]`(raw + effective) · `models ensemble set <role> [--enabled true\|false] [--member N provider=… model=… weight=… effort=… enabled=…]… [--aggregator provider=… model=… effort=…] [--wait all\|timeout\|''] [--timeout N\|''] [--min N\|'']` (`''` = 상속으로 되돌림). 저장 후 `p.reload()` 로 즉시 적용. `models test [--live]` 가 멤버·취합기별 결과를 표시. `config fill-defaults` 가 모든 역할에 꺼진 뼈대를 채움 |
-| Web UI | **Settings › 모델·프로바이더 › 역할 표**의 각 역할 행 아래 접이식 **「앙상블」** 칸 (2026-09-19 추가). 멤버 3칸을 각각 `☑ 사용 / provider / model / w(가중치)` 로 고르고, 쓰지 않을 멤버는 체크를 풀면 `✘ 사용 안 함` 으로 흐려진다. 아래 줄에 대기(`all`/`timeout`)·`timeout_s`·`min_results`·프롬프트 파일, 그 아래에 **취합 LLM**(provider·model). 맨 아래 한 줄이 **지금 유효한 값**(기본값이 합쳐지고 빈 멤버가 걸러진 것)을 보여 준다. 저장은 위쪽 「저장 & 프로바이더 재로드」 — `config.json llm_roles.<role>.ensemble` 에 들어가며 CLI 와 **같은 값**이다 |
-| MCP | 전용 도구 없음. `wiki_query(overrides={"llm_roles": {"answer": {"ensemble": {…}}}})` 로 요청 단위 적용 가능. 결과 `llm_report` 에 멤버 실패가 보인다 |
+| Web UI | 편집은 **🧭 Pipeline › 앙상블** 한 곳에서만 한다 (2026-09-20 정정 — Settings › 모델 의 역할 표에는 상태 줄과 「앙상블 설정으로」 버튼만 둔다. 같은 값을 두 화면에서 받으면 어느 쪽이 적용됐는지 알 수 없다). 멤버 3칸을 각각 `☑ 쓰기 / provider / 모델 / 가중치` 로 고르고 — **모델을 골라야 켜진다**(§6) — 오른쪽에 그 멤버가 실제로 부르는 provider/model 이 보인다. 아래 줄에 대기(`all`/`timeout`)·`timeout_s`·`min_results`·프롬프트 파일, 그 아래에 **취합 LLM**(provider·model, 비우면 첫 멤버). 맨 아래 한 줄이 **지금 유효한 값**(기본값이 합쳐지고 빈 멤버가 걸러진 것)을 보여 준다. 저장은 위쪽 「저장 & 프로바이더 재로드」 — `config.json llm_roles.<role>.ensemble` 에 들어가며 CLI 와 **같은 값**이다. 타임아웃·재시도는 이 화면이 아니라 역할 표/`agents.json` 에서 정한다(§2.3) |
+| MCP | 전용 도구 없음 — 붙은 LLM 이 자기를 부르는 LLM 구성을 바꾸게 할 수 없다. `wiki_query(overrides={"llm_roles": {"answer": {"ensemble": {…}}}})` 로 요청 단위 적용은 된다. 결과 `llm_report` 에 멤버 실패, `meta.ensemble`(멤버·취합·**폴백**)에 실행 내역이 보인다 |
 
 ## 5. 검증 명령
 
@@ -196,6 +354,10 @@ python -m llmwiki models test --live | Select-String answer          # ensemble 
 python -m llmwiki query "테스트 질문" --json --no-log | Select-String '"model"'   # "mock+mock"
 python -m llmwiki models ensemble set answer --enabled false                       # 되돌리기
 python -m unittest tests.test_ensemble_surface -v    # 설정 계층(기본값 합치기·빈 멤버 제거·상한 3·저장 왕복) + 세 창구 표면 10건
+python -m unittest tests.test_ensemble_fallback -v   # 실패 시 폴백 15건 (설정 계층 · 실제 호출 · merge/rerun 차이 · 관측)
+python -m llmwiki models ensemble set answer --fallback true --fallback-mode merge
+python -m llmwiki models ensemble show answer        # '실패 시 폴백: <provider>/<model> (merge — …)'
+python -m llmwiki models ensemble set answer --fallback "" --fallback-mode ""   # 상속으로 되돌림
 ```
 
 ```powershell
@@ -236,13 +398,20 @@ python tools/verify/verify_ensemble_ui.py     # 앙상블 편집기를 실제 �
 | **「사용」을 켰는데 멤버 칸이 비활성처럼 보이고 켜지지 않는다** | 멤버는 **모델을 골라야** 켜진다(「쓰기」 체크만으로는 안 된다). 모델 칸에서 고르거나 「빈 멤버를 … 로 채우기」. CLI 로는 `models ensemble show <role>` 이 `! enabled=true 이지만 쓸 멤버가 0개입니다` 로 알려 준다 |
 | **멤버 모델 드롭다운에 고를 것이 아무것도 없다** | 2026-09-20 이전 버그: 앙상블 탭이 카탈로그를 없는 키(`j.catalog`)로 읽어 목록이 비었다. 고쳐졌다(`j.catalog_models`). 그래도 비면 `models.json` 의 `enabled` 와 Settings › 모델 의 연결 테스트 결과를 본다 — 꺼졌거나 연결 실패한 모델은 회색으로 **고를 수 없다** |
 | 앙상블 화면을 고쳤는데 서버 동작이 그대로다 | 실행 중인 `serve` 는 새 정적 JS 는 주지만 **파이썬 모듈은 옛것**이다. `serve` 를 재시작한다 |
+| CLI 로 `models ensemble set` 했는데 Web 화면이 옛 값이다 | `config.json` 은 **mtime 자동 재적재가 아니다**. Web 에서 「재적재」(`POST /api/config {action:"reload"}`)를 한 번 누른다 — [SETTINGS_SYNC.md](SETTINGS_SYNC.md) 의 `how=reload` |
+| 답이 나왔는데 멤버가 전부 실패로 보인다 | **폴백**이다 — 역할 모델이 대신 답한 것이고 앙상블 답이 아니다. Web 의 빨간 `폴백 · 역할 모델이 답함` 배지, CLI 의 `폴백 …` 줄, `meta.ensemble.fallback` 을 본다 (§2.35) |
+| 앙상블을 켰더니 답이 아예 안 나온다(추출식으로 떨어진다) | `fallback_role_model` 이 꺼져 있고 멤버가 전부 실패한 것이다. 켜면 역할 모델이 대신 답한다 (§2.35) |
+| **앙상블을 켰더니 질의가 몇십 분씩 걸리거나 시간 초과로 끊긴다** | `ensemble.timeout_s` 는 `wait=all` 에서 **쓰이지 않는다**. 상한은 `(1+retries)×역할 timeout_s` 이고 폴백이 한 번 더 돈다 — `models ensemble show <role>` 의 「최악 소요」를 본다. 「대기」를 `timeout` 으로 두거나 역할 `retries`·`timeout_s` 를 낮춘다 (§2.36) |
+| 폴백을 켰는데 한 번도 안 돈다 | ① 멤버가 *느려서* 실패하면 `query_s` 가 먼저 요청을 끊어 폴백까지 못 간다 ② 멤버와 역할 모델이 **같은 provider/model** 이면 회로가 열려 폴백이 즉시 `circuit_open` 으로 끝난다 — 역할 모델을 다른 것으로 둔다 (§2.36) |
 | 카탈로그에 없는 모델을 멤버로 적었다 | 동작하지만 `models test` 힌트 없음. provider 를 명시한다 |
 
 ## 7. 구현 파일
 
 | 파일 | 내용 |
 |---|---|
-| `llmwiki/providers.py` | `ENSEMBLE_MAX_MEMBERS=3` · `EnsembleLLM`(`available/reason/policy/describe/ping/live_test/_run_member/_complete`) · `_make_ensemble()` · `make_llm()` 분기 |
+| `llmwiki/providers.py` | `ENSEMBLE_MAX_MEMBERS=3` · `EnsembleLLM`(`available/reason/policy/describe/ping/live_test/_run_member/_merge_prompt/_complete`) · **실패 시 폴백**(`self.fallback`·`fallback_mode`) · `_make_ensemble()` · `make_llm()` 분기 · `summarize_ensemble()` 이 `fallback` 을 싣는다 |
+| `llmwiki/pipeline.py` | `_llm_key()`(앙상블 포함 서명) · `_content_llm_sig()`/`answer_signature()` — precompute 캐시 키에 **앙상블이 들어간다**(예전에는 역할 모델만 봐서 앙상블을 켜도 캐시가 안 바뀌었다) |
+| `tests/test_ensemble_fallback.py` | 폴백 15건 — 설정 계층(기본값·상속·정규화) · 실제 호출 여부 · `merge`/`rerun` 차이 · 정상일 때 안 불리는지 · 요약 노출 |
 | `llmwiki/config.py` | `Settings.LLM_ROLES`(10 역할) · `ENSEMBLE_DEFAULTS` · `llm_ensemble_defaults` · `effective_ensemble()` · `role_llm()["ensemble"]` · `_norm_ensemble_raw()` · `ensemble_template()` · `fill_defaults()` · `apply_overrides`(`answer_ensemble=<json>`) · `SETTING_HELP["llm_ensemble_defaults"]` |
 | `llmwiki/prompts.py` | `DEFAULTS["ensemble_merge"]` → `prompts/ensemble_merge.md`(첫 사용 시 생성) |
 | `llmwiki/pipeline.py` | `_llm_key()`(앙상블 포함 서명) · `provider_status()`(`ensemble_enabled`) · `test_providers()`(`live_members`, `live_aggregator`, `row["ensemble"]`) |

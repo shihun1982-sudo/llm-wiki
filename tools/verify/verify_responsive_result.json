@@ -1,5 +1,5 @@
 {
- "ts": "2026-09-20 12:59",
+ "ts": "2026-09-20 21:25",
  "widths": [
   360,
   768,
@@ -113,7 +113,7 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table.req 711>456"
+    "table.req 692>456"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
@@ -161,7 +161,7 @@
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -182,7 +182,7 @@
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -206,7 +206,7 @@
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -223,13 +223,13 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "div.tbl-wrap 418>346"
+    "div.tbl-wrap 410>346"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -246,13 +246,13 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table.req 711>280"
+    "table.req 692>280"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -269,13 +269,13 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table 438>346"
+    "table 398>346"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
    "mainWidth": 744,
    "mainRatio": 1,
-   "sidebarTop": 202,
+   "sidebarTop": 204,
    "sidebarWidth": 744,
    "stacked": true,
    "width": 768,
@@ -358,7 +358,7 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "div.tbl-wrap 418>334"
+    "div.tbl-wrap 410>334"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
@@ -381,7 +381,7 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table.req 711>315"
+    "table.req 692>315"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
@@ -404,7 +404,7 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table 438>334"
+    "table 398>334"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],
@@ -513,7 +513,7 @@
    "overflow": [],
    "scrollerCount": 1,
    "scrollers": [
-    "table.req 711>472"
+    "table.req 692>472"
    ],
    "tableSplitCount": 0,
    "tableSplit": [],

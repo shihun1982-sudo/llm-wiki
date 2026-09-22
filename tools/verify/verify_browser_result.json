@@ -1,7 +1,7 @@
 {
  "pages": {
   "index": {
-   "dom_len": 126538,
+   "dom_len": 126537,
    "console_lines": 3,
    "errors": [],
    "tabs": 36,
@@ -26,7 +26,7 @@
    "has_build-external": true
   },
   "login": {
-   "dom_len": 126538,
+   "dom_len": 126537,
    "console_lines": 3,
    "errors": []
   }
@@ -68,7 +68,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 66839,
+   "body_len": 66814,
    "static_len": 6551,
    "ok": true
   },
@@ -78,7 +78,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 153359,
+   "body_len": 163537,
    "static_len": 1276,
    "ok": true
   },
@@ -218,7 +218,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 65665,
+   "body_len": 65605,
    "static_len": 1990,
    "ok": true
   },
@@ -308,7 +308,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 4336,
+   "body_len": 4338,
    "static_len": 926,
    "ok": true
   },
@@ -318,7 +318,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 28003,
+   "body_len": 27099,
    "static_len": 2979,
    "ok": true
   },
@@ -328,7 +328,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 20539,
+   "body_len": 20559,
    "static_len": 801,
    "ok": true
   },
@@ -348,7 +348,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 15518,
+   "body_len": 15207,
    "static_len": 2118,
    "ok": true
   },
@@ -358,7 +358,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 83450,
+   "body_len": 85095,
    "static_len": 1110,
    "ok": true
   },
@@ -368,7 +368,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 11320,
+   "body_len": 11319,
    "static_len": 3913,
    "ok": true
   },
@@ -378,7 +378,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 38215,
+   "body_len": 39462,
    "static_len": 1203,
    "ok": true
   },

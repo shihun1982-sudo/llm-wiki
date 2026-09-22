@@ -1002,7 +1002,9 @@ class Handler(BaseHTTPRequestHandler):
                             _rl = bs.role_llm(role)
                             ens[role] = {"effective": bs.effective_ensemble(role),
                                          "raw": dict(((bs.llm_roles or {}).get(role) or {}).get("ensemble") or {}),
-                                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")}}
+                                         "role": {"provider": _rl.get("provider", ""), "model": _rl.get("model", "")},
+                                         # 최악 소요 시간 — 곱셈(재시도 × 타임아웃 + 폴백)이 눈에 안 보여서 계산해 준다
+                                         "budget": bs.ensemble_time_budget(role)}
                         except Exception as e:
                             ens[role] = {"error": str(e)[:200]}
                     return self._json({"providers": p.provider_status(), "settings": bs.to_dict(), "roles": list(Settings.LLM_ROLES),
@@ -1010,6 +1012,9 @@ class Handler(BaseHTTPRequestHandler):
                                        "ensemble": ens,
                                        "ensemble_defaults": dict(Settings.ENSEMBLE_DEFAULTS, **(bs.llm_ensemble_defaults or {})),
                                        "ensemble_max_members": Settings.ENSEMBLE_MAX_MEMBERS,
+                                       "ensemble_fallback_modes": list(Settings.ENSEMBLE_FALLBACK_MODES),
+                                       # 요청이 실제로 잘리는 지점 — 앙상블 최악 소요와 견줘 보라고 함께 준다 (server.json timeouts)
+                                       "query_timeout_s": float((( _mgr().cfg.get("timeouts") or {}).get("query_s") or 0)),
                                        "catalog_models": _mc.describe(bs)})
                 if u.path == "/api/system":
                     return self._json(p.system_info(_qint(qs, "target_docs", 3000), _qint(qs, "daily_new", 20), _qint(qs, "horizon_days", 365)))

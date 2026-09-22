@@ -522,7 +522,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 12,
+   "fetches": 14,
    "toasts": [
     "[단계확인 모달 통과]"
    ],
@@ -536,7 +536,7 @@
   "why": "",
   "state": {
    "errs": [],
-   "fetches": 19,
+   "fetches": 17,
    "toasts": [
     "[단계확인 모달 통과]",
     "[단계확인 모달 통과]",
