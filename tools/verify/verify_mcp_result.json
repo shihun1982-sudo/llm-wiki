@@ -1,5 +1,5 @@
 {
- "ts": "2026-09-24 22:41:28",
+ "ts": "2026-09-24 23:42:08",
  "total": 156,
  "failed": [],
  "results": [
@@ -186,12 +186,12 @@
   {
    "check": "wiki_forensic {\"expected_docs\": [\"ISSUE-2001\"]}",
    "ok": true,
-   "detail": "forensic expect — request #4136  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
+   "detail": "forensic expect — request #4163  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
   },
   {
    "check": "wiki_analysis {\"focus\": \"speed\"}",
    "ok": true,
-   "detail": "# 질의 상세 분석 리포트 — request #4136  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 22:41:22 · ru"
+   "detail": "# 질의 상세 분석 리포트 — request #4163  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 23:42:00 · ru"
   },
   {
    "check": "wiki_sources {}",
@@ -211,12 +211,12 @@
   {
    "check": "wiki_requests {\"limit\": 5}",
    "ok": true,
-   "detail": "[  {   \"id\": 4137,   \"ts\": 1790257283.0658178,   \"kind\": \"search\",   \"ms\": 6.55,   \"summary\": \"relat"
+   "detail": "[  {   \"id\": 4164,   \"ts\": 1790260920.5918112,   \"kind\": \"search\",   \"ms\": 6.77,   \"summary\": \"relat"
   },
   {
    "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
    "ok": true,
-   "detail": "[  {   \"id\": 4136,   \"ts\": 1790257282.971832,   \"kind\": \"query\",   \"ms\": 109.14,   \"summary\": \"ISSUE"
+   "detail": "[  {   \"id\": 4163,   \"ts\": 1790260920.4955645,   \"kind\": \"query\",   \"ms\": 110.11,   \"summary\": \"ISSU"
   },
   {
    "check": "wiki_rerun {}",
@@ -226,7 +226,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_xfbf13tw\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -236,7 +236,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_xfbf13tw\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
@@ -269,14 +269,14 @@
    "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=10 verdict=sufficient"
   },
   {
-   "check": "wiki_rerun (답변부터, request_id=4140)",
+   "check": "wiki_rerun (답변부터, request_id=4167)",
    "ok": true,
-   "detail": "{  \"rerun_of\": 4140,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
+   "detail": "{  \"rerun_of\": 4167,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
   },
   {
    "check": "wiki_requests (한 건 상세)",
    "ok": true,
-   "detail": "{  \"id\": 4140,  \"ts\": 1790257283.815673,  \"kind\": \"query\",  \"ms\": 48.27,  \"query\": \"ISSUE-2001 의 원인\""
+   "detail": "{  \"id\": 4167,  \"ts\": 1790260922.8253183,  \"kind\": \"query\",  \"ms\": 48.33,  \"query\": \"ISSUE-2001 의 원인"
   },
   {
    "check": "wiki_sweep (last · rrf_k=[10,60] → record/compare)",
@@ -291,7 +291,7 @@
   {
    "check": "wiki_feedback (query_id 연계)",
    "ok": true,
-   "detail": "{\"query_id\": 4140, \"feedback\": 1, \"proposals\": [], \"episode\": 853}"
+   "detail": "{\"query_id\": 4167, \"feedback\": 1, \"proposals\": [], \"episode\": 865}"
   },
   {
    "check": "wiki_query {}",
@@ -371,12 +371,12 @@
   {
    "check": "Mcp-Session-Id 발급",
    "ok": true,
-   "detail": "6290995b099f923ecb0c2ab1"
+   "detail": "c7b7d09ca2d9f66f6a33952d"
   },
   {
    "check": "세션 유지 (같은 Mcp-Session-Id)",
    "ok": true,
-   "detail": "6290995b099f923ecb0c2ab1"
+   "detail": "c7b7d09ca2d9f66f6a33952d"
   },
   {
    "check": "알림만 보내면 202",
@@ -406,7 +406,7 @@
   {
    "check": "API 키로 tools/list",
    "ok": true,
-   "detail": "lwk_4c4b94…"
+   "detail": "lwk_052d78…"
   },
   {
    "check": "wiki_status {}",
@@ -471,12 +471,12 @@
   {
    "check": "wiki_forensic {\"expected_docs\": [\"ISSUE-2001\"]}",
    "ok": true,
-   "detail": "forensic expect — request #4146  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
+   "detail": "forensic expect — request #4173  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
   },
   {
    "check": "wiki_analysis {\"focus\": \"speed\"}",
    "ok": true,
-   "detail": "# 질의 상세 분석 리포트 — request #4146  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 22:41:24 · ru"
+   "detail": "# 질의 상세 분석 리포트 — request #4173  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 23:42:03 · ru"
   },
   {
    "check": "wiki_sources {}",
@@ -496,12 +496,12 @@
   {
    "check": "wiki_requests {\"limit\": 5}",
    "ok": true,
-   "detail": "[  {   \"id\": 4147,   \"ts\": 1790257284.278706,   \"kind\": \"search\",   \"ms\": 6.72,   \"summary\": \"relate"
+   "detail": "[  {   \"id\": 4174,   \"ts\": 1790260923.290588,   \"kind\": \"search\",   \"ms\": 6.87,   \"summary\": \"relate"
   },
   {
    "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
    "ok": true,
-   "detail": "[  {   \"id\": 4146,   \"ts\": 1790257284.0850055,   \"kind\": \"query\",   \"ms\": 102.8,   \"summary\": \"ISSUE"
+   "detail": "[  {   \"id\": 4173,   \"ts\": 1790260923.1112802,   \"kind\": \"query\",   \"ms\": 103.27,   \"summary\": \"ISSU"
   },
   {
    "check": "wiki_rerun {}",
@@ -511,7 +511,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_xfbf13tw\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -521,7 +521,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_xfbf13tw\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
@@ -554,14 +554,14 @@
    "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=10 verdict=sufficient"
   },
   {
-   "check": "wiki_rerun (답변부터, request_id=4150)",
+   "check": "wiki_rerun (답변부터, request_id=4177)",
    "ok": true,
-   "detail": "{  \"rerun_of\": 4150,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
+   "detail": "{  \"rerun_of\": 4177,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
   },
   {
    "check": "wiki_requests (한 건 상세)",
    "ok": true,
-   "detail": "{  \"id\": 4150,  \"ts\": 1790257285.228332,  \"kind\": \"query\",  \"ms\": 48.64,  \"query\": \"ISSUE-2001 의 원인\""
+   "detail": "{  \"id\": 4177,  \"ts\": 1790260925.6923175,  \"kind\": \"query\",  \"ms\": 53.66,  \"query\": \"ISSUE-2001 의 원인"
   },
   {
    "check": "wiki_sweep (last · rrf_k=[10,60] → record/compare)",
@@ -576,7 +576,7 @@
   {
    "check": "wiki_feedback (query_id 연계)",
    "ok": true,
-   "detail": "{\"query_id\": 4150, \"feedback\": 1, \"proposals\": [], \"episode\": 857}"
+   "detail": "{\"query_id\": 4177, \"feedback\": 1, \"proposals\": [], \"episode\": 869}"
   },
   {
    "check": "wiki_query {}",

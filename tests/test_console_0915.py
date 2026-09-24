@@ -5,9 +5,12 @@
 `UnicodeEncodeError: 'cp949' codec can't encode character '\\u2714'` 로 CLI 가 중간에 죽고, 한글도 깨져 나왔다.
 여기서는 좁은 인코딩(PYTHONIOENCODING=ascii/cp949)을 강제한 자식 프로세스로 실제 CLI 를 돌려 회귀를 막는다.
 """
+import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,14 +19,38 @@ sys.path.insert(0, ROOT)
 from llmwiki import console as C  # noqa: E402
 
 SYMBOLS = "한글 ⏳ ✔ ✘ · → ⚠ ■ ▶"
+# 자식 프로세스는 부모의 `config.set_path_fallback` 을 물려받지 못한다 — 로그·원장은 환경변수로 **반드시** 격리한다 (2026-09-24).
+# 예전에는 `query` 가 프로젝트의 실제 config.json·색인으로 돌아 실사용 requests 표에 행을 남기고(실행마다 1건) 로그를 섞었다.
+_TMP = tempfile.mkdtemp(prefix="lwconsole_")
+_ISO_ENV = {"LLMWIKI_LOGS_DIR_PATH": os.path.join(_TMP, "logs"), "LLMWIKI_LEDGER_DIR_PATH": os.path.join(_TMP, "ledger")}
 
 
 def _run(argv, env_extra=None, timeout=180):
     env = dict(os.environ)
     env.pop("PYTHONIOENCODING", None)
+    env.update(_ISO_ENV)
     env.update(env_extra or {})
     p = subprocess.run([sys.executable, "-m", "llmwiki"] + argv, cwd=ROOT, env=env, capture_output=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
+
+
+def _isolated_config():
+    """질의를 실제로 돌리는 테스트용: 임시 폴더에 문서 1개 · mock LLM · hash 임베더 · 임시 data/wiki 를 가리키는 config."""
+    d = os.path.join(_TMP, "iso")
+    if os.path.isdir(d):
+        return os.path.join(d, "config.json")
+    os.makedirs(os.path.join(d, "corpus"))
+    with open(os.path.join(d, "corpus", "ISSUE-2001.md"), "w", encoding="utf-8") as f:
+        f.write("---\nid: ISSUE-2001\ndoc_type: issue\ntitle: 인터럽트 지연\n---\n# ISSUE-2001\n## 현상\n인터럽트 지연이 3ms 를 넘는다.\n## 원인\nDMA 큐 오버런.\n")
+    with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg.update({"data_dir": os.path.join(d, "data"), "wiki_dir": os.path.join(d, "wiki"), "corpus_dirs": [os.path.join(d, "corpus")],
+                "llm_provider": "mock", "llm_roles": {}, "embed_provider": "hash", "embed_model": "", "embed_dim": 256})
+    cfg["toggles"] = dict(cfg.get("toggles") or {}, auto_build=False, precompute=False, query_cache=False, health_check=False, wiki_pages=False)
+    path = os.path.join(d, "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+    return path
 
 
 class ConsoleEncodingTest(unittest.TestCase):
@@ -52,7 +79,10 @@ class ConsoleEncodingTest(unittest.TestCase):
 
     def test_cli_progress_symbols_on_stderr(self):
         """진행 표시(⏳)는 stderr 로 나간다 — 좁은 인코딩에서도 죽지 않아야 한다."""
-        code, out, err = _run(["query", "ISSUE-2001 원인", "--no-log"], {"PYTHONIOENCODING": "ascii", "LLMWIKI_LLM_PROVIDER": "mock"})
+        cfg = _isolated_config()
+        code_b, out_b, err_b = _run(["build"], {"LLMWIKI_CONFIG_PATH": cfg, "PYTHONIOENCODING": "ascii"})
+        self.assertEqual(code_b, 0, err_b[-400:])
+        code, out, err = _run(["query", "ISSUE-2001 원인", "--no-log"], {"PYTHONIOENCODING": "ascii", "LLMWIKI_LLM_PROVIDER": "mock", "LLMWIKI_CONFIG_PATH": cfg})
         self.assertEqual(code, 0, err[-400:])
         self.assertNotIn(b"UnicodeEncodeError", out + err)
         out.decode("utf-8")
@@ -110,6 +140,10 @@ class ConsoleEncodingTest(unittest.TestCase):
                 src = f.read()
             if any(ord(ch) > 127 for ch in src):
                 self.assertIn("chcp 65001", src, "%s 에 한글이 있으면 chcp 65001 이 필요하다" % rel)
+
+
+def tearDownModule():
+    shutil.rmtree(_TMP, ignore_errors=True)
 
 
 if __name__ == "__main__":

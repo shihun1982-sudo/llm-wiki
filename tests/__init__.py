@@ -15,3 +15,12 @@ import tempfile
 
 os.environ.setdefault("LLMWIKI_LEDGER_DIR_PATH",
                       os.path.join(tempfile.gettempdir(), "llmwiki_test_ledger"))
+# 로그도 같은 이유로 격리한다 (2026-09-24). 62개 테스트 모듈 중 18개만 LLMWIKI_LOGS_DIR_PATH 를 지정해서,
+# 한 번 돌릴 때마다 mock 질의 로그 약 6,800줄이 프로젝트의 logs/llmwiki.log·error.log·query.log 에 섞여 들어갔다.
+# **주의**: `python -m unittest discover -s tests` 는 이 __init__ 을 임포트하지 않는다(시작 폴더 = 최상위). 그 경로는
+# 이름순으로 가장 먼저 임포트되는 tests/test_00_isolate.py 가 같은 설정을 건다 — 두 파일을 함께 고친다.
+os.environ.setdefault("LLMWIKI_LOGS_DIR_PATH",
+                      os.path.join(tempfile.gettempdir(), "llmwiki_test_logs"))
+# 환경변수는 개별 테스트의 tearDown(`os.environ.pop`)에 지워진다 — pop 에 지워지지 않는 대체 기본값도 건다 (test_00_isolate.py 와 같다)
+from llmwiki.config import set_path_fallback  # noqa: E402
+set_path_fallback("logs_dir", os.path.join(tempfile.gettempdir(), "llmwiki_test_logs"))

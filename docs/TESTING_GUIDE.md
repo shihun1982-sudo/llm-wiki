@@ -4,7 +4,7 @@
 > [VERIFICATION.md](VERIFICATION.md), 하네스 각각의 설명은 [tools/verify/README.md](../tools/verify/README.md).
 > 모든 테스트·하네스는 **격리 임시 환경**(임시 폴더 + `LLMWIKI_*_PATH`)에서 돌아 실제 색인·설정·로그를 건드리지 않는다.
 >
-> 지금 규모: 단위 테스트 <!--live:tests-->823개 · 검증 하네스 <!--live:harness-->30종.
+> 지금 규모: 단위 테스트 <!--live:tests-->826개 · 검증 하네스 <!--live:harness-->30종.
 > **테스트를 새로 쓸 거면 §2.5 를 먼저 읽는다** — 진짜 폴더를 건드리지 않는 법과, 그 테스트가 정말 무언가를 지키는지 확인하는 법.
 
 ## 0. 세 단계 규칙
@@ -28,7 +28,7 @@ Windows PowerShell 에서 한글 출력이 깨지면 `$env:PYTHONIOENCODING='utf
 | **프로바이더 · 앙상블 · 카탈로그** `providers.py` `models_catalog.py` `prompts.py` (+ `answer.summarize_ensemble`) | `tests.test_providers` `tests.test_features_0914`(LlmRetryTest) · **`tests.test_ensemble_visible`**(앙상블로 돌았다는 것이 trace 에 보이는가 · 단일 호출에는 안 붙는가) · **`tests.test_ensemble_fallback`**(실패 시 역할 모델로 되돌리기 15건 — 설정 계층 · 실제 호출 · `merge`/`rerun` 차이 · 정상일 때 안 불리는지) | `verify_cli.py`(`models test --catalog`, `models ensemble`) · `verify_web.py`(`/api/models/test_catalog`) · **`verify_ensemble_ui.py`**(편집기를 실제로 클릭 — 멤버 켜기·폴백 on/off·모드 왕복) · `verify_tri_surface.py` §2.8(폴백 설정이 세 창구에서 같은가) · 실환경: `python -m llmwiki models test --live` | [ENSEMBLE.md](ENSEMBLE.md) §2.3 · §2.35 · §2.4 · [BRINGUP_GUIDE.md §4](BRINGUP_GUIDE.md) |
 | **headless 에이전트** `headless.py` `agents.json` | `tests.test_headless_switch` `tests.test_providers`(-k headless) `tests.test_console_0915` | 목업: `python -m llmwiki.headless --mock --stall 30` · 실환경 `models test --live` | [HEADLESS.md](HEADLESS.md) |
 | **스윕 · 재실행** `sweep.py` `rerun.py` | `tests.test_sweep` `tests.test_rerun_0917` | `verify_cli.py`(sweep run/list/show/compare) · `verify_web.py`(`/api/sweep`) · `verify_rerun_ui.py`(브라우저) | [SWEEP.md](SWEEP.md) · [RERUN.md](RERUN.md) |
-| **그래프** `graph_rules.py` `graph_build.py` `graph_profile.py` | `tests.test_graph_profile` `tests.test_phase2` `tests.test_pipeline` | `verify_cli.py`(`graph profile`, `build graph`) · `verify_web.py`(`/api/graph/profile`) | [GRAPH_PROFILE.md](GRAPH_PROFILE.md) |
+| **그래프** `graph_rules.py`(매처 `matching`) `graph_build.py` `graph_profile.py` `graph_findings.py`(소견) `pipeline.graph_export/community_export` | `tests.test_graph_profile` **`tests.test_graph_findings_0924`**(매처 경계·소견·export 필터·무리 세 창구·HTTP) `tests.test_graph_rules_schema` `tests.test_phase2` | `verify_cli.py`(`graph profile`, `graph community`, `build graph`) · `verify_web.py`(`/api/graph` `/api/community` `/api/graph/profile`) · `verify_tri_surface.py` §7b(무리 상세 세 창구) · `verify_buttons.py`(그래프·진단 탭 버튼) | [GRAPH_PROFILE.md](GRAPH_PROFILE.md) · [GRAPH_RULES.md §1.1](GRAPH_RULES.md) · [WEB_UI.md §0.69](WEB_UI.md) |
 | **빌드 · 색인 · 저장소** `pipeline.py`(build) `store.py` `corpus.py` `embed_run.py` | `tests.test_pipeline`(FtsRebuildTest 포함) `tests.test_phase0` `tests.test_phase2` `tests.test_scale_profile` | `verify_cli.py`(build/verify/채널 빌드) · `bench_fts.py`(리빌드 속도 회귀) | [SYSTEM_ARCHITECTURE.md §4](SYSTEM_ARCHITECTURE.md) |
 | **자가진화 · 메모리 · 포렌식** `evolve.py` `memory.py` `forensic.py` `analysis.py` | `tests.test_phase3_5` `tests.test_phase6` `tests.test_analysis` | `verify_cli.py`(evolve/memory/forensic/analyze) | [FORENSIC.md](FORENSIC.md) · [ANALYSIS_MODE.md](ANALYSIS_MODE.md) |
 | **인증 · 권한 · 감사** `auth.py` `security.json` | `tests.test_auth` `tests.test_overrides_guard` | `verify_web.py`(게스트/viewer/class1/admin/API 키/CSRF) · `verify_security_ui.py`(브라우저) | [SECURITY.md](SECURITY.md) |
@@ -85,6 +85,16 @@ os.environ["LLMWIKI_LOGS_DIR_PATH"] = os.path.join(tmp, "logs")   # setUpClass �
 ...
 os.environ.pop("LLMWIKI_LOGS_DIR_PATH", None)                      # tearDownClass 에서 되돌린다
 ```
+
+**묶음 전체의 기본값** (2026-09-24): 개별 테스트가 지정하지 않아도 `LLMWIKI_LOGS_DIR_PATH`(로그)와 `LLMWIKI_LEDGER_DIR_PATH`(요청 원장)가
+임시 폴더로 걸린다 — 62개 모듈 중 18개만 로그 폴더를 격리해서 한 번 돌릴 때마다 mock 질의 로그 약 6,800줄이 실사용 `logs/` 에
+섞이던 것을 막는다(CODE_REVIEW_0924 §2.13). 두 곳에 같은 코드가 있다: `tests/__init__.py`(패키지로 부를 때 —
+`python -m unittest tests.test_x`)와 **`tests/test_00_isolate.py`**(discover 모드 — `discover -s tests` 는 시작 폴더의 `__init__` 을
+임포트하지 않고 모듈을 이름순으로 임포트하므로 `test_00_…` 이 가장 먼저 걸린다). 개별 테스트의 지정이 우선한다.
+환경변수만으로는 부족하다 — 17개 모듈이 tearDown 에서 `os.environ.pop("LLMWIKI_LOGS_DIR_PATH")` 로 지우면 묶음 기본값도 사라진다.
+그래서 두 파일은 `llmwiki.config.set_path_fallback("logs_dir", <임시>)` 도 부른다: `path_for()` 가 환경변수가 없을 때 쓰는
+**대체 기본값**(환경변수보다 약하고 코드 기본값보다 세다)이라 pop 에 지워지지 않는다. 운영 코드는 이 표를 채우지 않는다.
+새 테스트가 환경변수를 지울 때는 `pop` 대신 **이전 값을 복구**하는 편이 낫다.
 
 같은 이유로 `config.CONFIG_PATH` 를 몽키패치하는 대신 **`LLMWIKI_CONFIG_PATH` 환경변수**를 쓴다.
 경로 해석을 한 곳으로 모으는 리팩터링이 몽키패치를 조용히 무력화해 `config.json` 이 두 번 깨졌다

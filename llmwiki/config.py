@@ -62,6 +62,21 @@ def conf_dir() -> str:
     return d if os.path.isabs(d) else os.path.normpath(os.path.join(ROOT, d))
 
 
+#: 테스트 묶음이 거는 **경로 대체 기본값** — 환경변수보다 약하고 `_PATH_DEFAULTS` 보다 세다 (2026-09-24, CODE_REVIEW_0924 §2.13).
+#: 개별 테스트가 자기 임시 폴더를 환경변수로 걸었다가 tearDown 에서 `os.environ.pop` 으로 지우면(17개 모듈이 그렇게 한다),
+#: 그 뒤의 테스트는 실사용 logs/ 로 떨어졌다 — 묶음 전체의 환경변수 기본값도 같이 지워지기 때문이다. 이 표는 pop 에 지워지지 않는다.
+#: 운영 코드는 이 표를 채우지 않는다 (tests/test_00_isolate.py · tests/__init__.py 만).
+_PATH_FALLBACKS: Dict[str, str] = {}
+
+
+def set_path_fallback(name: str, path: str) -> None:
+    """`path_for(name)` 이 환경변수가 없을 때 쓸 경로를 건다 (테스트 격리용). 빈 값이면 해제."""
+    if path:
+        _PATH_FALLBACKS[name] = path
+    else:
+        _PATH_FALLBACKS.pop(name, None)
+
+
 def path_for(name: str) -> str:
     """이름으로 파일/폴더 경로 해석.
 
@@ -70,6 +85,9 @@ def path_for(name: str) -> str:
     conf 폴더에 **없는** 파일은 기본 위치를 그대로 쓰므로, 일부만 모아 두는 것도 된다.
     """
     env = os.environ.get("LLMWIKI_%s_PATH" % name.upper()) or os.environ.get(_PATH_ENV_ALIASES.get(name, ""), "")
+    if not env and name in _PATH_FALLBACKS:
+        fb = _PATH_FALLBACKS[name]
+        return fb if os.path.isabs(fb) else os.path.normpath(os.path.join(ROOT, fb))
     if not env and name in CONF_DIR_NAMES:
         d = conf_dir()
         if d:

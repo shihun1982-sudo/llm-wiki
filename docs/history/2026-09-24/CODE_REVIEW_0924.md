@@ -3,7 +3,7 @@
 > **이 문서의 지위**: 2026-09-23 회차(동시 질의 DB 잠금 · 종류별 한도 · 요청 원장)가 **의도대로 구현됐는지,
 > 부수 피해는 없는지**를 코드와 실측으로 되짚은 기록이다. 계획과 설계 근거는
 > [IMPLEMENTATION_PLAN_0923.md](../2026-09-23/IMPLEMENTATION_PLAN_0923.md), 운영·포팅 절차는
-> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 14건과 그 처리**를 남긴다(1~6 은 첫 리뷰, 7~9 는 세 창구 동시 부하 시험을 만들면서, 10 은 다른 콘솔 인코딩에서 전체 검증을 되풀이하면서, 11~13 은 멍키 테스트의 결과를 의심하고 서버 안을 들여다보면서, 14 는 하네스 전수 실행에서 드러난 것).
+> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 15건과 그 처리**를 남긴다(1~6 은 첫 리뷰, 7~9 는 세 창구 동시 부하 시험을 만들면서, 10 은 다른 콘솔 인코딩에서 전체 검증을 되풀이하면서, 11~13 은 멍키 테스트의 결과를 의심하고 서버 안을 들여다보면서, 14 는 하네스 전수 실행에서, 15 는 옛 스냅샷 폴더 삭제 뒤 동작 검토에서 드러난 것).
 
 ---
 
@@ -20,6 +20,7 @@
 | 7 | **여러 프로세스가 같은 원장 파일에 쓰면 줄이 깨진다** — Windows 의 `O_APPEND` 는 프로세스 간 원자적이지 않다 | 기능의 목적을 정면으로 깨는 결함 | 파일 잠금(`msvcrt.locking`/`fcntl.flock`) + 깨진 줄 카운터 + 회귀 테스트 |
 | 8 | **짧게 살다 가는 프로세스(CLI)가 종료 시 버퍼를 버렸다** | 같은 결함의 다른 얼굴 | `atexit` 으로 모든 프로세스에서 비우고, 종료 중에는 남은 것을 한꺼번에 쓴다 |
 | 9 | 세 창구 부하 시험 자체가 **없었다** | 검증 공백 | `verify_three_surface_load.py` 신설 (30명이 Web·CLI·MCP 로 동시에) |
+| 15 | **단위 테스트가 실사용 `logs/` 에 회당 약 6,800줄을 쓰고, 한 테스트는 실사용 `requests` 표에 행을 남긴다** — 62개 모듈 중 18개만 로그 폴더를 격리했고, `discover -s tests` 는 `tests/__init__.py` 를 임포트하지 않으며, 17개 모듈의 tearDown 이 환경변수를 `pop` 으로 지워 묶음 기본값까지 없앴고, 콘솔 인코딩 테스트는 CLI `query` 를 실제 config·색인으로 돌렸다(결함 2 와 같은 종류) | 관측 데이터 신뢰성 | 이름순 첫 모듈 `tests/test_00_isolate.py` + `config.set_path_fallback`(pop 에 지워지지 않는 대체 기본값) · 콘솔 테스트를 임시 config 로 · 실측: 로그·원장·requests 전후 변화 0 |
 | 14 | **admin 질의 이력의 IP·에이전트가 새 행부터 빈다** — 09-23 에 질의 로그 원천을 `requests` 로 합쳤는데 INSERT 가 role·via·ip·agent 를 쓰지 않았다(옛 행 마이그레이션만 채움) | 09-23 회차의 회귀 | `store.log_request` 가 진행 레지스트리의 client 에서 네 값을 함께 기록 · 회귀 테스트 2건 · `verify_web` 379/379 |
 | 13 | **`/api/wiki/page` 가 이상한 이름에 500 을 내고, GET 은 `..` 로 위키 폴더 밖 .md 를 읽는다** — 멍키가 이름 `?` 를 보내자 `OSError: Invalid argument` | 입력 검증 누락 + 경로 탈출 | 이름 검증 함수 하나를 GET·POST 양쪽에 배선(경로 구분자·NUL·제어 문자·`<>:"|?*`·`.` 시작·예약 이름·120자 초과 → 400) · content 는 문자열만 · 회귀 테스트 5건 |
 | 12 | **stderr 가 막히면 서버 전체가 멎는다** — 멍키 하네스가 서버를 `stdout=PIPE` 로 띄우고 읽지 않았고, Web 콘솔 CLI 의 argparse 오류가 서버 stderr 로 나갔다. 파이프가 찬 순간 그 쓰기가 영원히 막혔고 그 스레드가 **배타 잠금**을 쥐고 있었다(실측 28분, 뒤에 36건 대기) | 검증 환경 결함 + 제품 결함(콘솔 오류가 응답에 없음) | 하네스 4개가 파이프를 스레드로 비움 · `run_captured` 가 stderr 도 응답에 담음 · 회귀 테스트 3건 · 기동 문서에 "파이프를 읽지 않고 띄우지 말 것" |
@@ -61,6 +62,14 @@ verify_tri_surface       RESULT OK  verify_mcp 154/154   verify_collab_many 20/2
 verify_llm_switch        RESULT OK  verify_buttons RESULT OK  verify_settings_sync RESULT OK  verify_web 379/379 (§2.12 수정 뒤)
 verify_ui_wiring         RESULT OK (09-23 잔여 3건 정리 뒤)  verify_stage_align RESULT OK  verify_surface_align RESULT OK  verify_docs RESULT OK
 python -m unittest discover -s tests   Ran 803 tests — OK
+```
+
+**결함 15 처리 뒤 격리 실측** (2026-09-25 00:0x, `discover -s tests` 826건 OK 전후로 실사용 파일 비교):
+
+```
+logs/llmwiki.log  20430 → 20430   error.log 7050 → 7050   query.log 13752 → 13752
+data/ledger        3046 → 3046 줄   requests 표 최대 id 4165 → 4165
+(수정 전 같은 실행: llmwiki +6,796 · query +4,572 · error +94 · requests +1)
 ```
 
 ---
@@ -320,6 +329,34 @@ argparse 가 "invalid choice: nonexistent (choose from build, users, …)" 를 *
 파일 이름 규칙으로 검사한다: 문자열 · 1~120자 · 경로 구분자·NUL·제어 문자·Windows 금지 문자 없음 · `.` 시작 아님 ·
 끝이 공백/점 아님 · CON/PRN/AUX/NUL/COMn/LPTn 아님. `Handler._wiki_page_name()` 하나를 GET·POST 가 같이 쓴다.
 `tests/test_wiki_page_name_0924.py` 는 검증 함수와 **실제 핸들러**(GET·POST 가 400 · `..` 탈출 불가 · 정상 이름 왕복) 를 본다.
+
+### 2.13 테스트가 실사용 로그를 오염시켰다 — 결함 2 의 로그판
+
+사용자가 작업 폴더 안의 중첩된 옛 스냅샷 폴더(09-22 복사본, 713MB)를 지운 뒤 "동작에 문제 없는지" 를 검토하다 나왔다.
+삭제 자체는 문제가 없었다(파일 단위 비교 0건 차이, 참조 0건, 정적 검사·health·단위 테스트·하네스 4종 전부 통과).
+그런데 검토 중 `logs/llmwiki.log` 에 23:43:45~47 세 초 동안 **984줄**이 mock 프로바이더로 찍힌 것을 봤다 — 실서버는 ollama 를 쓰므로
+이것은 그 시각에 돌던 **단위 테스트**의 흔적이다. 62개 테스트 모듈 중 `LLMWIKI_LOGS_DIR_PATH` 를 지정한 것은 18개뿐이었다.
+결함 2(원장 오염)를 고칠 때 "전역 상태를 쓰는 기능은 테스트 격리를 기능의 일부로" 라고 적어 두고 로그는 빠뜨린 것이다.
+먼저 `tests/__init__.py` 에 원장과 같은 방식으로 한 줄을 더했다 — 그런데 전체 테스트 뒤 로그가 **여전히 6,795줄** 늘었다.
+원인: `python -m unittest discover -s tests` 는 시작 폴더가 곧 최상위라 **패키지 `__init__` 을 임포트하지 않는다**
+(실측: discover 뒤 `'tests' in sys.modules` 가 False). 즉 결함 2 때 넣은 원장 격리도 이 실행 방식에서는 `__init__` 이 아니라
+개별 테스트 3곳의 수정이 막고 있었던 것이다. 그래서 discover 가 **가장 먼저 임포트하는 모듈** `tests/test_00_isolate.py` 에
+같은 환경변수 설정을 두었다(모듈은 이름순으로 임포트되고, 파이프라인은 fixture 에서 만들어지므로 그 전에 걸린다).
+패키지로 부르는 경우(`python -m unittest tests.test_x`)는 `__init__` 이 같은 일을 한다.
+
+그래도 로그가 **또 6,796줄** 늘었다. 세 번째 원인: 17개 모듈이 setUpClass 에서 자기 임시 폴더를 환경변수로 걸고
+tearDownClass 에서 `os.environ.pop("LLMWIKI_LOGS_DIR_PATH")` 로 **지운다** — 묶음 전체의 기본값도 그때 함께 사라져
+그 뒤의 모듈이 실사용 logs/ 로 떨어진 것이다. 환경변수 하나로는 "누가 지워도 남는 기본값" 을 만들 수 없다.
+그래서 `config.path_for()` 에 **대체 기본값 표**(`set_path_fallback(name, path)` — 환경변수보다 약하고 코드 기본값보다 세다)를
+두고 `test_00_isolate.py`·`__init__.py` 가 `logs_dir` 을 건다. 운영 코드는 이 표를 채우지 않는다.
+이 모듈의 테스트 3개가 "경로가 프로젝트 밖을 가리키는가 · `path_for("logs_dir")` 가 환경변수를 따르는가 ·
+**환경변수를 지워도** 실사용 logs/ 로 떨어지지 않는가" 를 확인한다.
+
+그래도 33줄이 남았고, 그것이 가장 나쁜 것이었다: `tests/test_console_0915.py` 의 진행 표시 인코딩 테스트가 CLI `query` 를
+**프로젝트의 실제 config.json·색인**으로 돌려(자식 프로세스는 부모의 대체 기본값을 물려받지 못한다) 실사용 `requests` 표에
+**실행마다 행을 1건씩** 남기고 있었다(`ISSUE-2001 원인`, origin cli — 지난 1시간에 4건). 그 테스트에 임시 config(문서 1개 · mock · hash
+임베더 · 임시 data/wiki)를 만들어 `build` → `query` 로 바꾸고, 그 파일의 모든 자식 프로세스에 로그·원장 환경변수를 강제했다.
+확인: 전체 테스트 전후로 `logs/llmwiki.log`·`error.log`·`query.log`·원장 줄 수와 `requests` 의 최대 id 가 같다(§0 재검증 표).
 
 ### 2.12 admin 질의 이력의 IP·에이전트가 비었다 — 09-23 통합의 회귀
 

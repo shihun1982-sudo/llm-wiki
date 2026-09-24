@@ -673,7 +673,7 @@ python tools\verify\verify_docs.py
   빠른 검색이 느린 질의 뒤에 갇힙니다. 반드시 더 작게 두세요.
 - 점검 모드를 켤 때 maintenance_allow_roles 에서 admin 을 빼면 **관리 API 자신도 막혀**
   설정으로 되돌릴 수 없게 됩니다. 그때는 server.json 을 직접 고치고 서버를 다시 띄우세요.
-- 테스트를 돌리기 전에 LLMWIKI_LEDGER_DIR_PATH 가 임시 폴더를 가리키는지 확인하세요.
+- 테스트를 돌리기 전에 LLMWIKI_LEDGER_DIR_PATH 와 LLMWIKI_LOGS_DIR_PATH 가 임시 폴더를 가리키는지 확인하세요 (tests/test_00_isolate.py 와 tests/__init__.py 가 둘 다 기본으로 겁니다).
   그러지 않으면 단위 테스트가 실사용 원장에 수백 줄을 섞어 넣습니다.
 - data/ledger 는 그 환경의 기록입니다. 다른 환경에서 복사해 오지 마세요.
 ```
