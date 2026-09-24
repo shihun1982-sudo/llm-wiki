@@ -85,3 +85,12 @@ python -m unittest tests.test_pipeline.FtsRebuildTest  :: 4개 — 전체/증분
   `try/except` 로 둔다 (지금은 전부 그렇게 돼 있다).
 - 자식 프로세스를 두는 목업(`llmwiki.headless --mock` · `llmwiki.mcp_client --mock-server`)은 진입점에서 표준 입출력을 UTF-8 로
   고정한다(`_utf8_stdio`). 부모는 언제나 UTF-8 로 읽으므로, 목업이 로케일로 쓰면 한글이 U+FFFD 가 된다.
+
+**하네스는 응답 본문을 버리지 않는다** (2026-09-24, CODE_REVIEW_0924 §2.9). `verify_monkey.py` 의 `req()` 가 200 응답에
+빈 문자열을 돌려줘서 `drain()`·`capacity_note()` 가 언제나 빈 활동 목록을 보고 "대기열 비움" 으로 판정했다 — 실제로는
+끊긴 클라이언트의 요청 128건이 30분짜리 대기열에 남아 있었고, 그 결함(대기 중 연결 끊김 미감지)은 하네스가 눈을 감은 만큼
+숨어 있었다. 상태 코드만 보고 OK 를 내는 검증은 검증이 아니다.
+
+**서버를 `stdout=PIPE` 로 띄웠으면 반드시 읽는다** (2026-09-24, CODE_REVIEW_0924 §2.10). 읽지 않으면 버퍼가 차는 순간
+서버의 stderr 쓰기가 영원히 막히고, 그 스레드가 배타 잠금을 쥐고 있으면 서버 전체가 멎는다(멍키 테스트에서 28분).
+파이프가 필요 없으면 `DEVNULL`, 필요하면 Popen 직후 `threading.Thread(target=lambda: [None for _ in proc.stdout], daemon=True).start()`.

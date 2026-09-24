@@ -963,7 +963,7 @@
       openLedDetail(tr.dataset.ledTok, tr);
     });
     $$('#led-table [data-led-req]').forEach((a) => a.onclick = (e) => { e.preventDefault(); switchTab('requests'); LW.openRequest(+a.dataset.ledReq); });
-    $$('#led-table [data-led-run]').forEach((a) => a.onclick = (e) => { e.preventDefault(); switchTab('logs'); const f = $('#log-grep'); if (f) { f.value = a.dataset.ledRun; loaders.logs(); } });
+    $$('#led-table [data-led-run]').forEach((a) => a.onclick = (e) => { e.preventDefault(); switchTab('logs'); const f = $('#log-run'); if (f) { f.value = a.dataset.ledRun; loaders.logs(); } });
   }
 
   // 상세는 **누른 줄 바로 아래**에 편다. 목록이 100줄이면 표 아래의 고정 패널은 화면 밖이라
@@ -1088,7 +1088,7 @@
     scope.querySelectorAll('[data-led-go]').forEach((b) => b.onclick = () => {
       const w = b.dataset.ledGo;
       if (w === 'req') { switchTab('requests'); LW.openRequest(j.request_id); }
-      else if (w === 'log') { switchTab('logs'); const f = $('#log-grep'); if (f) { f.value = j.run_id; loaders.logs(); } }
+      else if (w === 'log') { switchTab('logs'); const f = $('#log-run'); if (f) { f.value = j.run_id; loaders.logs(); } }
       else if (w === 'srv') { switchTab('server'); }
       else { switchTab('activity'); }
     });

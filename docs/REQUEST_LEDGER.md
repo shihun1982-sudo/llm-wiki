@@ -207,6 +207,7 @@ python -m llmwiki maintenance trim_query_log             :: 실행
   "max_parallel_per_user": 3,      // 사용자당 동시 수는 **여기 한 곳**에서 정한다
   "queue_max": 128,                // 64 → 128 (질의가 100초 가까이 걸리는 환경에서 64는 금방 찬다)
   "queue_timeout_s": 1800,         // 30분
+  "drop_disconnected_waiters": true, // 대기 중 클라이언트가 끊으면 자리를 비운다 (§4.5, 2026-09-24)
   "classes": {
     "query":  {"max_parallel": 6, "queue_max": 96, "queue_timeout_s": 1800},
     "search": {"max_parallel": 4, "max_parallel_per_user": 3, "queue_max": 32, "queue_timeout_s": 30},
@@ -244,6 +245,25 @@ python -m llmwiki maintenance trim_query_log             :: 실행
 테스트할 때 한도가 답답하면 **로그인**하는 것이 정답이다.
 
 ---
+
+### 4.5 대기 중 연결 끊김 감지 (`concurrency.drop_disconnected_waiters`, 2026-09-24)
+
+**문제**: 멍키 테스트(1,200건 폭격, 166건은 클라이언트가 중간에 끊음) 직후 정상 질의가 **5분 넘게** 503 `queue_full`(128/128)
+을 받았다. 끊긴 클라이언트의 요청이 `queue_timeout_s`(질의 1800초)까지 대기열을 차지했기 때문이다 — 대기열을 30분으로
+늘린 결정(§4.2)이 이 결함과 만나면 **폭주 한 번 뒤 30분 동안 산 사용자가 거절**된다. 이전 멍키 하네스는 200 응답의 본문을
+버려서 "대기열 비움" 을 언제나 OK 로 판정했고, 그래서 지금까지 드러나지 않았다([CODE_REVIEW_0924.md](history/2026-09-24/CODE_REVIEW_0924.md) §2.9).
+
+**고친 방식**: HTTP 핸들러가 티켓에 `alive` 콜백(소켓이 읽을 수 있는데 EOF 면 끊긴 것)을 넘기고, 대기열에서 기다리는
+동안 **1초마다** 묻는다. 끊겼으면 자리를 비우고 원장에 `cancelled` + "클라이언트가 연결을 끊었습니다" 로 남긴다.
+`server stats` 의 `counters.abandoned_queue` 가 그 수다. TLS 소켓처럼 확인할 수 없는 경우는 '모른다' 로 두어 끊지 않는다.
+CLI·MCP stdio·잡 러너는 소켓이 없으므로 대상이 아니다(비동기 질의 잡은 브라우저가 닫혀도 끝까지 돌고 결과가 저장된다 — 의도).
+
+| 키 | 기본값 | 바꾸는 법 |
+|---|---|---|
+| `concurrency.drop_disconnected_waiters` | `true` | `server limits set concurrency.drop_disconnected_waiters=false` · `server.json` 직접 편집 · Web 관리 › 서버 모니터 › 한도 |
+
+**확인**: `python -m unittest tests.test_abandoned_waiters_0924` (9개) · `python tools/verify/verify_monkey.py` 의
+`사후 확인: … 정상 질의 OK` 와 `사후 정리: 대기열 비움` 이 **실제 활동 목록**을 근거로 나온다.
 
 ## 5. 변경 6 — 요청 원장
 
@@ -485,6 +505,8 @@ python tools\verify\verify_request_ledger.py --capacity     :: LLM 포화점
 :: 30명이 **Web·CLI·MCP 로 동시에** 쓸 때 (사내 환경에 올리기 전 반드시 한 번)
 python tools\verify\verify_three_surface_load.py            :: 기본 30명 (Web 18 · MCP 6 · CLI 6)
 python tools\verify\verify_three_surface_load.py --users 50 :: 더 세게
+python tools\verify\verify_monkey.py                        :: 무작위 입력 폭격 1,200건 (Web·MCP·CLI) — 500 0 · 폭격 뒤 정상 질의 OK 가 기준
+python tools\verify\verify_soak.py                          :: 60초 정상 요청 혼합 부하 (세 창구) — 5xx 0 · 빌드 중 질의 응답
 
 :: 원장이 기존 세 화면의 정보를 하나도 잃지 않았는지 항목별 대조
 python tools\verify\verify_ledger_merge.py
@@ -536,6 +558,9 @@ python tools\verify\verify_docs.py
 | 요청 기록이 전부 사라졌다 | `reset logs` | 원장은 삭제 대상이 아니다(§5.4). `ledger list` 로 확인 |
 | **테스트가 원장을 오염시킨다** | `get_manager()` 가 **프로세스당 하나**를 만들어 두고 재사용하므로, `data_dir` 없이 먼저 만든 테스트 하나가 그 프로세스의 나머지 전부를 프로젝트 원장으로 보낸다 | 묶음 전체에 `LLMWIKI_LEDGER_DIR_PATH` 를 지정한다(이 저장소는 `tests/__init__.py`). 개별 테스트는 `ledger.dir` 을 임시 폴더로. 회귀 시험: `python -m unittest tests.test_ledger_isolation` |
 | 완료된 질의인데 📄 프로파일 링크가 없다 | 그 경로가 `request_id` 를 원장에 싣지 않았다 | 웹 비동기 잡은 `_start_job` 이, CLI 는 `progress.set_result()` 가 싣는다. 2026-09-24 이전에 남은 줄은 비어 있을 수 있다(그때의 코드가 싣지 않았다) |
+| **폭주(부하 시험·장애) 뒤에 한참 동안 503 `queue_full` 이 계속된다** — `/api/activity` 에는 대기 중인 것이 보이는데 그 사용자들은 이미 떠났다 | 끊긴 클라이언트의 요청이 `queue_timeout_s`(질의 1800초)까지 대기열에 남는다 | 2026-09-24 이후 코드는 대기 중 소켓 EOF 를 1초마다 보고 자리를 비운다(§4.5). `server stats` 의 `counters.abandoned_queue` 가 오르는지 확인. 예전 코드라면 `server limits set concurrency.queue_timeout_s=120` 으로 수명을 줄이거나 대기열을 `server activity` 에서 취소 |
+| **요청 하나가 배타 잠금을 쥔 채 몇십 분째 "running" 이고 뒤에 줄만 는다** (`server activity` 의 `lock.writer` 가 안 바뀜) | 서버 프로세스의 stdout/stderr 가 **막혔다** — 서버를 감싼 스크립트가 파이프로 받고 읽지 않았거나, 콘솔이 멈춰 있다. 쓰기가 막힌 스레드가 잠금을 쥐고 있다 | 서버를 띄운 쪽을 고친다: 파이프를 읽거나 로그 파일로 보낸다(`python -m llmwiki serve > logs/serve.out 2>&1`). 2026-09-24 이후 코드는 Web 콘솔 CLI 오류를 stderr 로 내지 않는다. 확인: `py-spy dump --pid <서버>` 로 `sys.stderr.write` 에 멈춘 스레드가 있는지 |
+| admin 인데 질의 이력(`requests queries` · 📋 질의 이력)의 **IP·에이전트 열이 빈다** | 2026-09-24 이전 코드: `requests` 행을 쓸 때 role·via·ip·agent 를 빠뜨렸다(옛 행만 마이그레이션으로 채움) | 2026-09-24 이후 코드는 새 행부터 채운다. 그 전에 쌓인 행은 값이 없는 것이 정상(원장 `ledger show <token>` 에는 IP 가 있다) |
 | 서버를 Ctrl+C 로 껐더니 마지막 몇 건이 없다 | 종료 때 writer 를 비우지 않았다 | `serve()` 종료 처리에서 원장 writer 를 멈춘다(§5.1 끝). 강제 종료(kill)는 구조상 최대 `flush_ms` 만큼 잃을 수 있다 |
 | **`unittest` 가 3건 실패하거나 `verify_surface_align.py` 가 `UnicodeEncodeError` 로 죽는다** (실패 메시지에 `�`·깨진 한글) | 콘솔이 cp949 등 UTF-8 이 아닌 환경. 2026-09-24 이전 코드는 목업 자식 프로세스가 로케일로 쓰고 부모가 UTF-8 로 읽어 한글이 깨졌다 | 2026-09-24 이후 코드는 콘솔과 무관하게 통과한다(목업 UTF-8 고정 · 검증 스크립트 UTF-8 출력). 예전 코드라면 `set PYTHONUTF8=1` 후 재실행. 건강 점검의 `console_encoding` 경고는 정상 동작이다 — 운영 콘솔은 `chcp 65001` 또는 config.json `console_encoding=utf-8` |
 
@@ -549,6 +574,7 @@ python tools\verify\verify_docs.py
 |---|---|
 | 대기열 128 | `server limits set concurrency.queue_max=64` |
 | 대기 한도 30분 | `server limits set concurrency.queue_timeout_s=120` |
+| 대기 중 연결 끊김 감지(§4.5) | `server limits set concurrency.drop_disconnected_waiters=false` — 끊긴 요청이 예전처럼 `queue_timeout_s` 까지 남는다 |
 | `db_synchronous` | `config.json` 에서 `"FULL"` 로 |
 | 종류별 한도 | `server.json` 의 `concurrency.classes` / `rate_limit.classes` 절을 **통째로 삭제** |
 | 요청 원장 | `server limits set ledger.enabled=false` |

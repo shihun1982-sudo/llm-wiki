@@ -27,6 +27,12 @@ import shutil
 import string
 import subprocess
 import sys
+
+# 콘솔이 cp949 여도 한글·기호 출력에서 죽지 않게 (다른 verify_* 와 같은 처리, 2026-09-24)
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import tempfile
 import threading
 import time
@@ -156,8 +162,10 @@ class Monkey:
         t0 = time.time()
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
-                r.read()
-                return r.status, time.time() - t0, ""
+                # 본문을 **돌려준다** (2026-09-24). 예전에는 200 이면 "" 를 돌려줘서 drain()·capacity_note() 가
+                # 언제나 빈 활동 목록을 보고 "대기열 비움" 으로 판정했다 — 실제로는 버려진 요청 128건이
+                # 30분짜리 대기열에 남아 있었다. 응답을 버리는 검증은 검증이 아니다 (CODE_REVIEW_0924 §5 규칙 2).
+                return r.status, time.time() - t0, r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             payload = ""
             try:
@@ -416,6 +424,9 @@ def main() -> int:
         env.pop("LLMWIKI_API_KEY", None)
         proc = subprocess.Popen([PY, "-m", "llmwiki", "serve", "--host", "127.0.0.1", "--port", str(ns.port)], cwd=ROOT, env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        # 서버 출력 파이프를 **반드시 비운다** (2026-09-24, CODE_REVIEW_0924 §2.10): 읽지 않으면 버퍼가 차는 순간
+        # 서버의 stderr 쓰기가 영원히 막히고, 배타 잠금을 쥔 스레드가 막히면 서버 전체가 멎는다 (멍키 테스트 실측 28분).
+        threading.Thread(target=lambda: [None for _ in proc.stdout], daemon=True).start()
         base = "http://127.0.0.1:%d" % ns.port
         for _ in range(120):
             try:

@@ -9,6 +9,7 @@
     "max_body_mb": 8,
     "queue_max": 128,
     "queue_timeout_s": 1800,
+    "drop_disconnected_waiters": true,
     "reads_during_build": "incremental",
     "write_wait_timeout_s": 172800,
     "read_wait_timeout_s": 900,

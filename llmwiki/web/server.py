@@ -12,6 +12,8 @@ import contextlib
 import json
 import os
 import re
+import select
+import socket
 import threading
 import time
 import traceback
@@ -466,6 +468,46 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    @staticmethod
+    def _wiki_page_name(name: Any) -> str:
+        """`/api/wiki/page` 의 이름을 파일 이름으로 써도 되는지 — 아니면 "" (2026-09-24, CODE_REVIEW_0924 §2.11).
+
+        예전에는 슬래시와 역슬래시만 막았다. 멍키 테스트가 `?` 를 보내자 Windows 가 `OSError: Invalid argument` 를 내고 **500** 이
+        됐고, GET 은 `..` 도 막지 않아 위키 폴더 밖의 .md 를 읽을 수 있었다. 문자열 · 1~120자 · 경로 구분자·NUL·제어 문자·
+        Windows 금지 문자(`<>:"|?*`) 없음 · `.` 으로 시작하지 않음 · 예약 이름 아님 — 이것만 통과시킨다."""
+        if not isinstance(name, str):
+            return ""
+        n = name.strip()
+        if not n or len(n) > 120 or n.startswith(".") or n.endswith((" ", ".")):
+            return ""
+        if re.search(r'[\x00-\x1f/\\<>:"|?*]', n):
+            return ""
+        if n.upper().split(".")[0] in ("CON", "PRN", "AUX", "NUL") or re.fullmatch(r"(?i)(COM|LPT)[1-9]", n.split(".")[0]):
+            return ""
+        return n
+
+    def _client_alive(self) -> bool:
+        """이 요청의 클라이언트가 아직 붙어 있는가 — 대기열에서 기다리는 티켓이 1초마다 묻는다 (2026-09-24).
+
+        요청 본문은 이미 다 읽었으므로, 소켓이 '읽을 수 있음' 인데 읽히는 것이 없으면(EOF) 클라이언트가 끊은 것이다.
+        읽을 것이 없으면(대부분) 살아 있는 것이고, 무언가 있으면(파이프라이닝) 역시 살아 있다.
+        TLS 소켓은 MSG_PEEK 를 지원하지 않아 ValueError 가 나는데, 그때는 '모른다' 로 두어 잘못 끊지 않는다."""
+        sock = getattr(self, "connection", None)
+        if sock is None:
+            return True
+        try:
+            readable, _w, _x = select.select([sock], [], [], 0)
+        except (OSError, ValueError):
+            return False                    # 이미 닫힌 fd
+        if not readable:
+            return True
+        try:
+            return bool(sock.recv(1, socket.MSG_PEEK))
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            return False
+        except Exception:
+            return True
+
     def _max_body(self) -> int:
         try:
             return int(float((_mgr().cfg.get("concurrency") or {}).get("max_body_mb") or 0) * 1024 * 1024)
@@ -593,7 +635,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         mgr = _mgr()
         try:
-            with mgr.ticket("mcp", "read" if heavy else "none", client=self._client(user, "mcp"), label=label):
+            with mgr.ticket("mcp", "read" if heavy else "none", client=self._client(user, "mcp"), label=label, alive=self._client_alive):
                 # actor 를 넘겨야 MCP 도 Web 과 **같은 문서 접근 제어**를 받는다 (llmwiki/docacl.py).
                 # 넘기지 않으면 pipe.actor 기본값이 admin 이라 API 키 하나로 전 문서가 열린다.
                 with self.pipe.request_scope(actor=dict(_actor_of(user), origin="mcp")):
@@ -1371,7 +1413,10 @@ class Handler(BaseHTTPRequestHandler):
                     files = sorted(f for f in os.listdir(d)) if os.path.isdir(d) else []
                     return self._json([f[:-3] for f in files if f.endswith(".md")])
                 if u.path == "/api/wiki/page":
-                    path = os.path.join(p.s.wiki_dir, qs.get("name", "") + ".md")
+                    name = self._wiki_page_name(qs.get("name", ""))
+                    if not name:
+                        return self._json({"error": "bad name", "hint": "경로 구분자·<>:\"|?*·제어 문자 없이 1~120자"}, 400)
+                    path = os.path.join(p.s.wiki_dir, name + ".md")
                     if not os.path.isfile(path):
                         return self._json({"error": "not found"}, 404)
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -2082,7 +2127,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "from 은 %s 중 하나여야 합니다" % ", ".join(_rr.POINT_IDS)}, 400)
                 names = [x for x in str(_as_str(body.get("preset"), "preset")).replace(";", ",").split(",") if x.strip()]
                 label = "재실행 %s ← #%s" % (point, rid)
-                with mgr.ticket("query", "read", client=client, label=label, token=str(body.get("progress_token") or "")[:64] or None) as tk:
+                with mgr.ticket("query", "read", client=client, label=label, token=str(body.get("progress_token") or "")[:64] or None,
+                                alive=self._client_alive) as tk:
                     try:
                         with p.request_scope(overrides=ov or None, presets=names, mode=_as_str(body.get("mode"), "mode"),
                                              actor=_actor_from_client(client)):     # 재실행도 문서 접근 제어를 받는다
@@ -2110,7 +2156,7 @@ class Handler(BaseHTTPRequestHandler):
                     started = self._start_job("query", lambda progress: self._do_query(body, q, ov, actor=_actor_from_client(client)),
                                               label=q[:120], client=client, weight="read")
                     return self._json(dict(started, token=started.get("job"), q=q, mode="async"))
-                with mgr.ticket("query", "read", client=client, label=q[:120], token=tok) as tk:
+                with mgr.ticket("query", "read", client=client, label=q[:120], token=tok, alive=self._client_alive) as tk:
                     out = self._do_query(body, q, ov, actor=_actor_from_client(client))
                     r = out.get("result") if isinstance(out, dict) else None
                     if isinstance(r, dict):
@@ -2137,7 +2183,7 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "cli" and weight in ("soft", "exclusive", "none"):
                 lim = float((mgr.cfg.get("timeouts") or {}).get("job_s", 0) or 0)
             with mgr.ticket(kind, weight, client=client, label=op, timeout_s=lim,
-                            build_mode="incremental" if weight == "soft" else ""):
+                            build_mode="incremental" if weight == "soft" else "", alive=self._client_alive):
                 if u.path == "/api/debug/query":
                     # 질의 해부 (LLM 없음, 수 ms). CLI `inspect` · MCP wiki_inspect 와 같은 함수.
                     from .. import querydebug as _qd
@@ -2321,12 +2367,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"picked": picked, "applied": applied, "errors": errors,
                                        "min_confidence": min_conf, "kinds": allow, "dry_run": dry, "evaluate": evaluate})
                 if u.path == "/api/wiki/page":
-                    name = body.get("name", "")
-                    if not name or "/" in name or "\\" in name:
-                        return self._json({"error": "bad name"}, 400)
+                    name = self._wiki_page_name(body.get("name", ""))
+                    if not name:
+                        return self._json({"error": "bad name", "hint": "경로 구분자·<>:\"|?*·제어 문자 없이 1~120자"}, 400)
+                    content = body.get("content", "")
+                    if not isinstance(content, str):
+                        return self._json({"error": "content 는 문자열이어야 합니다"}, 400)
                     os.makedirs(p.s.wiki_dir, exist_ok=True)
                     with open(os.path.join(p.s.wiki_dir, name + ".md"), "w", encoding="utf-8") as f:
-                        f.write(body.get("content", ""))
+                        f.write(content)
                     return self._json({"ok": True})
                 if u.path == "/api/cli":
                     from ..cli import run_captured

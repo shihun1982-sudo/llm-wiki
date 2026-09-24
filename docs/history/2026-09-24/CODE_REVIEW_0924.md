@@ -3,7 +3,7 @@
 > **이 문서의 지위**: 2026-09-23 회차(동시 질의 DB 잠금 · 종류별 한도 · 요청 원장)가 **의도대로 구현됐는지,
 > 부수 피해는 없는지**를 코드와 실측으로 되짚은 기록이다. 계획과 설계 근거는
 > [IMPLEMENTATION_PLAN_0923.md](../2026-09-23/IMPLEMENTATION_PLAN_0923.md), 운영·포팅 절차는
-> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 10건과 그 처리**를 남긴다(1~6 은 첫 리뷰, 7~9 는 세 창구 동시 부하 시험을 만들면서, 10 은 다른 콘솔 인코딩에서 전체 검증을 되풀이하면서 드러난 것).
+> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 14건과 그 처리**를 남긴다(1~6 은 첫 리뷰, 7~9 는 세 창구 동시 부하 시험을 만들면서, 10 은 다른 콘솔 인코딩에서 전체 검증을 되풀이하면서, 11~13 은 멍키 테스트의 결과를 의심하고 서버 안을 들여다보면서, 14 는 하네스 전수 실행에서 드러난 것).
 
 ---
 
@@ -20,6 +20,10 @@
 | 7 | **여러 프로세스가 같은 원장 파일에 쓰면 줄이 깨진다** — Windows 의 `O_APPEND` 는 프로세스 간 원자적이지 않다 | 기능의 목적을 정면으로 깨는 결함 | 파일 잠금(`msvcrt.locking`/`fcntl.flock`) + 깨진 줄 카운터 + 회귀 테스트 |
 | 8 | **짧게 살다 가는 프로세스(CLI)가 종료 시 버퍼를 버렸다** | 같은 결함의 다른 얼굴 | `atexit` 으로 모든 프로세스에서 비우고, 종료 중에는 남은 것을 한꺼번에 쓴다 |
 | 9 | 세 창구 부하 시험 자체가 **없었다** | 검증 공백 | `verify_three_surface_load.py` 신설 (30명이 Web·CLI·MCP 로 동시에) |
+| 14 | **admin 질의 이력의 IP·에이전트가 새 행부터 빈다** — 09-23 에 질의 로그 원천을 `requests` 로 합쳤는데 INSERT 가 role·via·ip·agent 를 쓰지 않았다(옛 행 마이그레이션만 채움) | 09-23 회차의 회귀 | `store.log_request` 가 진행 레지스트리의 client 에서 네 값을 함께 기록 · 회귀 테스트 2건 · `verify_web` 379/379 |
+| 13 | **`/api/wiki/page` 가 이상한 이름에 500 을 내고, GET 은 `..` 로 위키 폴더 밖 .md 를 읽는다** — 멍키가 이름 `?` 를 보내자 `OSError: Invalid argument` | 입력 검증 누락 + 경로 탈출 | 이름 검증 함수 하나를 GET·POST 양쪽에 배선(경로 구분자·NUL·제어 문자·`<>:"|?*`·`.` 시작·예약 이름·120자 초과 → 400) · content 는 문자열만 · 회귀 테스트 5건 |
+| 12 | **stderr 가 막히면 서버 전체가 멎는다** — 멍키 하네스가 서버를 `stdout=PIPE` 로 띄우고 읽지 않았고, Web 콘솔 CLI 의 argparse 오류가 서버 stderr 로 나갔다. 파이프가 찬 순간 그 쓰기가 영원히 막혔고 그 스레드가 **배타 잠금**을 쥐고 있었다(실측 28분, 뒤에 36건 대기) | 검증 환경 결함 + 제품 결함(콘솔 오류가 응답에 없음) | 하네스 4개가 파이프를 스레드로 비움 · `run_captured` 가 stderr 도 응답에 담음 · 회귀 테스트 3건 · 기동 문서에 "파이프를 읽지 않고 띄우지 말 것" |
+| 11 | **대기열에서 기다리던 요청의 클라이언트가 끊어도 자리를 비우지 않는다** — 폭주 뒤 `queue_full` 128/128 이 5분 넘게 그대로. 멍키 하네스는 200 본문을 버려 "대기열 비움" 을 거짓 OK | 기능의 목적(산 사용자가 거절되지 않게)을 깨는 결함 + 검증이 거짓 OK | 소켓 EOF 를 1초마다 보고 자리를 비움(`concurrency.drop_disconnected_waiters`) · 하네스 `req()` 가 본문을 돌려줌 · 회귀 테스트 9건 |
 | 10 | **콘솔이 cp949 인 환경에서 테스트 3건과 검증 스크립트가 실패**한다 — 목업 자식 프로세스가 로케일 인코딩으로 쓰고 부모는 UTF-8 로 읽는다 | 환경 의존 검증 (포팅 환경에서 거짓 FAIL) | 목업(headless·MCP)의 표준 입출력을 UTF-8 로 고정 · `PYTHONUTF8` 허용 목록 추가 · 검증 스크립트 4개 UTF-8 출력 · 건강 점검 순서 의존 단언 제거 |
 
 **전체 검증 결과**(2026-09-24):
@@ -45,6 +49,18 @@ python tools/verify/verify_stage_align.py          RESULT OK
 python tools/verify/verify_docs.py                 RESULT OK
 python tools/verify/verify_ledger_merge.py         RESULT PROBLEMS — §4 의 잔여 픽스처 10줄뿐, 새 문제 없음
 실사용 원장                                        테스트·하네스 실행 뒤에도 변경 없음
+```
+
+**하네스 전수 실행**(2026-09-24 저녁, 사용자 질문 "Web·MCP·CLI 동시 접근 멍키·스트레스 다 했나" 에 답하며 — 결함 11·12·13 을 고친 뒤):
+
+```
+verify_monkey            RESULT OK (500 0건 · 폭격 뒤 정상 질의 OK 0.5s · 대기열 비움 실측)   ← 결함 13 수정 뒤 재확인
+verify_soak              RESULT OK (60초 혼합 부하 4,002건 · 5xx 0 · 거절 0 · p95 974ms)
+verify_three_surface_load RESULT OK  verify_request_ledger RESULT OK  verify_build_load RESULT OK
+verify_tri_surface       RESULT OK  verify_mcp 154/154   verify_collab_many 20/20   verify_timeouts RESULT OK
+verify_llm_switch        RESULT OK  verify_buttons RESULT OK  verify_settings_sync RESULT OK  verify_web 379/379 (§2.12 수정 뒤)
+verify_ui_wiring         RESULT OK (09-23 잔여 3건 정리 뒤)  verify_stage_align RESULT OK  verify_surface_align RESULT OK  verify_docs RESULT OK
+python -m unittest discover -s tests   Ran 803 tests — OK
 ```
 
 ---
@@ -220,6 +236,104 @@ CRT 가 "파일 끝으로 seek → write" 를 하므로, 두 프로세스가 같
 덧붙여 헤드리스 자식 환경변수 허용 목록에 `PYTHONUTF8` 을 넣었다 — 운영자가 `PYTHONUTF8=1` 로 콘솔을 맞춰 두었을 때
 파이썬 기반 에이전트에도 같은 설정이 이어지도록. 목록의 `PYTHONIOENCODING` 과 같은 성격이다.
 
+### 2.9 끊긴 클라이언트의 요청이 대기열을 30분 동안 차지했다 — 그리고 하네스는 그것을 보지 못했다
+
+사용자가 "Web·MCP·CLI 동시 접근 멍키·스트레스 테스트를 다 했느냐" 고 물어 안 돌린 하네스를 마저 돌리다 나왔다.
+`verify_monkey.py`(1,200건 폭격 · 16 스레드 · CLI 15) 는 `RESULT OK` 였지만 한 줄이 이상했다:
+
+```
+사후 정리: 대기열 비움 (진행/대기 (0, 0, 'writer:-/0'))
+사후 정리: 튜닝 기본값 복구 실패 503
+사후 확인: 서버 살아 있음 · 정상 질의 FAIL code=503 (0.0s)
+  거절 사유 단서: {"running": [], "queued": [], "queued_n": 0, …, "lock": null, "limits": null,
+                  "response": "… 대기열이 가득 찼습니다 (128) … current: 128"}
+```
+
+활동 목록은 비어 있다는데 서버는 128명이 기다린다고 한다. 둘 다 같은 `RequestManager` 인스턴스의 같은 `active` 사전을
+보므로 있을 수 없는 조합이다. 단서는 `"lock": null, "limits": null` — `activity()` 는 그 두 키를 **항상** 채운다. 즉 하네스가
+본 것은 활동 목록이 아니라 **빈 문자열**이었다. `req()` 가 200 응답이면 `r.read()` 를 하고도 `""` 를 돌려주고 있었다.
+`drain()` 은 `{}` 를 파싱해 "진행 0 · 대기 0 → 비움" 으로, `capacity_note()` 도 같은 빈 것을 보고했다.
+이 하네스의 "폭격 뒤 정상 질의" 판정 주석에는 "대기열이 빠지는 중이면 정상" 이라고 적혀 있었다 — **빠지는지 본 적이 없으면서.**
+
+그래서 진짜 상태는 이렇다. 폭격 중 166건이 클라이언트 쪽 시간 초과로 끊겼다(`conn-err×166`). 서버는 그 요청들을
+대기열에 넣어 둔 채 슬롯을 기다리게 했고, 클라이언트가 떠난 것을 **알아볼 방법이 있는데(소켓 EOF) 보지 않았다.**
+질의의 `queue_timeout_s` 는 09-23 회차에서 **1800초**로 늘렸으므로, 그 128건은 30분 동안 자리를 지키며 산 사용자를
+`queue_full` 로 돌려보낸다. 하네스의 사후 확인 12회(약 5분)가 전부 503 이었던 것이 그 증거다.
+09-23 의 "대기열을 길게, 수명은 `queue_timeout_s` 가 끊는다" 는 결정은 **끊긴 클라이언트도 수명을 다 쓴다** 는 점에서
+반쪽이었다. 두 결정이 만나 "폭주 한 번 → 30분 마비" 가 됐다.
+
+| 고친 것 | 어디 | 어떻게 |
+|---|---|---|
+| 대기 중 연결 끊김 감지 | `reqmgr.ticket(alive=…)` · `_wait_read_slot` | 대기 루프가 1초마다 `alive()` 를 묻고, False 면 읽기 락을 놓고 `Cancelled(by=server, reason=클라이언트가 연결을 끊었습니다)`. 원장에는 `cancelled`, `counters.abandoned_queue` 증가 |
+| 소켓 EOF 판정 | `server.Handler._client_alive` | `select` 로 읽을 수 있는지 보고, 있으면 `MSG_PEEK` 1바이트 — `b""` 면 끊김, 데이터면 파이프라이닝(살아 있음), TLS 처럼 peek 이 안 되면 '모른다'(끊지 않음) |
+| 어디서 넘기나 | 동기 질의 · 재실행 · `/api/search`·`/api/cli` 등 일반 POST · `/mcp` | 잡 러너·watcher·CLI stdio 는 소켓이 없어 대상이 아니다 |
+| 설정 | `concurrency.drop_disconnected_waiters` (기본 true) | `server.json` · `setup/server.example.json` · `server limits set` · 문서 4곳 |
+| 하네스 | `verify_monkey.req()` | 200 본문을 돌려준다. 이제 `drain()` 이 실제 대기열을 본다 |
+| 회귀 | `tests/test_abandoned_waiters_0924.py` 9개 | 끊기면 2초 안에 빠짐 · 살아 있으면 기다림 · 끄면 예전 동작 · 콜백 예외는 끊지 않음 · socketpair 로 EOF/데이터/유휴 구분 |
+
+같은 김에 `headless.py` 의 `Cancelled("headless agent 취소됨 …")` 도 고쳤다 — `Cancelled(token, by, reason)` 인데
+문구를 token 자리에 넣어 `str(e)` 가 그냥 `cancelled` 였다(원장·화면에 이유가 남지 않았다).
+
+택하지 않은 것: `queue_timeout_s` 를 다시 짧게 — 살아 있는 사용자의 대기까지 끊어 09-23 결정을 되돌리는 셈이라 아니다.
+"클라이언트가 끊으면 서버 스레드에서 예외" 는 파이썬 `http.server` 에는 없다(응답을 쓸 때야 안다).
+
+### 2.10 stderr 가 막히자 서버 전체가 멎었다 — 하네스가 판 함정에 제품이 빠졌다
+
+결함 11 을 고치고 멍키 테스트를 다시 돌렸더니 이번에는 **33분이 지나도 끝나지 않았다**(첫 실행 14분). 격리 서버의
+활동 목록을 읽어 보니 `cli:nonexistent`(멍키가 일부러 보내는 존재하지 않는 CLI 명령) 한 건이 **배타 잠금을 28분째** 쥐고
+"running" 이고, 뒤에 36건이 줄 서 있었다. 수명은 `job_s` = 48시간이니 그대로 두면 이틀을 멎어 있을 상태다.
+
+스택을 떠 보니(`py-spy dump`) 그 스레드는 `argparse._print_message` → `sys.stderr.write()` 에서 멈춰 있었다.
+argparse 가 "invalid choice: nonexistent (choose from build, users, …)" 를 **서버 프로세스의 stderr** 에 쓰는데, 하네스가 서버를
+`stdout=PIPE, stderr=STDOUT` 으로 띄우고 **한 번도 읽지 않았다.** Windows 파이프 버퍼가 차자 write 가 영원히 막혔고,
+`run_captured` 는 stdout 만 잡고 있었으므로 이 출력은 콘솔 응답에도 없었다(사용자는 code=2 에 빈 화면만 봤다).
+
+| 고친 것 | 어디 | 어떻게 |
+|---|---|---|
+| Web 콘솔 CLI 가 stderr 도 응답에 담는다 | `cli.run_captured` | `redirect_stdout` 과 함께 `redirect_stderr` — 단 **다른 버퍼**로. `--json` 명령은 안내문을 stderr 로 보내 stdout 을 순수 JSON 으로 유지하므로 한 버퍼에 섞으면 파싱이 깨진다(첫 시도에서 `test_presets_apply_restore_diff` 가 잡았다). 응답은 `{code, output, stderr}` 이고, stdout 이 비고 code≠0 이면 stderr 내용을 `output` 으로 보여 준다(사용법 오류가 빈 화면이 아니게) |
+| 하네스가 파이프를 비운다 | `verify_monkey` · `verify_build_load` · `verify_llm_switch` · `verify_settings_sync` | Popen 직후 `threading.Thread(target=lambda: [None for _ in proc.stdout], daemon=True)`. 나머지 하네스는 원래 `DEVNULL` |
+| 회귀 | `tests/test_web_console_stderr_0924.py` 3개 | 알 수 없는 명령·잘못된 플래그의 오류가 `output` 에 있고 프로세스 stderr 에는 아무것도 없다 · `--help` 는 그대로 |
+| 기동 문서 | `BRINGUP_GUIDE.md` · `REQUEST_LEDGER.md` §11 | "서버를 감싸는 스크립트가 stdout/stderr 를 파이프로 받으면 **반드시 읽어야** 한다 — 아니면 로그 파일로 보낸다" |
+
+첫 실행(결함 11 을 찾은 그 실행)의 "60초 초과 182건" 과 "폭격 중 정상 질의 지연 최대 180초" 도 이 결함이 만든 숫자였다.
+즉 결함 11(끊긴 요청이 대기열 점유)과 결함 12(stderr 막힘)가 **겹쳐서** 나타났고, 11 을 고친 뒤에야 12 가 따로 보였다.
+"검증 결과가 이상하면 서버 안을 본다" — 활동 목록과 스택 덤프 두 가지로 15분 만에 특정했다.
+
+**고친 뒤 멍키 재실행** (같은 강도 1,205건 · 16 스레드 · CLI 15):
+
+```
+요청 1205건 / 352초 (3 req/s)              ← 첫 실행 838초, 두 번째는 33분 넘게 멈춤
+상태 코드: 200×636, 400×234, 404×225, 501×53, conn-err×48, 405×8, 500×1
+폭격 중 정상 질의: 13/13 성공 (첫 실행 6/9)
+30초 초과 요청 63건                          ← 첫 실행 182건
+사후 정리: 대기열 비움 (진행/대기 (0, 0))      ← 이번에는 실제 활동 목록을 읽은 결과다
+사후 정확인: 서버 살아 있음 · 정상 질의 OK (0.5s)  ← 첫 실행 FAIL 503 (5분간)
+```
+
+남은 `500×1` 이 결함 13 이다.
+
+### 2.11 이상한 위키 페이지 이름에 500 — 그리고 `..` 로 폴더 밖 읽기
+
+멍키의 유일한 500: `POST /api/wiki/page` 에 이름 `?` → Windows 가 파일을 만들 수 없어 `OSError: [Errno 22] Invalid argument`.
+잘못된 입력은 400 이어야 하고 500 은 서버 결함이다. 코드를 보니 POST 는 `/` 와 역슬래시만 막았고, **GET 은 이름을 아예
+검사하지 않아** `?name=../secret` 로 위키 폴더 밖의 .md 를 읽을 수 있었다(read 권한만 있으면). 파일 이름으로 쓰는 값은
+파일 이름 규칙으로 검사한다: 문자열 · 1~120자 · 경로 구분자·NUL·제어 문자·Windows 금지 문자 없음 · `.` 시작 아님 ·
+끝이 공백/점 아님 · CON/PRN/AUX/NUL/COMn/LPTn 아님. `Handler._wiki_page_name()` 하나를 GET·POST 가 같이 쓴다.
+`tests/test_wiki_page_name_0924.py` 는 검증 함수와 **실제 핸들러**(GET·POST 가 400 · `..` 탈출 불가 · 정상 이름 왕복) 를 본다.
+
+### 2.12 admin 질의 이력의 IP·에이전트가 비었다 — 09-23 통합의 회귀
+
+`verify_web` 379건 중 1건 실패: "admin GET queries (IP·에이전트 보임)". `/api/queries` 는 admin 에게 IP·에이전트를 보여 주게
+돼 있는데 값이 전부 빈 문자열이었다. 09-23 에 질의 로그 원천을 `query_log` → `requests` 로 합치면서 `store.queries()` 는
+`requests.role/via/ip/agent` 를 읽도록 바꿨지만, **`requests` INSERT 는 그 네 열을 쓰지 않았다.** 마이그레이션이 옛 행을
+`query_log` 에서 옮겨 채웠기 때문에 09-23 검증 시점에는 값이 보였고, 그 뒤 새로 쌓인 행부터 비었다 — "합칠 때 읽는 쪽만
+고치고 쓰는 쪽을 빠뜨린" 전형이다. 진행 레지스트리의 client(서버 핸들러 `_client()` 가 넣는 user·role·via·ip·origin·agent)는
+이미 같은 자리에서 origin·user 를 읽는 데 쓰고 있었으므로 네 값을 더 읽어 함께 쓰게 했다. CLI·테스트처럼 client 가 없으면 빈 값.
+
+같은 자리에서 `verify_ui_wiring.py` 가 지적한 09-23 잔여 3건도 정리했다: 원장 화면의 📜 링크가 채우는 로그 필터 id 가
+없는 `#log-grep` 이었던 것(→ `#log-run`), 정의 없는 CSS 변수 `--line`(→ `--grid`), 그리고 검사기가 `startswith("/api/ledger")`
+로 받는 접두 경로를 "서버에 없는 경로" 로 오판하던 것(검사기에 접두 경로 인식 추가).
+
 ---
 
 ## 3. 부수 피해(side effect) 점검
@@ -270,6 +384,11 @@ CRT 가 "파일 끝으로 seek → write" 를 하므로, 두 프로세스가 같
    그 시험을 믿을 수 있다.
 8. **파일 append 가 원자적이라고 가정하지 않는다.** POSIX 의 `O_APPEND` 와 달리 Windows CRT 는
    seek+write 라서 프로세스 간 경쟁에 진다. 여러 프로세스가 한 파일에 쓰는 설계에는 잠금이 필요하다.
+11. **서버 프로세스의 표준 출력은 반드시 누군가 읽는다.** 파이프로 받았으면 스레드로 비우고, 아니면 `DEVNULL`/파일로 보낸다.
+    쓰기가 막히면 어느 스레드가 막힐지 고를 수 없고, 그 스레드가 배타 잠금을 쥐고 있으면 서버가 통째로 멎는다.
+    제품 쪽도 같은 규칙이다 — 요청 처리 경로에서 stderr 에 쓰지 않는다(콘솔 CLI 의 오류는 응답 본문으로).
+10. **"정상이면 그렇다" 는 주석은 그렇다는 것을 본 뒤에 쓴다.** 멍키 하네스는 "대기열이 빠지는 중이면 정상" 이라고 적어 두고
+    빠지는지 본 적이 없었다(본문을 버렸으므로). 폭주 뒤 회복은 **측정 항목**이지 가정이 아니다 — 회복까지 걸린 시간을 숫자로 남긴다.
 9. **검증은 콘솔 인코딩과 무관하게 같은 결과를 내야 한다.** 자식 프로세스를 두는 목업은 표준 입출력을 UTF-8 로
    고정하고, 검증 스크립트는 stdout 을 UTF-8 로 재설정하며, 테스트는 환경에 따라 달라지는 경고의 **순서**에 기대지 않는다.
    "내 콘솔에서 OK" 는 포팅 환경의 OK 가 아니다.

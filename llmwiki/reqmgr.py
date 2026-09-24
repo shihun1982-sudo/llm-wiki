@@ -24,7 +24,7 @@ import socket
 import threading
 import time
 import uuid
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 from . import atomicio
 from . import progress as _pg
@@ -50,6 +50,10 @@ DEFAULTS: Dict[str, Any] = {
         # 대기열이 길어도 queue_timeout_s 가 수명을 끊으므로, 즉시 503(queue_full)보다 FIFO 대기가 낫다.
         "queue_max": 128,
         "queue_timeout_s": 120,           # 슬롯을 기다리는 최대 시간 (초과 → 503)
+        # 대기 중인 요청의 클라이언트가 연결을 끊으면 자리를 바로 비울지 (2026-09-24, CODE_REVIEW_0924 §2.9).
+        # 예전에는 버려진 요청이 queue_timeout_s(질의 1800초)까지 대기열을 차지해서, 폭주 한 번 뒤에
+        # 살아 있는 사용자가 30분 동안 503 queue_full 을 받았다. 소켓 EOF 를 1초마다 본다. false = 예전 동작.
+        "drop_disconnected_waiters": True,
         "reads_during_build": "incremental",   # never | incremental | always — 빌드 중 질의 허용 범위 (incremental: 증분 빌드 동안만)
         # 빌드(쓰기)가 진행 중인 읽기가 끝나길 기다리는 최대 시간. 빌드를 취소시키는 값이므로 48시간으로 둔다.
         "write_wait_timeout_s": 172800,
@@ -436,6 +440,15 @@ class LiveRegistry:
 
 
 # ---------------------------------------------------------------- 요청 관리자
+
+def _still_alive(fn: Callable[[], bool]) -> bool:
+    """alive 콜백을 안전하게 부른다 — 콜백이 죽으면 '모른다' 이므로 살아 있는 것으로 본다(잘못 끊는 쪽이 더 나쁘다)."""
+    try:
+        return bool(fn())
+    except Exception:
+        return True
+
+
 class RequestManager:
     READ_WEIGHTS = ("read",)
     WRITE_WEIGHTS = ("write", "exclusive", "soft")
@@ -616,9 +629,11 @@ class RequestManager:
 
     @contextlib.contextmanager
     def ticket(self, kind: str, weight: str, client: Optional[Dict[str, Any]] = None, label: str = "", token: Optional[str] = None,
-               timeout_s: Optional[float] = None, build_mode: str = ""):
+               timeout_s: Optional[float] = None, build_mode: str = "", alive: Optional[Callable[[], bool]] = None):
         """요청 하나를 등록하고 실행 권한(락·슬롯)을 얻는다. weight: none(락 없음, 등록만) | read | soft(증분 빌드) | exclusive(전체 빌드·설정 저장).
-        거부(Rejected) 는 호출자가 HTTP 상태로 변환. 안에서 progress 에 bind 되므로 취소·진행률이 함께 동작한다."""
+        거부(Rejected) 는 호출자가 HTTP 상태로 변환. 안에서 progress 에 bind 되므로 취소·진행률이 함께 동작한다.
+        alive: "클라이언트가 아직 붙어 있는가" 를 돌려주는 콜백(HTTP 핸들러가 소켓 EOF 로 판단). 대기열에서 기다리는 동안
+        1초마다 불러, 끊겼으면 자리를 비우고 `progress.Cancelled` 를 낸다 (`concurrency.drop_disconnected_waiters`)."""
         client = dict(client or {})
         tok = token or ("r-" + uuid.uuid4().hex[:10])
         now = time.time()
@@ -626,7 +641,7 @@ class RequestManager:
         exempt = client.get("role") in (rl.get("exempt_roles") or [])
         client = {k: (safe_text(v, 200) if isinstance(v, str) else v) for k, v in client.items()}
         t = {"token": tok, "kind": kind, "weight": weight, "label": safe_text(label), "client": client, "submitted": now, "started": None,
-             "finished": None, "status": "queued", "queue_wait_s": 0.0, "error": "", "pid": os.getpid()}
+             "finished": None, "status": "queued", "queue_wait_s": 0.0, "error": "", "pid": os.getpid(), "_alive": alive}
         # 원장: 이 티켓에 딸린 원장 항목. HTTP 진입점이 이미 연 span 이 있으면 그 토큰에 덧붙이고,
         # 없으면(CLI·MCP stdio·잡·스케줄러) 여기서 연다 — 어느 길로 들어오든 한 건은 남는다.
         led_tok = str(client.get("ledger_token") or "")
@@ -793,6 +808,7 @@ class RequestManager:
             t["error"] = ("%s: %s" % (type(e).__name__, e))[:300]
             raise
         finally:
+            t.pop("_alive", None)          # 콜백은 이력·직렬화에 남기지 않는다
             if held_read:
                 self._release_read_slot()
             if held_write:
@@ -915,6 +931,14 @@ class RequestManager:
                                                   "LLM 엔드포인트가 그만큼 받아 주는지 먼저 확인하세요 (docs/REQUEST_LEDGER.md §2)"
                                                   % (total_max, running)})
                 self._cv.wait(min(1.0, left))
+                # 클라이언트가 이미 연결을 끊었으면 자리를 비운다 (2026-09-24, CODE_REVIEW_0924 §2.9).
+                # 예전에는 버려진 요청이 queue_timeout_s 까지 대기열에 남아 산 사용자를 queue_full 로 막았다
+                # (멍키 테스트 실측: 폭주 뒤 128/128 이 5분 넘게 그대로). 소켓 EOF 는 알아볼 수 있는데 보지 않았다.
+                alive = t.get("_alive")
+                if alive is not None and conc.get("drop_disconnected_waiters", True) and not _still_alive(alive):
+                    self.rw.release_read()
+                    self.counters["abandoned_queue"] += 1
+                    raise _pg.Cancelled(tok, "server", "클라이언트가 연결을 끊었습니다 (대기 %.0f초 뒤 자리를 비움)" % (time.time() - t["submitted"]))
                 try:
                     _pg.check_cancel()
                 except _pg.Cancelled:

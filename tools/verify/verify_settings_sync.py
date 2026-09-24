@@ -23,7 +23,14 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import sys
+
+# 콘솔이 cp949 여도 한글·기호 출력에서 죽지 않게 (다른 verify_* 와 같은 처리, 2026-09-24)
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import tempfile
 import time
 import urllib.error
@@ -94,6 +101,9 @@ def isolated(port):
     proc = subprocess.Popen([PY, "-m", "llmwiki", "serve", "--host", "127.0.0.1", "--port", str(port)],
                             cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace")
+    # 서버 출력 파이프를 **반드시 비운다** (2026-09-24, CODE_REVIEW_0924 §2.10): 읽지 않으면 버퍼가 차는 순간
+    # 서버의 stderr 쓰기가 영원히 막히고, 배타 잠금을 쥔 스레드가 막히면 서버 전체가 멎는다 (멍키 테스트 실측 28분).
+    threading.Thread(target=lambda: [None for _ in proc.stdout], daemon=True).start()
     return tmp, env, proc
 
 

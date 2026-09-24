@@ -1241,23 +1241,30 @@ class Store:
                      archive_dir: str = "", commit: bool = True) -> int:
         sm = (trace or {}).get("summary") or {}
         llm = sm.get("llm") or {}
+        # 누가 어디서 물었나 — 진행 레지스트리의 client(서버 핸들러 `_client()` 가 넣는다)에서 읽는다.
+        # 2026-09-24: 예전에는 origin·user 만 썼고 role·via·ip·agent 는 **옛 행 마이그레이션에서만** 채워져,
+        # 09-23 에 질의 로그 원천을 requests 로 합친 뒤 admin 화면의 IP·에이전트 열이 새 행부터 비었다 (verify_web 이 잡음).
+        cl: Dict[str, Any] = {}
+        try:
+            from . import progress as _pg
+            cl = (_pg.get(_pg.current_token() or "") or {}).get("client") or {}
+        except Exception:
+            cl = {}
         if not origin or not user:
-            try:
-                from . import progress as _pg
-                cl = (_pg.get(_pg.current_token() or "") or {}).get("client") or {}
-                origin = origin or " ".join(x for x in (cl.get("origin"), cl.get("user")) if x)[:80]
-                user = user or str(cl.get("user") or "")[:80]
-            except Exception:
-                pass
+            origin = origin or " ".join(x for x in (cl.get("origin"), cl.get("user")) if x)[:80]
+            user = user or str(cl.get("user") or "")[:80]
+        role, via = str(cl.get("role") or "")[:40], str(cl.get("via") or "")[:40]
+        ip, agent = str(cl.get("ip") or "")[:64], str(cl.get("agent") or "")[:100]
         cur = self.conn.execute(
-            "INSERT INTO requests(ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,config,result,trace,error,origin,run_id,user) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO requests(ts,kind,summary,ms,llm_calls,input_tokens,output_tokens,sql_count,debug_level,config,result,trace,error,origin,run_id,user,"
+            "role,via,ip,agent) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), kind, summary[:300], float((trace or {}).get("ms", 0) or 0), int(llm.get("calls", 0) or 0),
              int(llm.get("input_tokens", 0) or 0), int(llm.get("output_tokens", 0) or 0), int(sm.get("sql_statements", 0) or 0),
              int((trace or {}).get("debug_level", 0) or 0), json.dumps(config, ensure_ascii=False) if config is not None else None,
              json.dumps(result, ensure_ascii=False) if result is not None else None,
              json.dumps(trace, ensure_ascii=False) if trace is not None else None, error, origin,
-             str((trace or {}).get("run_id") or ""), user))
+             str((trace or {}).get("run_id") or ""), user, role, via, ip, agent))
         rid = int(cur.lastrowid)
         # 결과 원본을 DB 밖 파일로도 남긴다 — keep_requests 로 DB 행이 잘려도 "그때 그 답" 을 다시 볼 수 있게.
         if archive_dir:

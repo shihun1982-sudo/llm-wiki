@@ -8,32 +8,32 @@
   {
    "ok": true,
    "name": "부하 중 증분 빌드 시작",
-   "detail": "HTTP 200 job=120dbf16"
+   "detail": "HTTP 200 job=694057ad"
   },
   {
    "ok": true,
    "name": "빌드 중에도 질의가 응답한다 (soft 락)",
-   "detail": "HTTP 200 · 2.5s"
+   "detail": "HTTP 200 · 23.4s"
   },
   {
    "ok": true,
    "name": "예상 밖 오류(5xx·연결실패) 0건",
-   "detail": "요청 4201건 · 200=4201 · 거절(429/503)=0 · 5xx=0"
+   "detail": "요청 9019건 · 200=9019 · 거절(429/503)=0 · 5xx=0"
   },
   {
    "ok": true,
    "name": "정상 처리된 요청이 있다",
-   "detail": "200 4201건 · 창구별 {\"web:poll\": 336, \"mcp:query\": 1326, \"mcp:list\": 1326, \"web:search\": 982, \"cli:search\": 61, \"web:query\": 151, \"web:write\": 19}"
+   "detail": "200 9019건 · 창구별 {\"web:poll\": 612, \"mcp:query\": 3055, \"mcp:list\": 3055, \"web:search\": 1967, \"cli:search\": 83, \"web:query\": 220, \"web:write\": 27}"
   },
   {
    "ok": true,
    "name": "p95 지연이 60초 미만",
-   "detail": "p50=19ms p95=918ms max=23547ms"
+   "detail": "p50=14ms p95=738ms max=23441ms"
   },
   {
    "ok": true,
    "name": "부하 뒤 health 통과",
-   "detail": "HTTP 200 fails=0 warn=2"
+   "detail": "HTTP 200 fails=0 warn=1"
   },
   {
    "ok": true,
@@ -53,20 +53,20 @@
  ],
  "stats": {
   "codes": {
-   "200": 4201
+   "200": 9019
   },
   "err": [],
-  "n": 4201,
+  "n": 9019,
   "by_kind": {
-   "web:poll": 336,
-   "mcp:query": 1326,
-   "mcp:list": 1326,
-   "web:search": 982,
-   "cli:search": 61,
-   "web:query": 151,
-   "web:write": 19
+   "web:poll": 612,
+   "mcp:query": 3055,
+   "mcp:list": 3055,
+   "web:search": 1967,
+   "cli:search": 83,
+   "web:query": 220,
+   "web:write": 27
   }
  },
- "p50_ms": 18.690824508666992,
- "p95_ms": 917.5937175750732
+ "p50_ms": 14.203786849975586,
+ "p95_ms": 738.4543418884277
 }

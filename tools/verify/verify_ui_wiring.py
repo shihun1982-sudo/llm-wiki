@@ -1,5 +1,11 @@
 """UI 배선 정적 검사: JS 가 참조하는 #id 선택자와 data-tab 이 index.html/login.html 에 존재하는지, JS 문법(괄호 균형·정규식 없이 파서 대용) 검사."""
-import os, re, json
+import os, re, json, sys
+
+# 콘솔이 cp949 여도 한글·기호 출력에서 죽지 않게 (다른 verify_* 와 같은 처리, 2026-09-24)
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <프로젝트 루트>/tools/verify/ 기준
 S = os.path.join(ROOT, "llmwiki", "web", "static")
 html = open(os.path.join(S, "index.html"), encoding="utf-8").read()
@@ -41,7 +47,9 @@ for fn in os.listdir(os.path.join(S, "js")):
     src = open(os.path.join(S, "js", fn), encoding="utf-8").read()
     paths_js |= set(re.findall(r"api\('(/api/[a-z_/]+)", src)) | set(re.findall(r"fetch\('(/api/[a-z_/]+)", src))
 paths_js |= set(re.findall(r"fetch\('(/api/[a-z_/]+)", login))
-unknown = sorted(p for p in paths_js if p not in paths_srv and not any(p.startswith(x) for x in ("/api/jobs/", "/api/progress")))
+# 서버가 startswith("/api/x") 로 받는 접두 경로(/api/ledger/<token> 처럼 뒤에 값이 붙는 것)도 안다 (2026-09-24)
+prefixes_srv = set(re.findall(r'u\.path\.startswith\("(/api/[^"]+)"\)', srv)) | {"/api/jobs/", "/api/progress"}
+unknown = sorted(p for p in paths_js if p not in paths_srv and not any(p.startswith(x) for x in prefixes_srv))
 print("JS 가 부르는 API 경로:", len(paths_js), "| 서버에 없는 경로:", unknown or "-")
 
 # ---- LW 헬퍼를 **쓰는데 구조분해로 가져오지 않은** 곳 ----

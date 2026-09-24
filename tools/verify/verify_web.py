@@ -1,5 +1,11 @@
 """Web 전수 검증: 격리 환경에서 serve --host 0.0.0.0 (mode on, anonymous viewer) 를 띄우고 모든 GET/POST 엔드포인트를 게스트/viewer/class1/admin 으로 왕복한다."""
 import json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+
+# 콘솔이 cp949 여도 한글·기호 출력에서 죽지 않게 (다른 verify_* 와 같은 처리, 2026-09-24)
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <프로젝트 루트>/tools/verify/ 기준
 PY = sys.executable
 PORT = 8792

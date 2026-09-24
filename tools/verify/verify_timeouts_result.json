@@ -67,7 +67,7 @@
  {
   "ok": true,
   "name": "근거 기반 답변이 여전히 나온다",
-  "detail": "mode=extractive · 3557자"
+  "detail": "mode=extractive · 4642자"
  },
  {
   "ok": true,
@@ -97,7 +97,7 @@
  {
   "ok": true,
   "name": "느린 질의 중에도 활동·진행 조회가 막히지 않는다",
-  "detail": "0.02s"
+  "detail": "0.03s"
  },
  {
   "ok": true,
@@ -122,12 +122,12 @@
  {
   "ok": true,
   "name": "5xx(예상 밖 오류) 없이 처리되거나 거절된다",
-  "detail": "200=2 거절=10 그밖=0 (13s)"
+  "detail": "200=5 거절=7 그밖=0 (37s)"
  },
  {
   "ok": true,
   "name": "상한 안에서는 실제로 처리된다",
-  "detail": "200 2건"
+  "detail": "200 5건"
  },
  {
   "ok": true,

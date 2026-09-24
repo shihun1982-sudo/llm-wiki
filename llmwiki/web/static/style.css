@@ -1013,7 +1013,7 @@ table.roles button[data-ens-toggle]{margin-top:3px}
 .ens-bad td{opacity:.7}
 
 /* 요청 원장 — 시간 밀도 막대 (색 = 상태). "언제 몰렸나" 를 숫자 대신 그림으로 보여 준다. */
-.led-hist { display:flex; align-items:flex-end; gap:1px; height:46px; margin:6px 0 10px; padding:2px 0; border-bottom:1px solid var(--line); }
+.led-hist { display:flex; align-items:flex-end; gap:1px; height:46px; margin:6px 0 10px; padding:2px 0; border-bottom:1px solid var(--grid); }
 .led-hist i { flex:1 1 0; min-width:2px; background:var(--accent, #4a90d9); opacity:.75; border-radius:1px 1px 0 0; }
 .led-hist i.slow { background:#e8a33d; }
 .led-hist i.bad  { background:#d9534f; opacity:.95; }
@@ -1029,7 +1029,7 @@ tr#led-drow > td { padding:0; background:var(--panel, rgba(127,127,127,.05)); }
    예전에는 칸마다 색 하나만 골라서, 같은 1분 안의 완료 50건과 거절 1건이 전부 빨강으로 보였다. */
 .led-hist i { display:flex; flex-direction:column-reverse; overflow:hidden; cursor:pointer; background:none; }
 .led-hist i > u { display:block; width:100%; text-decoration:none; }
-.led-hist i:hover { outline:1px solid var(--line); }
+.led-hist i:hover { outline:1px solid var(--grid); }
 u.h-done      { background:#4a90d9; }
 u.h-running   { background:#7ec8e3; }
 u.h-slow      { background:#e8a33d; }

@@ -588,7 +588,8 @@ class HeadlessAgentLLM(BaseLLM):
             return r
 
         if run["reason"] == "cancelled":
-            raise _pg.Cancelled("headless agent 취소됨 (%s)" % self.agent)
+            # Cancelled(token, by, reason): 예전에는 문구를 token 자리에 넣어 str(e) 가 그냥 'cancelled' 였다 (2026-09-24)
+            raise _pg.Cancelled("", "headless", "headless agent 취소됨 (%s)" % self.agent)
         if run["reason"] in ("timeout", "stall"):
             # 멎기 전에 쓸 만한 답을 이미 냈다면 버리지 않는다 — 버리면 재시도에 또 몇 분을 쓴다.
             # 단 **파서가 실제 텍스트를 찾았을 때만**. 원문 폴백(raw)은 대개 프로토콜 잡음이라

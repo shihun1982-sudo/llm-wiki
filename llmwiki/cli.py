@@ -27,7 +27,7 @@ import io
 import json
 import os
 import sys
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, List, Optional, Tuple
 
 import time
@@ -3512,10 +3512,16 @@ def run_captured(argv: List[str], settings: Settings, pipe, actor: str = "web") 
     """Web 콘솔용: stdout 을 캡처해 문자열로 반환. 권한은 서버(/api/cli)가 이미 판정했으므로 CLI 게이트를 타지 않는다."""
     global _CAPTURED
     buf = io.StringIO()
+    err = io.StringIO()
     code = 0
     _CAPTURED = True
     try:
-        with redirect_stdout(buf):
+        # stderr 도 함께 잡는다 (2026-09-24, CODE_REVIEW_0924 §2.10). 예전에는 argparse 의 사용법 오류가 **서버 프로세스의
+        # stderr** 로 나가서 (1) Web 콘솔에는 code=2 에 빈 출력만 보였고, (2) 서버를 띄운 쪽이 stderr 파이프를 읽지 않으면
+        # 파이프가 차는 순간 그 쓰기가 영원히 막혔다 — 배타 잠금을 쥔 채로 막히면 서버 전체가 멎는다 (멍키 테스트 실측 28분).
+        # stdout 과는 **다른 버퍼**에 잡는다: `--json` 명령은 안내문을 stderr 로 보내 stdout 을 순수 JSON 으로 유지하므로
+        # 한 버퍼에 섞으면 콘솔·테스트의 JSON 파싱이 깨진다 (test_presets_apply_restore_diff 가 실제로 잡았다).
+        with redirect_stdout(buf), redirect_stderr(err):
             code = run(argv, settings, pipe, gate=False)
     except SystemExit as e:  # argparse 오류/--help
         code = int(e.code or 0)
@@ -3524,7 +3530,10 @@ def run_captured(argv: List[str], settings: Settings, pipe, actor: str = "web") 
         code = 1
     finally:
         _CAPTURED = False
-    return {"code": code, "output": buf.getvalue()}
+    out, err_txt = buf.getvalue(), err.getvalue()
+    if code != 0 and err_txt and not out.strip():
+        out = err_txt          # 사용법 오류처럼 이유가 stderr 에만 있으면 그것을 콘솔에 보여 준다 (예전에는 빈 화면)
+    return {"code": code, "output": out, "stderr": err_txt}
 
 
 def main() -> None:

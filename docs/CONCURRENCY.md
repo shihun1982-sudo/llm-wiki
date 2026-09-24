@@ -94,6 +94,7 @@
 | `concurrency.keep_alive_s` | 30 | HTTP 연결 재사용(keep-alive) 유휴 시간(초). 0 이면 응답마다 연결을 끊는다(HTTP/1.0). **0 으로 두지 마세요** — 브라우저는 한 사이트에 동시 연결을 6개까지만 열기 때문에, 오래 걸리는 질의 몇 개가 연결을 물고 있으면 화면 갱신이 브라우저 안에서 줄을 서다가 한꺼번에 처리된다 |
 | `concurrency.queue_max` | 128 | 대기열 상한 (초과 → 503 `queue_full`). 2026-09-23 에 64 → 128 로 올렸다: 질의 1건이 100초 가까이 걸리는 환경(로컬 LLM)에서 64는 30명이 두 번씩만 물어도 가득 찬다. 대기열이 길어도 수명은 `queue_timeout_s` 가 끊으므로, 즉시 `queue_full` 로 돌려보내는 것보다 FIFO 로 기다리게 하는 편이 낫다. **대기열은 슬롯을 대신하지 못한다** — 슬롯 8 · 질의 100초면 대기열 128번째는 이론상 1,600초를 기다리므로 실제로는 `queue_timeout_s`(120초)에서 503 이 된다 |
 | `concurrency.queue_timeout_s` | 120 | 대기 최대 시간 (초과 → 503 `queue_timeout`) |
+| `concurrency.drop_disconnected_waiters` | true | 대기열에서 기다리는 요청의 **클라이언트가 연결을 끊으면**(소켓 EOF, 1초마다 확인) 자리를 바로 비운다. 2026-09-24: 끊긴 요청이 `queue_timeout_s`(질의 1800초)까지 대기열을 차지해 폭주 뒤 30분 동안 산 사용자가 `queue_full` 을 받던 결함의 수정. 원장에는 `cancelled` + "클라이언트가 연결을 끊었습니다", `server stats` 의 `counters.abandoned_queue`. false = 예전 동작 — [REQUEST_LEDGER.md](REQUEST_LEDGER.md) §4.5 |
 | `concurrency.write_wait_timeout_s` | 172800 (48시간) | 쓰기(빌드)가 진행 중인 읽기를 기다리는 최대 시간. 짧으면 긴 빌드가 시작도 못 하고 503 `write_wait_timeout` 으로 거부된다 |
 | `concurrency.read_wait_timeout_s` | 900 | 읽기가 배타 작업을 기다리는 최대 시간. **이 값은 빌드가 아니라 질의의 수명**이라 일부러 짧다 — 크게 잡으면 전체 재빌드 동안 질의 스레드가 쌓여 서버가 마비된다. 빌드 중에도 질의를 받으려면 `reads_during_build` 를 쓴다 |
 | `concurrency.reads_during_build` | `incremental` | 빌드 중 읽기 허용 범위: `always`(항상) · `incremental`(증분 빌드 중에만) · `never` |

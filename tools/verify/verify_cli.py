@@ -1,5 +1,11 @@
 """CLI 전수 검증: 격리된 임시 환경(설정/데이터/로그 전부 temp)에서 모든 하위 명령을 실제 subprocess 로 실행하고 종료 코드·출력 첫 줄을 기록한다."""
 import json, os, re, shutil, subprocess, sys, tempfile, time
+
+# 콘솔이 cp949 여도 한글·기호 출력에서 죽지 않게 (다른 verify_* 와 같은 처리, 2026-09-24)
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <프로젝트 루트>/tools/verify/ 기준
 PY = sys.executable
 tmp = tempfile.mkdtemp(prefix="lwverify_")
