@@ -54,7 +54,7 @@ from .providers import BaseLLM, LLMError
 # agents.json 의 env_passthrough(패턴 가능: "OPENCODE_*", "ANTHROPIC_*") 또는 env(값 직접 지정)에 적는다.
 ENV_PASSTHROUGH_DEFAULT: List[str] = [
     "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SYSTEMROOT", "COMSPEC",
-    "LANG", "LC_ALL", "PYTHONIOENCODING", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "LANG", "LC_ALL", "PYTHONIOENCODING", "PYTHONUTF8", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
 ]
 
 RETRY_DEFAULTS: Dict[str, Any] = {
@@ -643,6 +643,22 @@ class HeadlessAgentLLM(BaseLLM):
             pass
 
 
+def _utf8_stdio() -> None:
+    """목업 자식 프로세스의 표준 입출력을 **UTF-8 로 고정**한다 (2026-09-24).
+
+    부모(`_run_streaming` · MCP 클라이언트)는 자식 출력을 언제나 UTF-8 로 해석한다 — 실제 opencode · MCP 서버가
+    그렇게 내놓기 때문이다. 그런데 파이썬 목업은 stdout 이 파이프일 때 **콘솔 로케일**(Windows 는 cp949)로 쓰므로,
+    PYTHONUTF8/PYTHONIOENCODING 이 없는 환경에서는 한글이 U+FFFD 로 깨져 테스트 3건이 환경에 따라 실패했다.
+    목업은 실제 에이전트의 대역이므로 실제 에이전트처럼 UTF-8 로 말해야 한다."""
+    for name in ("stdin", "stdout", "stderr"):
+        st = getattr(sys, name, None)
+        try:
+            if st is not None and hasattr(st, "reconfigure"):
+                st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _mock_main() -> int:
     """`python -m llmwiki.headless --mock` : 표준입력 프롬프트를 읽어 MockLLM 과 같은 규칙으로 ndjson 이벤트 출력.
     테스트 옵션: --sleep N (N초 멈춤 → 타임아웃 재현) · --fail-times N --state FILE (처음 N번은 종료 코드 3 으로 실패 → 재시도 재현) · --empty (빈 출력)
@@ -651,6 +667,7 @@ def _mock_main() -> int:
       --prompt-file PATH (표준입력 대신 파일에서 프롬프트 → prompt_mode=file 검증) · --long-line N (줄바꿈 없이 N자를 천천히 → 바이트 단위 stall 감지 검증)
       --prompt-arg TEXT (인자로 받은 프롬프트 → prompt_mode=arg · arg_max_chars 전환 검증; 값이 비거나 없으면 opencode 처럼 표준입력으로 떨어진다)
     프롬프트 출처 우선순위: --prompt-file(값 있음) > --prompt-arg(값 있음) > 표준입력."""
+    _utf8_stdio()
     argv = sys.argv[1:]
     if "--fail" in argv:
         sys.stderr.write("mock forced failure (exit 2)\n")

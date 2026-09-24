@@ -801,7 +801,25 @@ def ingest_dirs(settings) -> List[str]:
 
 
 # ---------------------------------------------------------------- mock server (tests)
+
+def _utf8_stdio() -> None:
+    """목업 자식 프로세스의 표준 입출력을 **UTF-8 로 고정**한다 (2026-09-24).
+
+    부모(`MCP 클라이언트 `StdioClient`)는 자식 출력을 언제나 UTF-8 로 해석한다 — 실제 opencode · MCP 서버가
+    그렇게 내놓기 때문이다. 그런데 파이썬 목업은 stdout 이 파이프일 때 **콘솔 로케일**(Windows 는 cp949)로 쓰므로,
+    PYTHONUTF8/PYTHONIOENCODING 이 없는 환경에서는 한글이 U+FFFD 로 깨져 테스트 3건이 환경에 따라 실패했다.
+    목업은 실제 에이전트의 대역이므로 실제 에이전트처럼 UTF-8 로 말해야 한다."""
+    for name in ("stdin", "stdout", "stderr"):
+        st = getattr(sys, name, None)
+        try:
+            if st is not None and hasattr(st, "reconfigure"):
+                st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _mock_server() -> int:
+    _utf8_stdio()
     issues = [{"id": "ISSUE-9001", "title": "TX 전력 제어 오동작", "description": "TX power control 루프에서 PA gain 테이블 인덱스 오류. CL-7001 로 수정.",
                "updated_at": "2026-09-01T10:00:00", "status": "fixed", "labels": ["tx", "pa"], "cl_ids": ["CL-7001"]},
               {"id": "ISSUE-9002", "title": "RX AGC 수렴 지연", "description": "AGC 수렴이 3ms 이상 걸림. 원인 분석 중.",

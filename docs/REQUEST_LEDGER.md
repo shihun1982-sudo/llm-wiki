@@ -537,6 +537,7 @@ python tools\verify\verify_docs.py
 | **테스트가 원장을 오염시킨다** | `get_manager()` 가 **프로세스당 하나**를 만들어 두고 재사용하므로, `data_dir` 없이 먼저 만든 테스트 하나가 그 프로세스의 나머지 전부를 프로젝트 원장으로 보낸다 | 묶음 전체에 `LLMWIKI_LEDGER_DIR_PATH` 를 지정한다(이 저장소는 `tests/__init__.py`). 개별 테스트는 `ledger.dir` 을 임시 폴더로. 회귀 시험: `python -m unittest tests.test_ledger_isolation` |
 | 완료된 질의인데 📄 프로파일 링크가 없다 | 그 경로가 `request_id` 를 원장에 싣지 않았다 | 웹 비동기 잡은 `_start_job` 이, CLI 는 `progress.set_result()` 가 싣는다. 2026-09-24 이전에 남은 줄은 비어 있을 수 있다(그때의 코드가 싣지 않았다) |
 | 서버를 Ctrl+C 로 껐더니 마지막 몇 건이 없다 | 종료 때 writer 를 비우지 않았다 | `serve()` 종료 처리에서 원장 writer 를 멈춘다(§5.1 끝). 강제 종료(kill)는 구조상 최대 `flush_ms` 만큼 잃을 수 있다 |
+| **`unittest` 가 3건 실패하거나 `verify_surface_align.py` 가 `UnicodeEncodeError` 로 죽는다** (실패 메시지에 `�`·깨진 한글) | 콘솔이 cp949 등 UTF-8 이 아닌 환경. 2026-09-24 이전 코드는 목업 자식 프로세스가 로케일로 쓰고 부모가 UTF-8 로 읽어 한글이 깨졌다 | 2026-09-24 이후 코드는 콘솔과 무관하게 통과한다(목업 UTF-8 고정 · 검증 스크립트 UTF-8 출력). 예전 코드라면 `set PYTHONUTF8=1` 후 재실행. 건강 점검의 `console_encoding` 경고는 정상 동작이다 — 운영 콘솔은 `chcp 65001` 또는 config.json `console_encoding=utf-8` |
 
 ---
 

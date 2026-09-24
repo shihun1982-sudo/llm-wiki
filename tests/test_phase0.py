@@ -190,7 +190,8 @@ class Phase0Test(unittest.TestCase):
             self.p.build(full=False)
         res2, _ = self.p.build(full=False, force=True)
         self.assertTrue(res2["alerts"])
-        self.assertEqual(res2["alerts"][0]["check"], "corpus_dirs")
+        # 콘솔이 cp949 면 console_encoding 경고(warn)가 먼저 올 수 있다 — 순서가 아니라 포함 여부를 본다 (2026-09-24)
+        self.assertIn("corpus_dirs", [a["check"] for a in res2["alerts"]])
         self.p.s.toggles.health_check = False
         _, t3 = self.p.build(full=False)
         self.assertFalse({c["name"]: c for c in t3["children"]}["health"]["enabled"])

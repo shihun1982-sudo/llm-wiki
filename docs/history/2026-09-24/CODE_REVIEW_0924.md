@@ -3,7 +3,7 @@
 > **이 문서의 지위**: 2026-09-23 회차(동시 질의 DB 잠금 · 종류별 한도 · 요청 원장)가 **의도대로 구현됐는지,
 > 부수 피해는 없는지**를 코드와 실측으로 되짚은 기록이다. 계획과 설계 근거는
 > [IMPLEMENTATION_PLAN_0923.md](../2026-09-23/IMPLEMENTATION_PLAN_0923.md), 운영·포팅 절차는
-> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 6건과 그 처리**를 남긴다.
+> [REQUEST_LEDGER.md](../../REQUEST_LEDGER.md) 에 있다. 여기에는 **리뷰에서 나온 결함 10건과 그 처리**를 남긴다(1~6 은 첫 리뷰, 7~9 는 세 창구 동시 부하 시험을 만들면서, 10 은 다른 콘솔 인코딩에서 전체 검증을 되풀이하면서 드러난 것).
 
 ---
 
@@ -20,6 +20,7 @@
 | 7 | **여러 프로세스가 같은 원장 파일에 쓰면 줄이 깨진다** — Windows 의 `O_APPEND` 는 프로세스 간 원자적이지 않다 | 기능의 목적을 정면으로 깨는 결함 | 파일 잠금(`msvcrt.locking`/`fcntl.flock`) + 깨진 줄 카운터 + 회귀 테스트 |
 | 8 | **짧게 살다 가는 프로세스(CLI)가 종료 시 버퍼를 버렸다** | 같은 결함의 다른 얼굴 | `atexit` 으로 모든 프로세스에서 비우고, 종료 중에는 남은 것을 한꺼번에 쓴다 |
 | 9 | 세 창구 부하 시험 자체가 **없었다** | 검증 공백 | `verify_three_surface_load.py` 신설 (30명이 Web·CLI·MCP 로 동시에) |
+| 10 | **콘솔이 cp949 인 환경에서 테스트 3건과 검증 스크립트가 실패**한다 — 목업 자식 프로세스가 로케일 인코딩으로 쓰고 부모는 UTF-8 로 읽는다 | 환경 의존 검증 (포팅 환경에서 거짓 FAIL) | 목업(headless·MCP)의 표준 입출력을 UTF-8 로 고정 · `PYTHONUTF8` 허용 목록 추가 · 검증 스크립트 4개 UTF-8 출력 · 건강 점검 순서 의존 단언 제거 |
 
 **전체 검증 결과**(2026-09-24):
 
@@ -31,6 +32,19 @@ python tools/verify/verify_surface_align.py        RESULT OK   (CLI 49 · Web 11
 python tools/verify/verify_docs.py                 RESULT OK   (어긋남 0 · 고아 문서 0)
 python tools/verify/verify_ledger_merge.py         항목 26/26 대조 OK · 지표 1건 잔여(§4)
 테스트가 실사용 원장에 쓴 줄                       수정 전 700~800줄/회 → **0줄**
+```
+
+**재검증**(2026-09-24, 결함 10 처리 뒤 — `PYTHONUTF8`·`PYTHONIOENCODING` 없는 **cp949 콘솔**에서):
+
+```
+python -m unittest discover -s tests               Ran 784 tests — OK   (수정 전 같은 콘솔에서 failures=3)
+python tools/verify/verify_request_ledger.py       RESULT OK
+python tools/verify/verify_three_surface_load.py   RESULT OK   (CLI 12↔12 · Web 질의 36↔36 · 깨진 줄 0 · locked 0 · 폴링 p95 28ms)
+python tools/verify/verify_surface_align.py        RESULT OK   (수정 전 UnicodeEncodeError)
+python tools/verify/verify_stage_align.py          RESULT OK
+python tools/verify/verify_docs.py                 RESULT OK
+python tools/verify/verify_ledger_merge.py         RESULT PROBLEMS — §4 의 잔여 픽스처 10줄뿐, 새 문제 없음
+실사용 원장                                        테스트·하네스 실행 뒤에도 변경 없음
 ```
 
 ---
@@ -190,6 +204,22 @@ CRT 가 "파일 끝으로 seek → write" 를 하므로, 두 프로세스가 같
 화면 폴링 p95 **28ms** 가 이 표에서 가장 중요한 숫자다 — 질의가 30명분 몰려 있어도
 브라우저 화면은 계속 응답한다는 뜻이고, 그것이 비동기 질의로 바꾼 이유였다.
 
+### 2.8 검증이 환경(콘솔 인코딩)에 따라 결과가 달랐다
+
+이 리뷰를 이어서 하던 세션이 **`PYTHONUTF8` 도 `PYTHONIOENCODING` 도 없는 cp949 콘솔**에서 시작됐고,
+그 조건에서 같은 코드가 `Ran 784 tests — FAILED (failures=3)` 을 냈다. 앞 세션의 OK 는 콘솔이 UTF-8 이었기 때문이다.
+"어느 환경에서 돌리느냐로 결과가 갈리는 검증" 은 포팅 문서의 기대 결과(§10 "RESULT OK")를 믿을 수 없게 하므로 결함으로 다룬다.
+
+| 실패 | 원인 | 처리 |
+|---|---|---|
+| `test_headless_stall…` — 부분 답변 "부분 답변" 이 U+FFFD 로 | `python -m llmwiki.headless --mock` 자식이 stdout 이 파이프일 때 **로케일(cp949)로 쓰고**, 부모 `_run_streaming` 은 언제나 UTF-8 로 해석한다 | 목업 진입점에서 `sys.stdout/stderr/stdin.reconfigure(encoding="utf-8")` (`_utf8_stdio`). 실제 opencode 가 UTF-8 로 말하므로 대역도 그래야 한다 |
+| `test_mcp_source_mock` — ISSUE-9001 이 상위 5건에 없음 | 같은 원인. 목업 MCP 서버(`mcp_client --mock-server`)의 한글 제목·본문이 깨져 색인돼 검색이 안 맞았다 | 같은 처리 |
+| `test_health_and_build_gate` — `alerts[0]` 이 `corpus_dirs` 가 아니라 `console_encoding` | 건강 점검이 cp949 콘솔에 **정상적으로** 경고를 냈고, 테스트가 경고 순서에 의존했다 | 순서가 아니라 포함 여부를 단언 |
+| `verify_surface_align.py` 가 `UnicodeEncodeError` 로 죽음 | 다른 verify_* 는 stdout 을 UTF-8 로 재설정하는데 4개(`surface_align`·`three_surface_load`·`docs`·`stage_align`)는 빠져 있었다 | 같은 재설정 추가 |
+
+덧붙여 헤드리스 자식 환경변수 허용 목록에 `PYTHONUTF8` 을 넣었다 — 운영자가 `PYTHONUTF8=1` 로 콘솔을 맞춰 두었을 때
+파이썬 기반 에이전트에도 같은 설정이 이어지도록. 목록의 `PYTHONIOENCODING` 과 같은 성격이다.
+
 ---
 
 ## 3. 부수 피해(side effect) 점검
@@ -240,3 +270,6 @@ CRT 가 "파일 끝으로 seek → write" 를 하므로, 두 프로세스가 같
    그 시험을 믿을 수 있다.
 8. **파일 append 가 원자적이라고 가정하지 않는다.** POSIX 의 `O_APPEND` 와 달리 Windows CRT 는
    seek+write 라서 프로세스 간 경쟁에 진다. 여러 프로세스가 한 파일에 쓰는 설계에는 잠금이 필요하다.
+9. **검증은 콘솔 인코딩과 무관하게 같은 결과를 내야 한다.** 자식 프로세스를 두는 목업은 표준 입출력을 UTF-8 로
+   고정하고, 검증 스크립트는 stdout 을 UTF-8 로 재설정하며, 테스트는 환경에 따라 달라지는 경고의 **순서**에 기대지 않는다.
+   "내 콘솔에서 OK" 는 포팅 환경의 OK 가 아니다.

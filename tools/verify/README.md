@@ -77,3 +77,11 @@ python -m unittest tests.test_concurrency_0915    :: 43개 — 요청 격리·RW
 python -m unittest tests.test_console_0915        :: 8개 — 좁은 인코딩에서도 한글이 깨지지 않는가
 python -m unittest tests.test_pipeline.FtsRebuildTest  :: 4개 — 전체/증분 리빌드가 FTS·trigram 행을 정확히 갈아 끼우는가
 ```
+
+**하네스와 테스트는 콘솔 인코딩과 무관하게 같은 결과를 내야 한다** (2026-09-24, CODE_REVIEW_0924 §2.8). cp949 콘솔에서
+테스트 3건이 실패하고 `verify_surface_align.py` 가 `UnicodeEncodeError` 로 죽은 적이 있다. 그래서 규칙이 둘이다:
+
+- 새 `verify_*.py` 는 `import sys` 바로 뒤에 `sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")` 를
+  `try/except` 로 둔다 (지금은 전부 그렇게 돼 있다).
+- 자식 프로세스를 두는 목업(`llmwiki.headless --mock` · `llmwiki.mcp_client --mock-server`)은 진입점에서 표준 입출력을 UTF-8 로
+  고정한다(`_utf8_stdio`). 부모는 언제나 UTF-8 로 읽으므로, 목업이 로케일로 쓰면 한글이 U+FFFD 가 된다.
