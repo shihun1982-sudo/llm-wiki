@@ -46,7 +46,8 @@
 | **어떤 값을 어디서 바꾸나 / 이 키가 무슨 뜻인가 / 바꾼 뒤 무엇을 해야 하나** | [CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md) — 파일 18종 · config 키 103개 · 토글 66개 · 튜닝 141개를 한 문서에(자동 생성). §6 "값을 바꾼 뒤 무엇을 해야 하나", §7 "자주 하는 변경" |
 | **설정을 바꿨는데 서버에 안 먹는다 / 파일을 고쳤는데 화면에 안 보인다** | [SETTINGS_SYNC.md](docs/SETTINGS_SYNC.md) — UI ↔ 파일 ↔ 유효값을 양방향으로 확인하는 절차(`config show --effective`·`config reload`), `config fill-defaults` 로 모든 키를 파일에 명시, 하네스 `verify_settings_sync.py` |
 | **설정값 하나를 바꿔 가며 어느 단계에서 무엇이 달라지는지 보고 싶다** | [SWEEP.md](docs/SWEEP.md) — `sweep run last --key rrf_k --range 10:100:10` → 단계×값 비교 격자. 🧭 Pipeline 페이지([PIPELINE_PAGE.md](docs/PIPELINE_PAGE.md))의 스윕 폼 |
-| **규칙을 바꿨는데 그래프가 좋아졌는지 숫자로 보고 싶다 / 어느 규칙이 죽었는지 알고 싶다** | [GRAPH_PROFILE.md](docs/GRAPH_PROFILE.md) — `graph profile --compare` (Knowledge › 그래프 진단, MCP `wiki_graph_profile`) |
+| **그래프의 무엇이 잘못됐고 무엇을 고쳐야 하나 (규칙 조각 · 코퍼스 수정) / 규칙을 바꿨는데 좋아졌는지 숫자로** | [GRAPH_PROFILE.md](docs/GRAPH_PROFILE.md) §2.5 소견 — `graph profile` (Knowledge › 그래프 진단, MCP `wiki_graph_profile`) · `--compare` |
+| **그래프 화면의 "상위 N · 무리 · 관계 출처" 가 무슨 뜻인지 / 그래프를 여러 방식으로 보기** | [WEB_UI.md](docs/WEB_UI.md) §0.69 — Knowledge › 그래프 (보기 모드 4종 · 무리 상세 `graph community` · MCP `wiki_community`) |
 | **동의어·약어 규칙이 어느 방향으로 퍼지는지 알고 싶다** | [QUERY_RULES.md](docs/QUERY_RULES.md) — acronym/synonym 양방향 · alias/related/exclude 일방, `rules explain <용어>` |
 | **사람들이 쓰는 중에 코퍼스를 갱신해야 한다** | [BUILD_UNDER_LOAD.md](docs/BUILD_UNDER_LOAD.md) §1 30명 실측표 → §4 권장 운영(증분·채널은 아무 때나 · 전체 리빌드는 야간 또는 `reads_during_build=always`) |
 | **빌드가 왜 느린지 · 질의가 얼마나 몰리는지 · 디스크가 어디서 커지는지 알고 싶다** | [OPS_STATS.md](docs/OPS_STATS.md) — `python -m llmwiki stats --full` (Web 옵저빌리티 › 시스템 의 **운영 통계**, MCP `wiki_status(full=true)`). 단계별 빌드 ms · 시간대 분포 · p50/p95 와 가장 느린 질의 · 토큰 · 근거 부족률 · 폴더별 용량과 정리 힌트 |
@@ -214,7 +215,8 @@ Ask 탭의 **🕘 내 지난 요청**(대기·진행 중·완료를 한 목록�
 **[docs/SWEEP.md](docs/SWEEP.md) — 파라미터 스윕 (저장된 질의 위에서 값 하나만 바꿔 N회 비교, 2026-09-18)**
 지난 질의를 기준으로 키 하나(`rrf_k` · 토글 `rerank` · `top_k_final` · `answer_model` …)의 값을 `start:stop:step` 범위나 목록으로 바꿔 가며, 값마다 그 키가 영향을 주는 단계부터만 `rerun` 재생으로 다시 돌린다 — 앞 단계는 저장값이라 차이는 그 값의 효과로 분리된다. 첫 값이 기준이 되어 최종 순위·컨텍스트 id 집합·답변 텍스트·groundedness/ms/인용/토큰 Δ 를 단계×값 격자로 비교한다. 설정 `sweep_dir`/`sweep_keep`/`sweep_max_values`/`sweep_max_parallel`, CLI `sweep run|list|show|compare|keys`, `GET/POST /api/sweep`, MCP `wiki_sweep`, 🧭 Pipeline 페이지의 스윕 폼, 스윕 불가 키의 이유와 문제 해결 표.
 
-**[docs/GRAPH_PROFILE.md](docs/GRAPH_PROFILE.md) — 지식 그래프 진단 프로파일 (2026-09-18)**
+**[docs/GRAPH_PROFILE.md](docs/GRAPH_PROFILE.md) — 지식 그래프 진단 프로파일 (2026-09-18 · 2026-09-24 소견)**
+2026-09-24: 지표 위에 **소견 13종**(증거 → 원인 → 처방 → 확인)이 온다. 처방은 문장이 아니라 rules.json 에 붙여 넣을 **조각**, 고칠 **문서 목록**, 튜닝 키, 명령이다. 실데이터에서 허브 1~5위가 짧은 별칭의 단어 내부 오탐(`corpus_d[ir]s` 의 IR본부 degree 7,748)이었음을 소견이 문맥과 함께 냈고, 매처가 단어 경계·대소문자 규칙(`rules.json` `matching`)을 얻었다. 같은 회차에 그래프 탭이 용어를 설명하고(상위 N · 무리 · 관계 출처 · 연결/이웃) 보기 모드 4종과 무리 상세(세 창구)를 얻었다 — [WEB_UI.md](docs/WEB_UI.md) §0.69 · 설계 [GRAPH_KNOWLEDGE_PLAN_0924.md](docs/history/2026-09-24/GRAPH_KNOWLEDGE_PLAN_0924.md).
 "규칙(`data/rules.json`)을 바꾸면 그래프가 어떻게 달라지는가" 를 숫자로 보는 도구. 규모·연결성(성분·고립·허브 경고)·문서 커버리지·품질 신호(중복 후보·끊긴 관계·cooccur 비중)·규칙 기여(죽은 규칙/사전)·질의 활용(시드 비율·엔티티 후보 키워드) 6절과, 각각 어느 파일·키를 고칠지 가리키는 규칙 기반 제안 12종, 실행 이력(`data/graph_profiles/`)과 `--compare` 핵심 지표 Δ, 옵션 `--eval`(graph 채널만 hit@k). 설정 `graph_profile_keep`/`graph_profile_requests`/`graph_profile_hubs`, CLI `graph profile`, `GET /api/graph/profile[/history]`, Knowledge › 그래프 진단 탭, MCP `wiki_graph_profile`.
 
 **[docs/QUERY_RULES.md](docs/QUERY_RULES.md) — 규칙 기반 질의 확장 사전과 방향 (2026-09-18)**
@@ -254,7 +256,8 @@ setup/ 폴더의 각 파일 용도, 요구사항 표, Windows/macOS/Linux 설치
 
 | 회차 | 무엇 |
 |---|---|
-| [2026-09-24](docs/history/2026-09-24/CODE_REVIEW_0924.md) | **가장 최근** — 09-23 회차의 **사후 코드 리뷰와 전체 검증**. 결함 14건(정상 종료 때 원장 유실 · 테스트의 실사용 원장 오염 · 다중 프로세스 원장 줄 깨짐 · cp949 콘솔에서의 거짓 FAIL · 끊긴 클라이언트가 대기열을 30분 차지 · stderr 파이프가 막히자 서버 정지 · 위키 페이지 이름 미검증 · 새 요청 행의 IP 누락 등)과 재발 방지 규칙 11가지 |
+| [2026-09-24 Knowledge](docs/history/2026-09-24/GRAPH_KNOWLEDGE_PLAN_0924.md) | **가장 최근** — 그래프 진단을 소견·처방으로, 그래프 탭 용어·보기 모드, 사전 매처 단어 경계 |
+| [2026-09-24](docs/history/2026-09-24/CODE_REVIEW_0924.md) | 09-23 회차의 **사후 코드 리뷰와 전체 검증**. 결함 14건(정상 종료 때 원장 유실 · 테스트의 실사용 원장 오염 · 다중 프로세스 원장 줄 깨짐 · cp949 콘솔에서의 거짓 FAIL · 끊긴 클라이언트가 대기열을 30분 차지 · stderr 파이프가 막히자 서버 정지 · 위키 페이지 이름 미검증 · 새 요청 행의 IP 누락 등)과 재발 방지 규칙 11가지 |
 | [2026-09-23](docs/history/2026-09-23/IMPLEMENTATION_PLAN_0923.md) | 요청 5건 — 동시 질의 DB 잠금(원인: 커밋 없는 `cache_put`) · 질의/검색 별도 한도 · **요청 원장** · 사라지는 요청 재현 · 세 창구 정합. 운영 절차는 [REQUEST_LEDGER.md](docs/REQUEST_LEDGER.md) |
 | [2026-09-20](docs/history/2026-09-20/DOCS_REORG_0920.md) · [UX_FIXES_0920.md](docs/history/2026-09-20/UX_FIXES_0920.md) | 문서 재배치(현행/기록 분리) · 화면 사용성 수정(Trial 비교 · 포렌식 · 운영 통계 추세) |
 | [2026-09-19](docs/history/2026-09-19/IMPLEMENTATION_PLAN_0919.md) | 요청 14항목의 조사·설계·택하지 않은 대안·검증. 심층 리뷰 3종도 같은 폴더 |

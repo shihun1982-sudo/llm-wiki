@@ -284,6 +284,7 @@ TOOL_CALLS = [
     ("wiki_inspect", {"query": "지난주 ISSUE-2001 의 원인"}, "채널 라우팅"),
     ("wiki_doc", {"id": "ISSUE-2001"}, "meta"),
     ("wiki_entity", {"name": "ISSUE-2001"}, ""),
+    ("wiki_community", {"id": 0}, "members"),
     ("wiki_related", {"text": "TX 전력 제어 오동작으로 PA gain 테이블을 확인했다", "k": 3}, "유사 문서"),
     ("wiki_forensic", {"expected_docs": ["ISSUE-2001"]}, ""),
     ("wiki_analysis", {"focus": "speed"}, "분석"),

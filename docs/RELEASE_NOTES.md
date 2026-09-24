@@ -92,7 +92,7 @@ CLI `query --trace` 는 멤버별 줄, MCP 는 응답 trace 의 같은 `meta.ens
 | **세 창구 전수 정렬 감사** | 정렬 검사의 기준을 **표에서 코드로** 옮겼다 — 이제 CLI 명령·Web 경로·MCP 도구를 만들고 대조표에 줄을 더하지 않으면 실패한다(그 전에는 36개가 표 밖에 있었다). 새 하네스 `verify_tri_surface.py` 가 `serve`·CLI 프로세스·`POST /mcp` 를 **실제로 띄워** 42건을 비교한다 | [SURFACE_ALIGNMENT.md](SURFACE_ALIGNMENT.md) |
 | **문서 재배치 — 현행 / 기록 분리** | `docs/` 바로 아래 = **지금의 사실**(날짜 없는 이름, 낡으면 고친다) · `docs/history/<날짜>/` = **그날의 사실**(불변). 기록 26개를 회차 폴더로 옮기고 참조 70개 파일을 맞췄다. 구조를 설명하는 현행 문서는 [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) **하나로 통합**(핵심 용어 사전과 "한 질의의 여정" 을 흡수). 검증 결과는 [VERIFICATION.md](VERIFICATION.md) 로 옮겨 `verify_all.py` 가 **날짜 박힌 회차 보고서를 덮어쓰던 것**을 멈췄다. 입구는 [DOC_MAP.md](DOC_MAP.md), 회차 색인은 [history/README.md](history/README.md) | [DOCS_REORG_0920.md](history/2026-09-20/DOCS_REORG_0920.md) |
 | **문서가 낡으면 실패하게** | `verify_docs.py` 에 네 검사 추가 — ①현행 자리에 날짜 붙은 파일명 금지 ②기록이 회차 색인에 있는가 ③**모든 CLI 명령·MCP 도구·설정 키가 현행 문서에 설명돼 있는가**(기록에 적힌 것은 세지 않는다) ④모든 하네스가 목록에 있는가(켜 보니 25개 중 14개가 빠져 있었다). 규모 숫자는 `<!--live:키-->` 로 **표시한 것만** 코드와 대조한다 | [TESTING_GUIDE.md](TESTING_GUIDE.md) · [DOC_MAP.md §8](DOC_MAP.md) |
-| **MCP 도구 <!--live:mcp-->20개** | + `wiki_graph_rules` · `wiki_evolve`(설명) · `wiki_status(full)` 확장 (모두 읽기 전용) | [MCP.md §2](MCP.md) |
+| **MCP 도구 <!--live:mcp-->21개** | + `wiki_graph_rules` · `wiki_evolve`(설명) · `wiki_status(full)` 확장 (모두 읽기 전용) | [MCP.md §2](MCP.md) |
 
 ### 고친 결함 (조용히 아무 일도 하지 않던 것들)
 

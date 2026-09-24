@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import atomicio
 from . import graph_rules as _gr
+from . import graph_findings as _gf
 from .graph_rules import entity_id_for
 from .textutil import keywords
 
@@ -304,6 +305,12 @@ def profile(pipe, *, include_eval: bool = False, requests_n: Optional[int] = Non
     }
     out["suggestions"] = suggest(out)
     out["thresholds"] = dict(THRESHOLDS)
+    # 소견 (2026-09-24): 지표를 "무엇이 잘못됐고 무엇을 고칠지" 로 — 증거·원인·처방(붙여 넣을 조각)·확인. graph_findings.py
+    try:
+        out["findings"] = _gf.compute(pipe, out, rules)
+    except Exception as e:  # 관측은 본체를 막지 않는다
+        out["findings"] = {"findings": [], "errors": [{"step": "compute", "error": "%s: %s" % (type(e).__name__, str(e)[:200])}],
+                           "thresholds": dict(_gf.THRESHOLDS), "by_area": {}, "by_severity": {}}
 
     # ---- (옵션) 그래프 채널만 켠 평가 — eval --matrix 의 graph 조합과 같다
     if include_eval:
@@ -438,6 +445,7 @@ KEY_METRICS: List[Tuple[str, str, str]] = [   # (키, 한글 이름, 경로 a.b.
     ("hub_max_degree", "허브 최대 차수", "connectivity.degree.max"), ("hub_warnings", "허브 경고", "connectivity.hub_warnings"),
     ("coverage_pct", "문서 커버리지 %", "coverage.pct"), ("entities_per_doc", "문서당 엔티티", "coverage.entities_per_doc"),
     ("cooccur_share", "cooccur 비중", "quality.cooccur_share"), ("duplicates", "중복 후보", "quality.duplicate_candidates"),
+    ("findings_error", "소견 error", "findings.by_severity.error"), ("findings_warn", "소견 warn", "findings.by_severity.warn"),
     ("dangling", "끊긴 관계", "quality.dangling_relations"), ("dead_rules", "죽은 규칙", "rules.dead_rules"),
     ("dead_dictionary", "죽은 사전 항목", "rules.dictionary.dead"),
     ("seed_share", "시드 있는 질의 비율", "usage.seed_share"), ("graph_hit_share", "graph 근거 비율", "usage.graph_hit_share"),
@@ -532,6 +540,10 @@ def _render(p: Dict[str, Any], md: bool) -> str:
         L.append("  (없음 — 임계값 안)")
     for sg in p["suggestions"]:
         L.append(("- " if md else "  ") + "[%s] %s %s\n%s→ %s" % (sg["severity"], sg["kind"], sg["detail"], "  " if md else "      ", sg["action"]))
+    fr = p.get("findings") or {}
+    L.append(H("소견 %d건 — 무엇이 잘못됐고 무엇을 고칠지 (영역: %s)" % (len(fr.get("findings") or []),
+                                                          ", ".join("%s %d" % kv for kv in (fr.get("by_area") or {}).items() if kv[1]) or "-")))
+    L += _gf.render(fr, md)
     if p.get("compare"):
         cp = p["compare"]
         L.append(H("직전 실행과 비교 (%s → %s)" % (cp["before"].get("generated_at"), cp["after"].get("generated_at"))))

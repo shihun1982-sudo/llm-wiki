@@ -1169,9 +1169,45 @@ class Handler(BaseHTTPRequestHandler):
                     # (2026-09-20 정렬 감사에서 발견).
                     return self._json(_ops.redact(d_, admin=bool(user and user.role == "admin")))
                 if u.path == "/api/graph":
-                    lim = _qint(qs, "limit", 150)
+                    # 2026-09-24: provenance·types 를 **넘긴다**(예전에는 화면의 출처·유형 필터가 아무 일도 안 했다) · community 비숫자는 400 ·
+                    # edge_kinds(structure) · center/hops(이웃 보기) 추가. 기본 limit 는 화면·CLI 와 같은 120.
+                    lim = _qint(qs, "limit", 120)
                     comm = qs.get("community")
-                    return self._json(p.graph_export(limit=lim, community=int(comm) if comm not in (None, "", "all") else None))
+                    community = None
+                    if comm not in (None, "", "all"):
+                        try:
+                            community = int(comm)
+                        except ValueError:
+                            return self._json({"error": "community 는 정수(무리 번호)여야 합니다", "got": comm}, 400)
+                    types = [x.strip() for x in (qs.get("types") or "").split(",") if x.strip()] or None
+                    hops = _qint(qs, "hops", 1)
+                    return self._json(p.graph_export(limit=lim, community=community, provenance=qs.get("provenance") or None, types=types,
+                                                     edge_kinds=qs.get("edge_kinds") or "all", center=qs.get("center") or None,
+                                                     hops=max(1, min(3, hops))))
+                if u.path == "/api/community":
+                    # 무리(커뮤니티) 하나의 안 — CLI `graph community --community N` · MCP wiki_community 와 같은 함수
+                    cid = qs.get("id")
+                    try:
+                        cid_i = int(cid)
+                    except (TypeError, ValueError):
+                        return self._json({"error": "id 는 정수(무리 번호)여야 합니다", "got": cid}, 400)
+                    d = p.community_export(cid_i, limit=_qint(qs, "limit", 200))
+                    if d is None:
+                        return self._json({"error": "not found", "community": cid_i}, 404)
+                    return self._json(d)
+                if u.path == "/api/graph/profile" and (qs.get("format") or "") == "md":
+                    # 보고서 내려받기 — CLI `graph profile --out FILE` 과 같은 마크다운 (LLM 에게 그대로 주는 용도)
+                    from .. import graph_profile as _gp
+                    prof = _gp.profile(p, include_eval=(qs.get("eval") or "") in ("1", "true"))
+                    prof["saved"] = _gp.save(prof)
+                    data = _gp.render_markdown(prof).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=graph_profile.md")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if u.path == "/api/graph/profile":            # 그래프 진단 (§2.5) — 큰 그래프에서는 몇 초 걸린다 (HEAVY_GET 의 /api/graph 접두로 읽기 슬롯)
                     from .. import graph_profile as _gp
                     prof = _gp.profile(p, include_eval=qs.get("eval") in ("1", "true"))

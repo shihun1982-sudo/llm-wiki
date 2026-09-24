@@ -280,7 +280,7 @@ class QualityOptionsTest(unittest.TestCase):
         self.assertEqual({t["name"] for t in tools}, {"wiki_query", "wiki_search", "wiki_entity", "wiki_status", "wiki_related", "wiki_doc", "wiki_propose",
                                                       "wiki_feedback", "wiki_forensic", "wiki_sources", "wiki_external_search", "wiki_analysis",
                                                       "wiki_requests", "wiki_rerun", "wiki_rules", "wiki_graph_profile", "wiki_graph_rules",
-                                                      "wiki_sweep", "wiki_inspect", "wiki_evolve"})
+                                                      "wiki_sweep", "wiki_inspect", "wiki_evolve", "wiki_community"})
         # 붙는 LLM 이 "읽기 전용인가" 를 판단하는 근거 — 도구를 늘리면서 빠뜨리기 쉽다
         self.assertFalse([t["name"] for t in tools if not (t.get("annotations") or {})], "annotations 가 없는 도구가 있습니다")
         r = mcp.handle(self.p, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "wiki_query", "arguments": {"question": "캐파 확장 담당", "k": 3}}})

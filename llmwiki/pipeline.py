@@ -31,7 +31,7 @@ from .config import Settings, apply_overrides
 from .corpus import Document, chunk_document, iter_corpus, scan_changed
 from .evalset import aggregate, load_questions, score_result
 from .graph_build import build_graph_for_chunks, finalize_graph
-from .graph_rules import RuleExtractor, load_rules
+from .graph_rules import RuleExtractor, load_rules, entity_id_for
 from .profiler import Profiler, jsonable
 from .providers import make_embedder, make_llm, HashEmbedder, MODEL_CATALOG
 from .retrieval import fts_search, vector_search, graph_search, rrf_fuse, rerank, route, Hit
@@ -1702,33 +1702,178 @@ class Pipeline:
     # =====================================================================
     # GRAPH INSPECT
     # =====================================================================
-    def graph_export(self, limit: int = 400, community: Optional[int] = None, provenance: Optional[str] = None,
-                     types: Optional[List[str]] = None) -> Dict[str, Any]:
-        """provenance: 'explicit,rule' 처럼 쉼표 목록으로 관계 출처 필터. types: 노드 유형 필터."""
+    #: 공동출현 계열 관계 — "구조 관계만" 보기에서 뺀다
+    COOCCUR_RELS = ("co_occurs", "mentions", "mentions_date", "mentions_amount")
+
+    def graph_export(self, limit: int = 120, community: Optional[int] = None, provenance: Optional[str] = None,
+                     types: Optional[List[str]] = None, edge_kinds: str = "all", center: Optional[str] = None,
+                     hops: int = 1) -> Dict[str, Any]:
+        """그래프 탭·CLI `graph`·MCP 가 그리는 부분 그래프.
+
+        limit      : **연결(degree) 많은 순으로 상위 N 개** — 전체 그래프가 아니다. 화면은 이것을 "상위 N개" 라고 부른다.
+        community  : 무리 번호. 2026-09-24: 예전에는 상위 limit*3 을 자른 **뒤** 걸러서 작은 무리를 고르면 노드 0개가 나왔다 — 이제 먼저 거른다.
+        provenance : 관계 출처 필터 'explicit,rule' (예전에는 Web 핸들러가 이 값을 넘기지 않았다).
+        types      : 노드 유형 필터.
+        edge_kinds : all | structure — structure 는 공동출현 계열(co_occurs·mentions)을 뺀다 (실DB 는 관계의 96% 가 cooccur 라 구조가 묻힌다).
+        center/hops: 엔티티 하나를 중심으로 hops 홉 이웃만 — 그래프 검색이 실제로 보는 시야.
+        반환에는 화면이 설명에 쓸 값을 함께 준다: total_entities · shown · edge_counts_shown(그려진 간선의 출처별 수) ·
+        communities(**그려진 노드가 속한 무리만**, all_communities_n 은 전체 수) · 노드마다 neighbors(이웃 수 — degree 는 관계 행 수라 부풀려진다).
+        """
         self.sync_with_db()
-        ents = self.store.entities(limit * 3)
-        ents = [e for e in ents if e["type"] not in ("date", "amount")]
+        all_ents = self.store.entities(10_000_000)
+        total = len(all_ents)
+        ents = [e for e in all_ents if e["type"] not in ("date", "amount")]
         if community is not None:
             ents = [e for e in ents if e["community"] == community]
         if types:
             ents = [e for e in ents if e["type"] in types]
-        ents = ents[:limit]
-        ids = {e["entity_id"] for e in ents}
         prov = set(x.strip() for x in (provenance or "").split(",") if x.strip())
-        rels = [r for r in self.store.relations_all() if r["src"] in ids and r["dst"] in ids and r["rel"] not in ("mentions_date", "mentions_amount")
-                and (not prov or (r.get("provenance") or "") in prov)]
+        structure_only = str(edge_kinds or "all") == "structure"
+
+        def keep(r: Dict[str, Any]) -> bool:
+            if r["rel"] in ("mentions_date", "mentions_amount"):
+                return False
+            if prov and (r.get("provenance") or "") not in prov:
+                return False
+            if structure_only and (r["rel"] in self.COOCCUR_RELS or (r.get("provenance") or "") == "cooccur"):
+                return False
+            return True
+
+        raw_rels = self.store.relations_all()
+        total_relations = len(raw_rels)
+        total_cooccur = sum(1 for r in raw_rels if r["rel"] in self.COOCCUR_RELS or (r.get("provenance") or "") == "cooccur")
+        by_type: Dict[str, int] = {}
+        for e in all_ents:
+            by_type[e["type"] or "?"] = by_type.get(e["type"] or "?", 0) + 1
+        rels_all = [r for r in raw_rels if keep(r)]
+        if center:
+            cid = center if str(center).startswith("e:") else entity_id_for(str(center))
+            adj: Dict[str, set] = {}
+            for r in rels_all:
+                adj.setdefault(r["src"], set()).add(r["dst"])
+                adj.setdefault(r["dst"], set()).add(r["src"])
+            reach = {cid}
+            frontier = {cid}
+            for _ in range(max(0, int(hops or 1))):
+                nxt = set()
+                for x in frontier:
+                    nxt |= adj.get(x, set())
+                nxt -= reach
+                reach |= nxt
+                frontier = nxt
+            byid_all = {e["entity_id"]: e for e in all_ents}
+            ents = [e for e in ents if e["entity_id"] in reach]
+            if cid in byid_all and all(e["entity_id"] != cid for e in ents):
+                ents.insert(0, byid_all[cid])
+            ents.sort(key=lambda e: (e["entity_id"] != cid, -(e["degree"] or 0)))
+        ents = ents[:max(1, int(limit))]
+        ids = {e["entity_id"] for e in ents}
         merged: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
-        for r in rels:
+        for r in rels_all:
+            if r["src"] not in ids or r["dst"] not in ids:
+                continue
             key = (r["src"], r["dst"], r["rel"])
             m = merged.setdefault(key, {"src": r["src"], "dst": r["dst"], "rel": r["rel"], "weight": 0.0, "n": 0, "source": r["source"],
                                         "description": r["description"], "provenance": r.get("provenance") or "", "confidence": float(r.get("confidence") or 0)})
             m["weight"] += float(r["weight"] or 0)
             m["n"] += 1
             m["confidence"] = max(m["confidence"], float(r.get("confidence") or 0))
+        edges = list(merged.values())
+        nb: Dict[str, set] = {}
+        for e_ in edges:
+            if e_["src"] != e_["dst"]:
+                nb.setdefault(e_["src"], set()).add(e_["dst"])
+                nb.setdefault(e_["dst"], set()).add(e_["src"])
+        edge_counts = {}
+        for e_ in edges:
+            k = e_["provenance"] or "?"
+            edge_counts[k] = edge_counts.get(k, 0) + 1
+        shown_comms = {e["community"] for e in ents if e.get("community") is not None and e["community"] >= 0}
+        all_comms = self.store.communities_all()
+        comm_rows = []
+        for c in all_comms:
+            if c["community"] in shown_comms:
+                row = dict(c)
+                row["shown"] = sum(1 for e in ents if e["community"] == c["community"])
+                comm_rows.append(row)
         return {"nodes": [{"id": e["entity_id"], "name": e["name"], "type": e["type"], "degree": e["degree"], "community": e["community"],
-                           "source": e["source"], "n_docs": e.get("n_docs") or 0, "n_mentions": e.get("n_mentions") or 0} for e in ents],
-                "edges": list(merged.values()), "communities": self.store.communities_all(),
-                "provenance_counts": self.store.provenance_counts()}
+                           "source": e["source"], "n_docs": e.get("n_docs") or 0, "n_mentions": e.get("n_mentions") or 0,
+                           "neighbors": len(nb.get(e["entity_id"], ()))} for e in ents],
+                "edges": edges, "communities": comm_rows, "all_communities_n": len(all_comms),
+                "provenance_counts": self.store.provenance_counts(), "edge_counts_shown": edge_counts,
+                "total_entities": total, "shown": len(ents), "limit": int(limit), "edge_kinds": "structure" if structure_only else "all",
+                # 사용자가 "몇 개를 볼지" 정하려면 고르기 **전에** 전체 규모가 보여야 한다 (2026-09-24 사용자 지적)
+                "total_relations": total_relations, "total_structural": total_relations - total_cooccur, "total_cooccur": total_cooccur,
+                "total_relations_kept": len(rels_all), "candidates": len([e for e in all_ents if e["type"] not in ("date", "amount")]),
+                "entities_by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1])),
+                "center": center, "hops": int(hops or 1) if center else None,
+                "filters": {"community": community, "provenance": sorted(prov), "types": list(types or [])}}
+
+    def community_export(self, cid: int, limit: int = 200) -> Optional[Dict[str, Any]]:
+        """무리(커뮤니티) 하나의 안: 구성원·유형 분포·안쪽 관계·관련 문서·요약(누가 썼는지). 세 창구(Web /api/community · CLI graph community · MCP wiki_community)가 같은 dict."""
+        self.sync_with_db()
+        comm = next((dict(c) for c in self.store.communities_all() if int(c["community"]) == int(cid)), None)
+        if comm is None:
+            return None
+        members = [e for e in self.store.entities(10_000_000) if e.get("community") == int(cid)]
+        members.sort(key=lambda e: -(e["degree"] or 0))
+        ids = {e["entity_id"] for e in members}
+        by_id = {e["entity_id"]: e for e in members}
+        merged: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        for r in self.store.relations_all():
+            if r["src"] in ids and r["dst"] in ids and r["src"] != r["dst"] and r["rel"] not in ("mentions_date", "mentions_amount"):
+                key = (r["src"], r["dst"], r["rel"])
+                m = merged.setdefault(key, {"src": r["src"], "dst": r["dst"], "src_name": by_id[r["src"]]["name"], "dst_name": by_id[r["dst"]]["name"],
+                                            "rel": r["rel"], "weight": 0.0, "n": 0, "provenance": r.get("provenance") or ""})
+                m["weight"] += float(r["weight"] or 0)
+                m["n"] += 1
+        edges = sorted(merged.values(), key=lambda m: -m["weight"])
+        edge_counts: Dict[str, int] = {}
+        struct = 0
+        for e_ in edges:
+            k = e_["provenance"] or "?"
+            edge_counts[k] = edge_counts.get(k, 0) + 1
+            if e_["rel"] not in self.COOCCUR_RELS and k != "cooccur":
+                struct += 1
+        docs: Dict[str, int] = {}
+        for e in members[:limit]:
+            try:
+                refs = json.loads(e.get("doc_refs") or "[]")
+            except Exception:
+                refs = []
+            for r in refs:
+                docs[r["doc_id"]] = docs.get(r["doc_id"], 0) + int(r.get("mentions") or 0)
+        titles = {d["doc_id"]: d.get("title") for d in self.store.list_docs()} if docs else {}
+        top_docs = [{"doc_id": d, "title": titles.get(d) or "", "mentions": n} for d, n in sorted(docs.items(), key=lambda kv: -kv[1])[:20]]
+        try:
+            top_entities = json.loads(comm.get("top_entities") or "[]")
+        except Exception:
+            top_entities = []
+        types: Dict[str, int] = {}
+        for e in members:
+            types[e["type"] or "?"] = types.get(e["type"] or "?", 0) + 1
+        return {"community": int(cid), "size": int(comm.get("size") or len(members)), "label": self.community_label(comm, members),
+                "summary": comm.get("summary") or "", "summary_source": comm.get("source") or "rule", "top_entities": top_entities,
+                "types": dict(sorted(types.items(), key=lambda kv: -kv[1])),
+                "members": [{"id": e["entity_id"], "name": e["name"], "type": e["type"], "degree": e["degree"], "n_docs": e.get("n_docs") or 0}
+                            for e in members[:limit]],
+                "edges": edges[:500], "edge_counts": edge_counts, "structural_edges": struct, "docs": top_docs}
+
+    @staticmethod
+    def community_label(comm: Dict[str, Any], members: Optional[List[Dict[str, Any]]] = None) -> str:
+        """무리의 **읽을 수 있는 이름**: LLM 요약이 있으면 첫 문장, 아니면 대표 엔티티 3개. 번호(C0, C1)는 라벨 전파가 붙인 순번이라 뜻이 없다."""
+        summ = str(comm.get("summary") or "")
+        if str(comm.get("source") or "") == "llm" and summ:
+            first = summ.split(". ")[0].split("다.")[0].strip()
+            if 4 <= len(first) <= 60:
+                return first
+        try:
+            top = json.loads(comm.get("top_entities") or "[]")
+        except Exception:
+            top = []
+        if not top and members:
+            top = [e["name"] for e in members[:3]]
+        return ", ".join(str(t) for t in top[:3]) or ("무리 %s" % comm.get("community"))
 
     def build_status(self) -> Dict[str, Any]:
         """진행 중/마지막 빌드 상태: 락 보유자, 임베딩 진행률, 마지막 빌드, 최근 임베딩 실행."""

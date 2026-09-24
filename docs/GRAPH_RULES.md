@@ -16,13 +16,14 @@
 | 무엇을 하고 싶나 | 고칠 절 | 확인 |
 |---|---|---|
 | 우리 조직/제품 이름을 노드로 잡고 싶다 | `entities` | `graph-rules add-entity` · `graph-rules test "<문장>"` |
+| 짧은 약어(IR·BB·CTO)가 영단어 안(`first`·`abbreviation`)에서 잡혀 가짜 허브가 된다 | `matching` · `entities[*].match` (§1.1) | `graph-rules test "the first director"` 가 아무것도 안 잡아야 한다 → `build graph` → `graph profile` |
 | 같은 것을 부르는 다른 표기를 한 노드로 모으고 싶다 | `entities[*].aliases` | `graph-rules add-alias` |
 | `ISSUE-2041` 같은 사내 ID 를 노드로 만들고 싶다 | `id_patterns` | `graph-rules test "ISSUE-2041"` |
 | "CL 문서가 이슈를 언급하면 *고쳤다*로 잇고 싶다" | `link_rules` | `graph-rules test "…" --doc-type cl` |
 | 본문 필드(`**담당**: …`)를 관계로 만들고 싶다 | `relation_patterns` | 〃 |
 | `4 ns` 같은 사양값·`rev B1` 같은 버전을 노드로 남기고 싶다 | `chunk_values` | 〃 |
 | 관계 이름이 `uses`/`used` 로 갈라진다 | `schema.relations[*].aliases` | `graph-rules lint` |
-| front matter `related.cls` 를 관계로 | `explicit_rels` · `related_key_type` | `build graph` 뒤 `graph-prof` |
+| front matter `related.cls` 를 관계로 | `explicit_rels` · `related_key_type` | `build graph` 뒤 `graph profile` |
 
 ```bat
 python -m llmwiki graph-rules types      :: 쓸 수 있는 유형·값 종류·관계 어휘
@@ -46,6 +47,26 @@ python -m llmwiki graph-rules test "CL-55302 가 ISSUE-2001 을 고쳤다" --doc
 | `date_patterns` · `money_pattern` · `percent_pattern` · `measure_pattern` · `version_pattern` | 스칼라 값을 잡는 정규식 (§3 에서 쓴다) |
 
 `graph-rules fill-defaults` 가 빠진 절과 `schema` 안의 빠진 표준 어휘를 채운다 — **이미 적어 둔 값은 건드리지 않는다.**
+
+### 1.1 `matching` — 사전 별칭을 **어떻게** 찾나 (2026-09-24)
+
+```jsonc
+"matching": {
+  "ascii_word_boundary": true,      // ASCII 별칭은 앞뒤가 영숫자가 아니어야 매칭 — "first" 의 IR, "vector" 의 CTO 를 잡지 않는다
+  "case_sensitive_max_len": 3       // 길이 3 이하 ASCII 별칭(IR·BB·CTO)은 대소문자를 구분. 0 = 모두 무시(예전 동작)
+},
+"entities": {
+  "IR본부": {"type": "org_unit", "aliases": ["IR"], "match": {"whole_word": true, "case_sensitive": true}}   // 엔티티별 덮어쓰기 (선택)
+}
+```
+
+왜: 예전 매처는 모든 별칭을 **경계 없이·대소문자 무시**로 찾았다. 실데이터에서 허브 1~5위(IR본부 degree 7,748 · CTO 2,244 · CHRO · COO · 베이스밴드)가
+전부 `corpus_d[ir]s`·`ve[cto]r`·`syn[chro]nous`·`[coo]rdinate`·`a[bb]reviation` 의 오탐이었다. 한글 별칭은 조사가 붙으므로(베이스밴드는) 경계 규칙을 적용하지 않는다.
+질의 쪽(`retrieval._match_entities`)도 같은 경계 규칙을 쓴다 — "first step" 이 IR본부를 시드로 잡던 것도 같은 버그였다.
+
+- 기본값은 켜져 있고 `graph-rules fill-defaults` 가 절을 채운다. **재빌드(`build graph`) 전까지 기존 그래프는 예전 결과**다 — `graph profile` 의 소견 `alias_false_positive` 가 그것을 알린다.
+- 되돌리기: `ascii_word_boundary: false`, `case_sensitive_max_len: 0`.
+- `lint` 가 `matching`·`match` 의 모르는 키를 알린다. 시험: `graph-rules test "The first director will coordinate"` → 아무것도 잡히지 않아야 한다.
 
 ## 2. `relation_patterns` — 본문 필드를 관계로
 
@@ -108,7 +129,7 @@ gr.register_value_type(gr.ValueType("partno", "부품번호", "P/N 을 part 노�
 - `per_chunk` 는 청크당 최대 개수. **`0` 이면 그 종류를 끈다** (파일 한 줄로 끄고 켠다).
 - 이 절이 통째로 없는 **예전 파일**은 예전 동작(날짜·금액만, `dates_per_chunk`/`amounts_per_chunk` 튜닝값 적용)으로 돈다.
 - 주의: 여기서 만든 노드를 `types_for_cooccur` 에 넣지 말 것. 날짜·금액·버전은 어느 문서에나 나오므로
-  **허브**가 되어 그래프 검색이 모든 문서로 번진다 (`graph-prof` 가 허브 경고로 잡아 준다).
+  **허브**가 되어 그래프 검색이 모든 문서로 번진다 (`graph profile` 의 소견 `alias_false_positive`·`hub_type_policy_mismatch` 가 잡아 준다).
 
 ## 4. `schema` — 타입·관계 어휘 (2026-09-19)
 
@@ -167,7 +188,7 @@ schema.entity_types ∪ types_for_cooccur ∪ id_patterns[*].type ∪ related_ke
 
 ## 5. `graph-rules lint` — 빌드 전 정적 점검
 
-파일**만** 보고 "이 규칙은 애초에 돌 수 없다" 를 찾는다. 빌드된 그래프를 보는 `graph-prof`(= "이 규칙이 아무것도
+파일**만** 보고 "이 규칙은 애초에 돌 수 없다" 를 찾는다. 빌드된 그래프를 보는 `graph profile`(= "이 규칙이 아무것도
 못 만들었다")와 역할이 다르다. 둘 다 돌리는 것이 맞다.
 
 | 찾는 것 | 등급 | 왜 |
@@ -203,7 +224,7 @@ Web 의 **원문 JSON 저장**은 저장 전에 이 점검을 돌려 **error 가
 | 규칙을 고쳤는데 검색이 그대로 | 그래프는 빌드 때 만들어진다 | `build graph` (청킹을 바꿨으면 `build --full`) |
 | 새 `relation_patterns` 를 넣었는데 관계가 안 생긴다 | 정규식이 실제 표기와 다르거나, 끝점 노드가 그 청크에서 안 만들어졌다 | `graph-rules test "<그 문장>"` — 노드와 관계가 바로 보인다 |
 | 노드는 생기는데 검색에 안 잡힌다 | 그 유형이 `types_for_cooccur` 에 없어 `mentions`/`co_occurs` 가 안 생긴다 | `graph-rules types` 로 유형 확인 → 필요하면 `types_for_cooccur` 에 추가 |
-| 그래프 검색이 모든 문서로 번진다 | 날짜·금액 같은 유형이 허브가 됐다 | `graph-prof` 의 허브 경고 → `chunk_values[*].per_chunk` 를 줄이거나 `types_for_cooccur` 에서 제외 |
+| 그래프 검색이 모든 문서로 번진다 | 날짜·금액 같은 유형이 허브가 됐다 | `graph profile` 의 소견 → `chunk_values[*].per_chunk` 를 줄이거나 `types_for_cooccur` 에서 제외 |
 | 빌드 로그에 "어휘 밖 관계 …" 가 나온다 | LLM 또는 규칙이 `schema.relations` 에 없는 이름을 만들었다 | 그 이름을 어휘에 넣거나, 같은 뜻의 표준 관계 `aliases` 에 넣는다 |
 | `link_rules` 를 넣었는데 안 걸린다 | 위에 `*`/`*` 규칙이 있어 가려졌다 | `graph-rules lint` 가 "가려져" 로 알려 준다 — 그 줄을 위로 옮긴다 |
 | 별칭을 넣었는데 엉뚱한 노드에 붙는다 | 다른 엔티티도 같은 별칭을 가지고 있다 | `graph-rules lint` 의 "함께 가지고 있습니다" |
@@ -217,7 +238,7 @@ python tools/verify/verify_surface_align.py        :: CLI · Web · MCP 정렬
 python tools/verify/verify_all.py                  :: 전체
 ```
 
-규칙 파일을 고친 뒤에는 **`build graph` → `graph-prof` → `eval --retrieval-only`** 순으로 본다 —
+규칙 파일을 고친 뒤에는 **`build graph` → `graph profile` → `eval --retrieval-only`** 순으로 본다 —
 각각 "만들어졌나 · 쓸 만한 모양인가 · 검색이 나아졌나" 에 답한다.
 
 ## 9. 구현 파일

@@ -65,7 +65,7 @@ claude mcp add llmwiki-remote -- python -m llmwiki mcp --connect http://wiki-hos
 
 ## 2. 도구
 
-built-in <!--live:mcp-->20개 (2026-09-18: `wiki_sweep` · `wiki_rules` · `wiki_graph_profile` · 2026-09-19: `wiki_graph_rules` · 2026-09-20: `wiki_evolve` 설명 인자와 `wiki_status(full)` 확장). 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 함께 돌려주는 MCP `annotations` 이며, 붙는 LLM 이
+built-in <!--live:mcp-->21개 (2026-09-24: `wiki_community` · 2026-09-18: `wiki_sweep` · `wiki_rules` · `wiki_graph_profile` · 2026-09-19: `wiki_graph_rules` · 2026-09-20: `wiki_evolve` 설명 인자와 `wiki_status(full)` 확장). 아래 표의 **힌트** 열은 `tools/list` 가 각 도구에 함께 돌려주는 MCP `annotations` 이며, 붙는 LLM 이
 "이 도구를 불러도 되는가" 를 스스로 판단하는 근거다(§2.2).
 
 | 도구 | 입력 | 돌려주는 것 | 등급 | 힌트 |
@@ -77,6 +77,7 @@ built-in <!--live:mcp-->20개 (2026-09-18: `wiki_sweep` · `wiki_rules` · `wiki
 | `wiki_related` | `text`, `doc_types[]`, `k` | 유사 문서 + 그래프 연결(CL↔Issue↔TC) | read | 읽기 |
 | `wiki_doc` | `id`(ISSUE-2041 / doc_id) | 문서 전문 + 메타 + 관계 | read | 읽기 |
 | `wiki_entity` | `name` | 엔티티 상세(관계·provenance·문서 참조) | read | 읽기 |
+| `wiki_community` | `id`, `limit` | **무리(커뮤니티) 하나의 안**: 구성원·유형 분포·안쪽 관계(출처별)·관련 문서·요약. 번호는 순번일 뿐(0 = 연결 최다 노드의 무리) — Web 지식 › 그래프 '무리 하나' 보기 · CLI `graph community --community N` 과 같은 함수 ([WEB_UI.md](WEB_UI.md) 그래프 절) | read | 읽기 |
 | `wiki_propose` | `kind`, `payload`, `reason`, `confidence` | 자가진화 제안 id (HITL; `pin`/`query_rule` 등) | read | **쓰기**(비파괴) |
 | `wiki_feedback` | `query_id`, `feedback=+1/-1`, `note` | 피드백 기록(부정+메모 → 위키 노트 제안) | read | **쓰기**(비파괴) |
 | `wiki_forensic` | `request_id`(생략=마지막), `expected_docs[]`, `expected_terms[]`, `expected_chunks[]`, `note`, `propose` | **기대 결과 포렌식** 표(어느 단계에서 탈락했나 + 수정안) — [FORENSIC.md](FORENSIC.md) | read | 읽기 |
@@ -222,7 +223,7 @@ MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 20
   OK  인증                 anonymous_role=viewer · API 키 0개 · 계정 1개
   OK  전송                 stdio: `python -m llmwiki mcp` · http: serve 의 POST /mcp (mcp_host=127.0.0.1 mcp_port=8766) · 브리지: mcp --connect <url>
 
-도구 20개: wiki_query, wiki_search, wiki_inspect, wiki_evolve, wiki_related, wiki_doc, wiki_entity, wiki_propose, wiki_feedback, wiki_forensic, wiki_status, wiki_analysis, wiki_sources, wiki_external_search, wiki_requests, wiki_rerun, wiki_sweep, wiki_rules, wiki_graph_profile, wiki_graph_rules
+도구 21개: wiki_query, wiki_search, wiki_inspect, wiki_evolve, wiki_related, wiki_doc, wiki_entity, wiki_community, wiki_propose, wiki_feedback, wiki_forensic, wiki_status, wiki_analysis, wiki_sources, wiki_external_search, wiki_requests, wiki_rerun, wiki_sweep, wiki_rules, wiki_graph_profile, wiki_graph_rules
 
 결과: 정상 (오류 0 · 경고 0)
 클라이언트 설정: python -m llmwiki mcp --client-config   · 문서 docs/MCP.md

@@ -2,7 +2,7 @@
 
 > **규칙 한 줄: `docs/` 바로 아래에 있으면 지금의 사실, `docs/history/<날짜>/` 에 있으면 그날의 사실이다.**
 >
-> 현행 문서 <!--live:docs-->44개 · 기록 <!--live:hist-->30개. 전부 읽을 필요는 없다.
+> 현행 문서 <!--live:docs-->44개 · 기록 <!--live:hist-->31개. 전부 읽을 필요는 없다.
 > 기계적 정합(링크 · 명령 · 설정 키 · API 경로 · 규모 숫자 · 레이아웃)은 `python tools/verify/verify_docs.py` 가 지킨다.
 
 ## 0. 가장 급한 사람을 위한 세 줄
@@ -106,7 +106,8 @@ docs/
 ## 7. 기록 — [history/README.md](history/README.md)
 
 회차별 계획·검증·리뷰. 날짜 폴더 하나가 한 회차다. **고치지 않는다.**
-가장 최근 회차는 [2026-09-24](history/2026-09-24/CODE_REVIEW_0924.md) — 09-23 회차(동시 질의 DB 잠금 ·
+가장 최근 회차는 [2026-09-24 Knowledge](history/2026-09-24/GRAPH_KNOWLEDGE_PLAN_0924.md) — 그래프 진단을 소견·처방으로, 그래프 탭 용어·보기 모드,
+사전 매처 단어 경계. 같은 날의 [CODE_REVIEW_0924.md](history/2026-09-24/CODE_REVIEW_0924.md) 는 09-23 회차(동시 질의 DB 잠금 ·
 종류별 한도 · 요청 원장)가 의도대로 구현됐는지 되짚은 사후 리뷰. 결함 14건과 처리, 부수 피해 점검,
 재발 방지 규칙 11가지. 그 회차의 설계 근거는 [2026-09-23](history/2026-09-23/IMPLEMENTATION_PLAN_0923.md),
 운영·포팅 절차는 [REQUEST_LEDGER.md](REQUEST_LEDGER.md) 에 있다.

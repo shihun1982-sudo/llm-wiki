@@ -198,7 +198,7 @@ class GraphProfileTest(unittest.TestCase):
         # 기존 `graph` 는 그대로 export
         code, out = run(["graph", "--limit", "3"])
         self.assertEqual(code, 0, out)
-        self.assertIn("nodes=", out)
+        self.assertIn("상위 3개", out)        # 2026-09-24: "nodes=N" → "상위 N개 (연결 많은 순 · 전체 엔티티 M)" — 노드 수의 뜻을 출력이 말한다
         # MCP
         r = mcp.call_tool(self.p, "wiki_graph_profile", {"compare": True})
         self.assertFalse(r.get("isError"), r)

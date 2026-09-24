@@ -120,9 +120,15 @@ def _match_entities(store: Store, query: str, k: int = 8) -> List[Tuple[str, flo
     # 정확 별칭 매칭 보너스 (조사 제거 토큰이 엔티티 이름/별칭과 동일) — build_version 별 캐시된 엔티티 인덱스 사용
     out: Dict[str, float] = {e: s for e, s in hits}
     ql = query.lower()
+    # 빌드 쪽과 같은 단어 경계 규칙 (2026-09-24): 예전 `n in ql` 은 "first step" 의 'ir' 로 IR본부를 시드로 잡았다.
+    from . import graph_rules as _gr
+    try:
+        wb = bool(_gr.matching_options().get("ascii_word_boundary", True))
+    except Exception:
+        wb = True
     for e in store.entity_index():
         for n in e["names"]:
-            if n in ql:
+            if _gr.name_in_text(n, ql, wb):
                 out[e["entity_id"]] = max(out.get(e["entity_id"], 0), 5.0 + len(n) * 0.2)
                 break
     return sorted(out.items(), key=lambda kv: -kv[1])[:k]

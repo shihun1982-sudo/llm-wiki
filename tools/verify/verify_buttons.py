@@ -82,7 +82,7 @@ PREFILL = {
     "btn-dbg-copy": "document.querySelector('#dbg-q')&&(document.querySelector('#dbg-q').value='ISSUE-2001');",
     "btn-time-test": "document.querySelector('#time-q')&&(document.querySelector('#time-q').value='지난주 리뷰한 CL');",
     "btn-qr-test": "document.querySelector('#qr-test-q')&&(document.querySelector('#qr-test-q').value='PDCCH');",
-    "btn-graph": "document.querySelector('#g-entity')&&(document.querySelector('#g-entity').value='ISSUE-2001');",
+    "btn-graph": "document.querySelector('#g-find')&&(document.querySelector('#g-find').value='ISSUE-2001');",
     "btn-tr-compare": "",
     "btn-tr-md": "",
     # 과거 질의를 **고를 수 있어야** 비교가 내 관심사 위에서 돈다 (2026-09-20).

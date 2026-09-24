@@ -1040,3 +1040,28 @@ u.h-error     { background:#8b1f1f; }
 u.h-unknown   { background:#777; }
 .h-key { display:inline-flex; align-items:center; gap:4px; margin-right:10px; font-size:11px; color:var(--muted); }
 .h-key u { width:10px; height:10px; display:inline-block; border-radius:2px; }
+
+/* ---- 지식 › 그래프 (2026-09-24 다시 씀: 용어 설명·보기 모드·툴팁·무리 목록) ---- */
+.g-wrap{position:relative}
+.g-tip{position:absolute;z-index:5;pointer-events:none;background:var(--card);border:1px solid var(--grid);border-radius:4px;padding:5px 8px;font-size:12px;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:260px}
+.g-total{margin:4px 0 2px;padding:6px 8px;background:var(--page);border:1px solid var(--grid);border-radius:4px}
+.g-bar{display:flex;height:6px;margin:4px 0;border-radius:3px;overflow:hidden;background:var(--page)}
+.g-bar i{display:block;height:100%}
+.legend i.line{width:14px;height:3px;border-radius:0}
+i.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.g-comm{padding:6px 0;border-bottom:1px solid var(--grid)}
+.g-comm:last-child{border-bottom:0}
+.g-prov-tab.on{border-color:var(--s1);color:var(--s1)}
+button.small{font-size:11px;padding:2px 8px}
+/* ---- 그래프 진단 소견 ---- */
+.finding{background:var(--card);border:1px solid var(--grid);border-left:4px solid var(--axis);border-radius:4px;padding:6px 10px;margin:6px 0}
+.finding summary{cursor:pointer;line-height:1.5}
+.finding.sev-error{border-left-color:var(--critical)}
+.finding.sev-warn{border-left-color:var(--warn)}
+.finding.sev-info{border-left-color:var(--s1)}
+.finding-body{margin-top:6px;padding-top:6px;border-top:1px dashed var(--grid)}
+.finding-body ol{margin:2px 0 4px 18px;padding:0}
+.finding-body pre.pre{max-height:260px;overflow:auto;margin:4px 0}
+.gp-area.on{border-color:var(--s1);color:var(--s1)}
+.pill.area-rules{border-color:var(--s1)}.pill.area-corpus{border-color:var(--s2)}.pill.area-build{border-color:var(--s3)}.pill.area-tuning{border-color:var(--s4)}.pill.area-query_rules{border-color:var(--s7)}
+#gr-snippet{width:100%;min-height:120px;font:12px/1.4 ui-monospace,Consolas,monospace}

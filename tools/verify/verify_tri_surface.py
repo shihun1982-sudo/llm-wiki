@@ -422,6 +422,18 @@ def compare_all(env, web, mcp):
         "cli": eid(c), "web": eid(w), "mcp": eid({"entity": _pick(m, "entity")}),
     })
 
+    # ── 7b. 무리(커뮤니티) 상세 (2026-09-24) ────────────────────────
+    print("\n[7b] 무리 상세 (CLI `graph community` · GET /api/community · wiki_community)")
+    comms = (g.get("communities") if isinstance(g, dict) else None) or []
+    cid = comms[0]["community"] if comms else 0
+    c, why = cli_json(env, ["graph", "community", "--community", str(cid), "--json"])
+    check("CLI graph community --json 이 파싱된다", c is not None, why)
+    w = web.get("/api/community?id=%s" % cid)
+    m = mcp.call("wiki_community", {"id": cid})
+    mem = lambda d: [x.get("id") for x in ((d or {}).get("members") or [])][:10] or None
+    same("무리 #%s 구성원 (상위 10)" % cid, {"cli": mem(c), "web": mem(w), "mcp": mem({"members": _pick(m, "members")})})
+    same("무리 #%s 이름" % cid, {"cli": (c or {}).get("label"), "web": (w or {}).get("label"), "mcp": _pick(m, "label")})
+
     # ── 8. 문서 상세 ────────────────────────────────────────────────
     print("\n[8] 문서 상세 (GET /api/doc · wiki_doc)")
     docs = web.get("/api/docs")

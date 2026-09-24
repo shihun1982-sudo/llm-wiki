@@ -241,6 +241,21 @@
    "detail": ""
   },
   {
+   "check": "CLI graph community --json 이 파싱된다",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "무리 #0 구성원 (상위 10)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "무리 #0 이름",
+   "ok": true,
+   "detail": ""
+  },
+  {
    "check": "비교할 문서가 있다",
    "ok": true,
    "detail": "sample_corpus_modem/README.md"
@@ -327,7 +342,7 @@
   }
  ],
  "failed": [],
- "n": 65,
- "ok": 65,
- "sec": 7.3
+ "n": 68,
+ "ok": 68,
+ "sec": 7.5
 }

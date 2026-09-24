@@ -96,6 +96,7 @@ ANNOTATIONS: Dict[str, Dict[str, Any]] = {
     "wiki_related": {"title": "유사 문서·연결", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_doc": {"title": "문서 전문", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_entity": {"title": "엔티티 상세", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "wiki_community": {"title": "무리(커뮤니티) 상세", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     "wiki_propose": {"title": "제안 등록 (사람 승인 필요)", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
     "wiki_feedback": {"title": "답변 피드백", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
     "wiki_forensic": {"title": "기대 결과 포렌식", "readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
@@ -163,6 +164,9 @@ TOOLS: List[Dict[str, Any]] = [
                                                       "k": {"type": "integer", "default": 8}}, "required": ["text"]}},
     {"name": "wiki_doc", "description": "문서 전문 + 정규화 메타(front matter) + 연결 노드. doc_id(경로) 또는 문서 ID(ISSUE-2041, CL-55321) 로 조회.",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "max_chars": {"type": "integer", "default": 20000}}, "required": ["id"]}},
+    {"name": "wiki_community", "description": "지식 그래프의 **무리(커뮤니티)** 하나의 안: 구성원(연결 많은 순)·유형 분포·안쪽 관계(출처별)·관련 문서·요약(규칙 기본문/LLM). "
+                                             "번호(0, 1, …)는 라벨 전파가 붙인 순번이라 뜻이 없고 0 은 연결이 가장 많은 노드가 속한 무리다. Web 지식 › 그래프 · CLI `graph community --community N` 과 같은 함수.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer", "description": "무리 번호"}, "limit": {"type": "integer", "default": 200}}, "required": ["id"]}},
     {"name": "wiki_entity", "description": "지식 그래프 엔티티 상세(관계·provenance, 문서 참조, 근거 문단).",
      "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "wiki_propose", "description": "분석 결과·정정·새 관계·코퍼스 갭을 자가진화 제안으로 기록한다 (색인을 직접 바꾸지 않음, 사람 승인 HITL). "
@@ -913,6 +917,19 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
         from .cli import _rules_explain_text
         out = _text(_rules_explain_text(r))
         out["structuredContent"] = r
+        return out
+    if name == "wiki_community":
+        try:
+            cid = int(args.get("id"))
+        except (TypeError, ValueError):
+            return _err("id 는 정수(무리 번호)여야 합니다")
+        d = pipe.community_export(cid, limit=int(args.get("limit") or 200))
+        if d is None:
+            return _err("없는 무리 번호: %s" % cid)
+        out = _text("무리 %d · %s · 구성원 %d · 요약(%s): %s | 유형: %s | 안쪽 관계 %d (구조 %d)" % (
+            d["community"], d["label"], d["size"], d["summary_source"], d["summary"][:300],
+            ", ".join("%s %d" % kv for kv in d["types"].items()), len(d["edges"]), d["structural_edges"]))
+        out["structuredContent"] = d
         return out
     if name == "wiki_graph_profile":
         from . import graph_profile as _gp

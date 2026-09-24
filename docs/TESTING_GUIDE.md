@@ -4,7 +4,7 @@
 > [VERIFICATION.md](VERIFICATION.md), 하네스 각각의 설명은 [tools/verify/README.md](../tools/verify/README.md).
 > 모든 테스트·하네스는 **격리 임시 환경**(임시 폴더 + `LLMWIKI_*_PATH`)에서 돌아 실제 색인·설정·로그를 건드리지 않는다.
 >
-> 지금 규모: 단위 테스트 <!--live:tests-->803개 · 검증 하네스 <!--live:harness-->30종.
+> 지금 규모: 단위 테스트 <!--live:tests-->823개 · 검증 하네스 <!--live:harness-->30종.
 > **테스트를 새로 쓸 거면 §2.5 를 먼저 읽는다** — 진짜 폴더를 건드리지 않는 법과, 그 테스트가 정말 무언가를 지키는지 확인하는 법.
 
 ## 0. 세 단계 규칙

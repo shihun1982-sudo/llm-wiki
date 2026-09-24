@@ -22,13 +22,13 @@
 | 의존성 | **표준 라이브러리 + numpy + pypdf**. 그 외 없음 |
 | 저장소 | SQLite 하나 (`data/llmwiki.sqlite3`, 테이블 41개, WAL) + numpy 인메모리 벡터 행렬 |
 | 검색 | FTS5(BM25) · 벡터(코사인) · 그래프(엔티티 n-hop) **세 채널을 가중 RRF 로 융합** |
-| 창구 | CLI 명령 <!--live:cli-->49개 · Web 경로 <!--live:api-->114개 · MCP 도구 <!--live:mcp-->20개 — **같은 기능은 셋 다 있어야 한다** ([SURFACE_ALIGNMENT.md](SURFACE_ALIGNMENT.md)) |
+| 창구 | CLI 명령 <!--live:cli-->49개 · Web 경로 <!--live:api-->115개 · MCP 도구 <!--live:mcp-->21개 — **같은 기능은 셋 다 있어야 한다** ([SURFACE_ALIGNMENT.md](SURFACE_ALIGNMENT.md)) |
 | 흐름 | build(10단계) · query(27단계) · evolve(6단계) · watch(2단계) |
 | LLM 역할 | 10개(answer·rerank·extract·summary·review·expand·verify·forensic·fusion·select), 역할마다 모델·프로바이더·앙상블을 따로 |
 | 설정 | 파일 4층(`config.json` 109키 · `tuning.json` 166키 · `presets.json` · 요청 단위 overrides) — **코드 수정 없이 이식** |
 | 권한 | 역할 6단계 × 작업 등급 7단계 + **문서 단위 접근 제어**(무엇을 읽을 수 있는가) |
 | 관측 | 모든 질의가 단계별 trace(이름 82종) · 진행 표시 · 분석 리포트 · 기대 결과 포렌식을 남긴다 |
-| 검증 | 단위 테스트 <!--live:tests-->803개 + 검증 하네스 <!--live:harness-->30종(`verify_all.py` 한 줄) |
+| 검증 | 단위 테스트 <!--live:tests-->823개 + 검증 하네스 <!--live:harness-->30종(`verify_all.py` 한 줄) |
 
 > 이 표의 굵은 규모 숫자 다섯 개(<!--live:--> 표시가 붙은 것)는 **하네스가 지킨다** — 코드와 어긋나면
 > `verify_docs.py` 가 "지금은 N 다" 라고 찍는다. 표시가 없는 숫자는 사람이 §17 의 세는 법으로 확인한다.
@@ -82,7 +82,7 @@
 | FastAPI / Flask | 의존성. `BaseHTTPRequestHandler` + `ThreadingHTTPServer` 로 충분하고, 요청 하나당 스레드 하나라 동시성 모델이 단순하다 |
 | Chroma / Milvus / FAISS | 문서 수만 건 규모에서 numpy 행렬 한 번의 행렬곱이 충분히 빠르다. 별도 프로세스·인덱스 파일·버전 호환 문제가 없다 |
 | LangChain / LlamaIndex | 추상화가 우리 파이프라인(단계별 trace·재실행·스윕)과 맞지 않는다. 단계를 직접 쥐고 있어야 관측과 재실행이 된다 |
-| pytest | 의존성. `unittest` 로 <!--live:tests-->803개를 돌리고 있고 모자란 적이 없다 |
+| pytest | 의존성. `unittest` 로 <!--live:tests-->823개를 돌리고 있고 모자란 적이 없다 |
 | 스트리밍(SSE) | 답변을 흘리면 **인용 검증(claim_check)을 답변 완성 뒤에 할 수 없다**. 대신 `/api/progress` 폴링으로 단계 진행을 보여 준다. SSE 요청은 명시적으로 405 |
 | ORM | 쿼리가 곧 성능이다. SQL 을 직접 보는 편이 진단에 낫다 |
 | 마이크로서비스 | 사내 한 대에 올리는 시스템이다. 프로세스 하나가 운영·백업·이식이 가장 쉽다 |
@@ -148,9 +148,9 @@
 | 파일 | 역할 |
 |---|---|
 | `cli.py` | 명령 <!--live:cli-->49개 |
-| `web/server.py` | HTTP 경로 <!--live:api-->114개 + 정적 파일 + 잡 + 워처 |
+| `web/server.py` | HTTP 경로 <!--live:api-->115개 + 정적 파일 + 잡 + 워처 |
 | `web/static/js/*.js` | 프론트 10개 모듈(`core` 공용, 화면별 9개) |
-| `mcp.py` | MCP 서버(stdio·Streamable HTTP·브리지), 도구 <!--live:mcp-->20개, 플러그인, 페더레이션 |
+| `mcp.py` | MCP 서버(stdio·Streamable HTTP·브리지), 도구 <!--live:mcp-->21개, 플러그인, 페더레이션 |
 | `mcp_client.py` | 외부 RAG·MCP 서버·REST 검색 API 연결(수집·검색 채널·도구 중계) |
 
 ### 2.6 운영·보안
@@ -450,7 +450,7 @@ Ask / **🧭 Pipeline** / Corpus / Knowledge / Quality / Evolve / Settings / Obs
   API 키·**문서 접근 제어**·스냅샷·감사 로그).
 - **Observability** — 진행 중 작업, 질의·로그(누가 무엇을 물었나), 서버 모니터(연결 풀·회로·제한).
 
-### 8.4 MCP (도구 <!--live:mcp-->20개)
+### 8.4 MCP (도구 <!--live:mcp-->21개)
 
 stdio(같은 PC) · Streamable HTTP(`POST /mcp`, Bearer API 키, 여러 LLM 동시) · 브리지(stdio 전용 클라이언트 → 원격).
 도구마다 `annotations`(읽기/쓰기·외부 접근)를 주고, `tools/call` 은 실행 전에 인자를 검증해 **실패 이유와 스키마**를

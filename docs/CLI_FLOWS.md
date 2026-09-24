@@ -570,19 +570,25 @@ trial #2 speed:    {"n": 25, "hit@k": 0.96, "mrr": 0.786, "term_recall": 0.8, �
 python -m llmwiki graph --limit 10
 python -m llmwiki graph --provenance explicit --limit 8     # 관계 출처 필터 + 엣지 출력
 python -m llmwiki graph --community 2 --types issue,cl --json
+python -m llmwiki graph --edge-kinds structure --limit 60             # 공동출현(co_occurs·mentions) 관계를 뺀 구조 관계만
+python -m llmwiki graph --center ISSUE-2001 --hops 2                  # 엔티티 중심 2홉 — 그래프 검색이 보는 시야
+python -m llmwiki graph community --community 0                       # 무리(커뮤니티) 하나의 안 (Web 지식 › 그래프 · MCP wiki_community 와 같은 dict)
 ```
 **내부 단계** (`Pipeline.graph_export`): `sync_with_db()` → 엔티티 상위 limit×3 에서 date/amount 제외 → community/types 필터 → 두 노드가 모두 포함된 관계 중 `mentions_date/amount` 제외, `--provenance`(explicit,rule,human,llm,cooccur) 필터 → (src,dst,rel) 병합(weight 합, confidence max) → communities, provenance_counts.
 
 **출력**
 ```
-nodes=10 edges=46 communities=10 provenance={"cooccur": 156, "explicit": 51, "rule": 92}
-  ISSUE-2002                               issue      deg=30  C0 [rule]
-  RULE-REG-002                             coding_rule deg=29  C1 [rule]
-  ISSUE-2001                               issue      deg=27  C2 [rule]
+상위 10개 (연결 많은 순 · 전체 엔티티 67) · 간선 46 · 무리 3/8 · 그려진 간선 출처 {"cooccur": 30, "explicit": 10, "rule": 6}
+  ISSUE-2002                               issue      연결 30   이웃 12  무리 0 [rule]
+  RULE-REG-002                             coding_rule 연결 29   이웃 9   무리 1 [rule]
+  ISSUE-2001                               issue      연결 27   이웃 11  무리 2 [rule]
   …
-C1 (n=12): 핵심 엔티티: RULE-REG-002, WR-2026-W34, ISSUE-2006, …
-C2 (n=4): 핵심 엔티티: ISSUE-2001, WR-2026-W33, CL-55301, TC-RX-DMA-001
-
+무리 1 (RULE-REG-002, WR-2026-W34, ISSUE-2006 · 12개 중 4개 표시 · 요약 규칙 기본문): 핵심 엔티티: RULE-REG-002, WR-2026-W34, ISSUE-2006, …
+무리 2 (ISSUE-2001, WR-2026-W33, CL-55301 · 4개 중 3개 표시 · 요약 규칙 기본문): 핵심 엔티티: ISSUE-2001, WR-2026-W33, CL-55301, TC-RX-DMA-001
+```
+2026-09-24: "nodes=N" 이 아니라 **"상위 N개 (연결 많은 순 · 전체 M)"** 로 — 노드 수의 뜻(전체가 아니라 상위)을 출력이 말한다. 기본 `--limit` 는 Web 과 같은 120.
+`연결` = 관계 행 수(청크마다 셈) · `이웃` = 서로 다른 이웃 수 · 무리 번호는 순번(0 = 연결 최다 노드의 무리)이라 뜻이 없어 대표 엔티티 3개를 이름으로 붙인다.
+```
 # --provenance explicit (엣지 40개까지 출력)
   e:cl-55301 -[fixes]-> e:issue-2001  (explicit w=1.00 conf=0.98)
   e:issue-2001 -[fixed_by]-> e:cl-55301  (explicit w=1.00 conf=0.98)

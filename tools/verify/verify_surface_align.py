@@ -85,6 +85,7 @@ CAPS = [
      "기록의 90%가 정상 건이라(실측 1,122 중 1,025) 전부 보여 주면 볼 이유가 있는 줄이 묻힌다 (2026-09-20)"),
     ("엔티티·관계 조회", "entity", "/api/entity", "wiki_entity", ""),
     ("그래프 이웃", "graph", "/api/graph", "", "엔티티 상세(wiki_entity)와 유사 문서(wiki_related)가 덮는다"),
+    ("무리(커뮤니티) 상세", "graph", "/api/community", "wiki_community", "2026-09-24 — Web 그래프 탭 '무리 하나' 보기 · CLI graph community --community N"),
     ("유사 문서 + 연결", "", "/api/search", "wiki_related", "MCP 전용 — 이슈 분석 결과로 관련 문서를 찾는 용도"),
     ("문서 목록 · 전문 + 메타", "docs", "/api/doc_chunks /api/doc /api/docs", "wiki_doc",
      "`/api/docs` 는 목록(유형·ext_id·날짜), `/api/doc?id=` 는 한 건의 전체 모습(메타·청크·관계·엔티티 — MCP `wiki_doc` 과 **같은 함수** querydebug.doc_detail), "

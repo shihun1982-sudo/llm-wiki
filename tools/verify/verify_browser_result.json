@@ -1,10 +1,10 @@
 {
  "pages": {
   "index": {
-   "dom_len": 126530,
-   "console_lines": 3,
+   "dom_len": 132780,
+   "console_lines": 4,
    "errors": [],
-   "tabs": 36,
+   "tabs": 37,
    "user_badge": true,
    "title": "LLM Wiki · FTS + Vector + GraphRAG (self-evolving)",
    "has_btn-q-expect": true,
@@ -26,7 +26,7 @@
    "has_build-external": true
   },
   "login": {
-   "dom_len": 126530,
+   "dom_len": 132780,
    "console_lines": 3,
    "errors": []
   }
@@ -68,7 +68,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 66812,
+   "body_len": 66797,
    "static_len": 6551,
    "ok": true
   },
@@ -88,7 +88,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 112628,
+   "body_len": 113033,
    "static_len": 2641,
    "ok": true
   },
@@ -98,7 +98,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 6421,
+   "body_len": 5886,
    "static_len": 907,
    "ok": true
   },
@@ -138,8 +138,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1177,
-   "static_len": 1065,
+   "body_len": 7663,
+   "static_len": 3399,
    "ok": true
   },
   {
@@ -148,8 +148,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1978,
-   "static_len": 1215,
+   "body_len": 2392,
+   "static_len": 1559,
    "ok": true
   },
   {
@@ -158,7 +158,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 536,
+   "body_len": 36859,
    "static_len": 488,
    "ok": true
   },
@@ -168,8 +168,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 11048,
-   "static_len": 2702,
+   "body_len": 11316,
+   "static_len": 2967,
    "ok": true
   },
   {
@@ -198,7 +198,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 18102,
+   "body_len": 18129,
    "static_len": 1186,
    "ok": true
   },
@@ -218,7 +218,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 65605,
+   "body_len": 66198,
    "static_len": 1990,
    "ok": true
   },
@@ -278,7 +278,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 1478,
+   "body_len": 1480,
    "static_len": 661,
    "ok": true
   },
@@ -318,8 +318,18 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 27516,
+   "body_len": 28362,
    "static_len": 2979,
+   "ok": true
+  },
+  {
+   "group": "observability",
+   "tab": "ledger",
+   "active": true,
+   "rendered": true,
+   "errors": [],
+   "body_len": 16142,
+   "static_len": 2466,
    "ok": true
   },
   {
@@ -328,7 +338,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 20559,
+   "body_len": 20750,
    "static_len": 801,
    "ok": true
   },
@@ -338,7 +348,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 4466,
+   "body_len": 4469,
    "static_len": 1278,
    "ok": true
   },
@@ -348,7 +358,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 15475,
+   "body_len": 15226,
    "static_len": 2118,
    "ok": true
   },
@@ -358,8 +368,8 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 79101,
-   "static_len": 1110,
+   "body_len": 84641,
+   "static_len": 1412,
    "ok": true
   },
   {
@@ -368,7 +378,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 11312,
+   "body_len": 11533,
    "static_len": 3913,
    "ok": true
   },
@@ -378,7 +388,7 @@
    "active": true,
    "rendered": true,
    "errors": [],
-   "body_len": 39462,
+   "body_len": 35569,
    "static_len": 1203,
    "ok": true
   },

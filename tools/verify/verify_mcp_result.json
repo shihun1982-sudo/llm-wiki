@@ -1,6 +1,6 @@
 {
- "ts": "2026-09-24 20:43:41",
- "total": 154,
+ "ts": "2026-09-24 22:41:28",
+ "total": 156,
  "failed": [],
  "results": [
   {
@@ -41,7 +41,7 @@
   {
    "check": "tools/list 12종",
    "ok": true,
-   "detail": "20개: wiki_query, wiki_search, wiki_evolve, wiki_inspect …"
+   "detail": "21개: wiki_query, wiki_search, wiki_evolve, wiki_inspect …"
   },
   {
    "check": "모든 inputSchema 가 object",
@@ -51,7 +51,7 @@
   {
    "check": "annotations(readOnlyHint 등) 부착",
    "ok": true,
-   "detail": "20/20"
+   "detail": "21/21"
   },
   {
    "check": "쓰기 도구만 readOnlyHint=false",
@@ -174,6 +174,11 @@
    "detail": "ISSUE-2001 (issue) degree=287 docs=21 문서: corpus/imported/issues/ISSUE-2001.md · DMA underrun 발생 후 P"
   },
   {
+   "check": "wiki_community {\"id\": 0}",
+   "ok": true,
+   "detail": "무리 0 · 이 커뮤니티는 LLM(Wiki) CLI 운영 및 관리에 관련된 주제를 다룹니다 · 구성원 562 · 요약(llm): 이 커뮤니티는 LLM(Wiki) CLI 운영 및 관"
+  },
+  {
    "check": "wiki_related {\"text\": \"TX 전력 제어 오동작으로 PA gain 테이블을 ",
    "ok": true,
    "detail": "유사 문서 (issue, cl): - corpus/imported/issues/ISSUE-2003.md [issue ISSUE-2003 2026-06-22] TX 전력이 목표 대비"
@@ -186,7 +191,7 @@
   {
    "check": "wiki_analysis {\"focus\": \"speed\"}",
    "ok": true,
-   "detail": "# 질의 상세 분석 리포트 — request #4136  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 20:43:36 · ru"
+   "detail": "# 질의 상세 분석 리포트 — request #4136  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 22:41:22 · ru"
   },
   {
    "check": "wiki_sources {}",
@@ -206,12 +211,12 @@
   {
    "check": "wiki_requests {\"limit\": 5}",
    "ok": true,
-   "detail": "[  {   \"id\": 4137,   \"ts\": 1790250216.5939553,   \"kind\": \"search\",   \"ms\": 6.65,   \"summary\": \"relat"
+   "detail": "[  {   \"id\": 4137,   \"ts\": 1790257283.0658178,   \"kind\": \"search\",   \"ms\": 6.55,   \"summary\": \"relat"
   },
   {
    "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
    "ok": true,
-   "detail": "[  {   \"id\": 4136,   \"ts\": 1790250216.5451646,   \"kind\": \"query\",   \"ms\": 107.97,   \"summary\": \"ISSU"
+   "detail": "[  {   \"id\": 4136,   \"ts\": 1790257282.971832,   \"kind\": \"query\",   \"ms\": 109.14,   \"summary\": \"ISSUE"
   },
   {
    "check": "wiki_rerun {}",
@@ -221,7 +226,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_trzg4esh\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -231,7 +236,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_trzg4esh\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
@@ -271,7 +276,7 @@
   {
    "check": "wiki_requests (한 건 상세)",
    "ok": true,
-   "detail": "{  \"id\": 4140,  \"ts\": 1790250217.213162,  \"kind\": \"query\",  \"ms\": 47.16,  \"query\": \"ISSUE-2001 의 원인\""
+   "detail": "{  \"id\": 4140,  \"ts\": 1790257283.815673,  \"kind\": \"query\",  \"ms\": 48.27,  \"query\": \"ISSUE-2001 의 원인\""
   },
   {
    "check": "wiki_sweep (last · rrf_k=[10,60] → record/compare)",
@@ -366,12 +371,12 @@
   {
    "check": "Mcp-Session-Id 발급",
    "ok": true,
-   "detail": "52817bd7a9295446d5905920"
+   "detail": "6290995b099f923ecb0c2ab1"
   },
   {
    "check": "세션 유지 (같은 Mcp-Session-Id)",
    "ok": true,
-   "detail": "52817bd7a9295446d5905920"
+   "detail": "6290995b099f923ecb0c2ab1"
   },
   {
    "check": "알림만 보내면 202",
@@ -401,7 +406,7 @@
   {
    "check": "API 키로 tools/list",
    "ok": true,
-   "detail": "lwk_115d56…"
+   "detail": "lwk_4c4b94…"
   },
   {
    "check": "wiki_status {}",
@@ -454,6 +459,11 @@
    "detail": "ISSUE-2001 (issue) degree=287 docs=21 문서: corpus/imported/issues/ISSUE-2001.md · DMA underrun 발생 후 P"
   },
   {
+   "check": "wiki_community {\"id\": 0}",
+   "ok": true,
+   "detail": "무리 0 · 이 커뮤니티는 LLM(Wiki) CLI 운영 및 관리에 관련된 주제를 다룹니다 · 구성원 562 · 요약(llm): 이 커뮤니티는 LLM(Wiki) CLI 운영 및 관"
+  },
+  {
    "check": "wiki_related {\"text\": \"TX 전력 제어 오동작으로 PA gain 테이블을 ",
    "ok": true,
    "detail": "유사 문서 (issue, cl): - corpus/imported/issues/ISSUE-2003.md [issue ISSUE-2003 2026-06-22] TX 전력이 목표 대비"
@@ -466,7 +476,7 @@
   {
    "check": "wiki_analysis {\"focus\": \"speed\"}",
    "ok": true,
-   "detail": "# 질의 상세 분석 리포트 — request #4146  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 20:43:37 · ru"
+   "detail": "# 질의 상세 분석 리포트 — request #4146  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-24 22:41:24 · ru"
   },
   {
    "check": "wiki_sources {}",
@@ -486,12 +496,12 @@
   {
    "check": "wiki_requests {\"limit\": 5}",
    "ok": true,
-   "detail": "[  {   \"id\": 4147,   \"ts\": 1790250217.7781603,   \"kind\": \"search\",   \"ms\": 6.54,   \"summary\": \"relat"
+   "detail": "[  {   \"id\": 4147,   \"ts\": 1790257284.278706,   \"kind\": \"search\",   \"ms\": 6.72,   \"summary\": \"relate"
   },
   {
    "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
    "ok": true,
-   "detail": "[  {   \"id\": 4146,   \"ts\": 1790250217.5823188,   \"kind\": \"query\",   \"ms\": 102.96,   \"summary\": \"ISSU"
+   "detail": "[  {   \"id\": 4146,   \"ts\": 1790257284.0850055,   \"kind\": \"query\",   \"ms\": 102.8,   \"summary\": \"ISSUE"
   },
   {
    "check": "wiki_rerun {}",
@@ -501,7 +511,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_trzg4esh\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -511,7 +521,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_trzg4esh\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn__ja0mepe\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
@@ -551,7 +561,7 @@
   {
    "check": "wiki_requests (한 건 상세)",
    "ok": true,
-   "detail": "{  \"id\": 4150,  \"ts\": 1790250218.6724632,  \"kind\": \"query\",  \"ms\": 47.45,  \"query\": \"ISSUE-2001 의 원인"
+   "detail": "{  \"id\": 4150,  \"ts\": 1790257285.228332,  \"kind\": \"query\",  \"ms\": 48.64,  \"query\": \"ISSUE-2001 의 원인\""
   },
   {
    "check": "wiki_sweep (last · rrf_k=[10,60] → record/compare)",
@@ -656,7 +666,7 @@
   {
    "check": "브리지 tools/list",
    "ok": true,
-   "detail": "20"
+   "detail": "21"
   },
   {
    "check": "브리지 tools/call",
@@ -671,7 +681,7 @@
   {
    "check": "mcp --doctor: 결함 없는 환경은 ok=true",
    "ok": true,
-   "detail": "오류 0 · 경고 0 · 도구 20"
+   "detail": "오류 0 · 경고 0 · 도구 21"
   },
   {
    "check": "플러그인 도구 등록",
@@ -746,7 +756,7 @@
   {
    "check": "mcp --doctor --json (심어 둔 결함만 오류로)",
    "ok": true,
-   "detail": "ok=False · 오류 ['플러그인'] · 경고 0 · 도구 22"
+   "detail": "ok=False · 오류 ['플러그인'] · 경고 0 · 도구 23"
   },
   {
    "check": "doctor: 플러그인 오류 검출",
@@ -756,7 +766,7 @@
   {
    "check": "doctor: 도구 목록에 확장 포함",
    "ok": true,
-   "detail": "22"
+   "detail": "23"
   },
   {
    "check": "doctor: 페더레이션 도구 보고",

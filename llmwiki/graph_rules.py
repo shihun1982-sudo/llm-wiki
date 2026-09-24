@@ -35,6 +35,12 @@ def rules_path() -> str:
         return RULES_PATH_DEFAULT
 
 DEFAULT_RULES: Dict[str, object] = {
+    # 사전 매칭 방식 (2026-09-24). 예전에는 모든 별칭을 **경계 없이 · 대소문자 무시**로 찾아서 "f-ir-st" 의 IR, "dire-cto-r" 의 CTO,
+    # "a-bb-reviation" 의 BB 가 잡혔고 그 오탐이 실데이터 허브 1~5위를 차지했다 (degree 7,748 / 2,244 / …).
+    #   ascii_word_boundary  : ASCII 별칭은 앞뒤가 영숫자가 아니어야 매칭. 한글 별칭은 조사가 붙으므로(베이스밴드는) 적용하지 않는다.
+    #   case_sensitive_max_len: 이 길이 이하의 ASCII 별칭(IR·BB·CTO)은 대소문자를 구분한다. 0 = 모두 무시(예전 동작).
+    # 엔티티마다 "match": {"whole_word": bool, "case_sensitive": bool} 로 덮어쓸 수 있다.
+    "matching": {"ascii_word_boundary": True, "case_sensitive_max_len": 3},
     "entities": {
         # canonical name: {type, aliases}
         "NVIDIA": {"type": "org", "aliases": ["엔비디아", "Nvidia", "NVIDIA Data Center"]},
@@ -501,6 +507,49 @@ class Schema:
                 "unknown_type_kinds": len(self.unknown_types), "unknown_types": top(self.unknown_types)}
 
 
+_ASCII_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9&._+-]*")
+
+MATCHING_DEFAULTS: Dict[str, object] = {"ascii_word_boundary": True, "case_sensitive_max_len": 3}
+MATCHING_KEYS = ("ascii_word_boundary", "case_sensitive_max_len")
+ENTITY_MATCH_KEYS = ("whole_word", "case_sensitive")
+
+
+def _is_ascii_word(a: str) -> bool:
+    """영숫자로 시작하는 ASCII 별칭인가 — 단어 경계·대소문자 규칙은 이런 별칭에만 뜻이 있다 (한글엔 조사가 붙는다)."""
+    return bool(_ASCII_WORD.fullmatch(a or ""))
+
+
+def matching_options(rules: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    """rules.json 의 `matching` 절 (없으면 기본값). 값이 이상하면 기본값으로 떨어진다."""
+    r = rules if isinstance(rules, dict) else load_rules()
+    m = r.get("matching") if isinstance(r.get("matching"), dict) else {}
+    out = dict(MATCHING_DEFAULTS)
+    if "ascii_word_boundary" in m:
+        out["ascii_word_boundary"] = bool(m.get("ascii_word_boundary"))
+    try:
+        out["case_sensitive_max_len"] = max(0, int(m.get("case_sensitive_max_len", out["case_sensitive_max_len"])))
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
+def name_in_text(name: str, text: str, ascii_word_boundary: bool = True) -> bool:
+    """질의 쪽 별칭 매칭 — 빌드 쪽(`find_entities`)과 같은 경계 규칙. name·text 는 소문자로 들어온다.
+
+    2026-09-24: 예전 `n in ql` 은 "first step" 에서 IR본부(별칭 ir)를 시드로 잡았다 — 빌드 쪽과 같은 오탐이 질의 쪽에도 있었다."""
+    if not name or name not in text:
+        return False
+    if not ascii_word_boundary or not _is_ascii_word(name):
+        return True
+    for m in re.finditer(re.escape(name), text):
+        st, en = m.start(), m.end()
+        before_ok = st == 0 or not (text[st - 1].isascii() and text[st - 1].isalnum())
+        after_ok = en == len(text) or not (text[en].isascii() and text[en].isalnum())
+        if before_ok and after_ok:
+            return True
+    return False
+
+
 def load_rules(path: Optional[str] = None) -> Dict[str, object]:
     from . import atomicio
     path = path or rules_path()
@@ -597,6 +646,24 @@ def lint(rules: Optional[Dict[str, object]] = None) -> Dict[str, object]:
         if len(owners) > 1:
             bad("error", "entities.aliases", "별칭 '%s' 을 %s 가 함께 가지고 있습니다 — 어느 쪽으로 붙을지 정해지지 않습니다"
                 % (key, ", ".join(owners)), "한 곳만 남기고 나머지는 지우세요")
+    # --- 매칭 옵션 (2026-09-24) ---
+    mt = r.get("matching")
+    if mt is not None and not isinstance(mt, dict):
+        bad("error", "matching", "객체여야 합니다: {\"ascii_word_boundary\": true, \"case_sensitive_max_len\": 3}")
+    elif isinstance(mt, dict):
+        for k in mt:
+            if k not in MATCHING_KEYS and not str(k).startswith("_"):
+                bad("warn", "matching.%s" % k, "모르는 키 (무시됩니다)", "쓸 수 있는 키: %s" % ", ".join(MATCHING_KEYS))
+    for canon, info in ents.items():
+        opt = (info or {}).get("match")
+        if opt is None:
+            continue
+        if not isinstance(opt, dict):
+            bad("error", "entities[%s].match" % canon, "객체여야 합니다: {\"whole_word\": true, \"case_sensitive\": true}")
+            continue
+        for k in opt:
+            if k not in ENTITY_MATCH_KEYS:
+                bad("warn", "entities[%s].match.%s" % (canon, k), "모르는 키 (무시됩니다)", "쓸 수 있는 키: %s" % ", ".join(ENTITY_MATCH_KEYS))
 
     # --- 정규식 절 ---
     for sec in ("analyst_pattern", "decision_pattern", "money_pattern", "percent_pattern", "measure_pattern", "version_pattern"):
@@ -742,14 +809,40 @@ class RuleExtractor:
 
     def _compile(self) -> None:
         ents: Dict[str, Dict] = self.rules["entities"]  # type: ignore
-        self.alias_map: Dict[str, str] = {}
+        mo = matching_options(self.rules)
+        self._ascii_wb, self._cs_max = bool(mo["ascii_word_boundary"]), int(mo["case_sensitive_max_len"])
+        self.alias_map: Dict[str, str] = {}          # 소문자 별칭 → 대표어 (다른 모듈이 쓴다: graph_build · 결정 패턴)
+        self._canon_cs: Dict[str, str] = {}          # 원문 그대로 → 대표어 (대소문자 구분 별칭)
+        cs_alts: List[str] = []
+        ci_alts: List[str] = []
         for canon, info in ents.items():
-            self.alias_map[canon.lower()] = canon
-            for a in info.get("aliases", []):
+            if str(canon).startswith("_"):
+                continue
+            opt = info.get("match") if isinstance(info.get("match"), dict) else {}
+            for a in [canon] + list(info.get("aliases", []) or []):
+                a = str(a)
+                if not a:
+                    continue
                 self.alias_map[a.lower()] = canon
+                cs = opt.get("case_sensitive")
+                if cs is None:
+                    cs = _is_ascii_word(a) and 0 < len(a) <= self._cs_max
+                ww = opt.get("whole_word")
+                if ww is None:
+                    ww = self._ascii_wb and _is_ascii_word(a)
+                pat = re.escape(a)
+                if ww:
+                    pat = "(?<![A-Za-z0-9])" + pat + "(?![A-Za-z0-9])"
+                if cs:
+                    self._canon_cs[a] = canon
+                    cs_alts.append((a, pat))
+                else:
+                    ci_alts.append((a, pat))
         # 긴 별칭 우선 매칭
-        alts = sorted(self.alias_map.keys(), key=len, reverse=True)
-        self._ent_re = re.compile("|".join(re.escape(a) for a in alts), re.I) if alts else None
+        cs_alts.sort(key=lambda t: -len(t[0]))
+        ci_alts.sort(key=lambda t: -len(t[0]))
+        self._ent_re_cs = re.compile("|".join(p_ for _, p_ in cs_alts)) if cs_alts else None
+        self._ent_re = re.compile("|".join(p_ for _, p_ in ci_alts), re.I) if ci_alts else None
         # 관계 패턴: 파일의 선언을 그대로 쓴다. `rel` 만 있는 예전 파일은 이름으로 기본 동작을 채워 준다(호환).
         self._rel_pats: List[Tuple[Dict[str, object], "re.Pattern"]] = []
         for p in self.rules.get("relation_patterns", []):    # type: ignore
@@ -847,14 +940,26 @@ class RuleExtractor:
 
     # ------------------------------------------------------------------
     def find_entities(self, text: str) -> List[Tuple[str, int]]:
-        """(canonical_name, position) 목록."""
+        """(canonical_name, position) 목록. 대소문자 구분 별칭과 무시 별칭을 따로 찾아 합치고, 겹치면 **먼저 시작하고 더 긴** 것만 남긴다."""
+        found: List[Tuple[int, int, str]] = []
+        if self._ent_re_cs is not None:
+            for m in self._ent_re_cs.finditer(text):
+                canon = self._canon_cs.get(m.group(0)) or self.alias_map.get(m.group(0).lower())
+                if canon:
+                    found.append((m.start(), m.end(), canon))
+        if self._ent_re is not None:
+            for m in self._ent_re.finditer(text):
+                canon = self.alias_map.get(m.group(0).lower())
+                if canon:
+                    found.append((m.start(), m.end(), canon))
+        found.sort(key=lambda t: (t[0], -(t[1] - t[0])))
         out: List[Tuple[str, int]] = []
-        if not self._ent_re:
-            return out
-        for m in self._ent_re.finditer(text):
-            canon = self.alias_map.get(m.group(0).lower())
-            if canon:
-                out.append((canon, m.start()))
+        last_end = -1
+        for st, en, canon in found:
+            if st < last_end:
+                continue
+            out.append((canon, st))
+            last_end = en
         return out
 
     def extract_chunk(self, chunk_text: str, heading: str, doc_id: str, doc_title: str, doc_meta: Optional[Dict[str, object]] = None

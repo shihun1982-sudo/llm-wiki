@@ -524,39 +524,61 @@
     </section>
 
     <section id="tab-graph" class="tab">
+      <div class="panel-intro">
+        <b>지식 그래프</b> — 문서에서 뽑은 <b>엔티티(노드)</b>와 그 사이의 <b>관계(간선)</b>입니다. 용어:
+        <b>상위 N개</b> = 연결(관계 행 수)이 많은 순으로 N개만 그린 것 (전체가 아닙니다 — 전체 규모는 아래 첫 줄) ·
+        <b>무리</b> = 서로 많이 연결된 엔티티 묶음 (번호는 순번일 뿐 뜻이 없고, 0 은 연결이 가장 많은 노드의 무리) ·
+        <b>관계 출처</b> = 관계가 어떻게 생겼나 (explicit = front matter related 링크 · rule = 규칙 정규식·ID 링크 · human = 사람 승인 · llm = LLM 추출 · cooccur = 같은 청크에 함께 등장) ·
+        <b>연결</b> = 관계 행 수(청크마다 셈, 실제 이웃보다 큼) · <b>이웃</b> = 서로 다른 이웃 노드 수.
+        문제점과 고칠 곳은 <b>그래프 진단</b> 탭의 소견이 알려 줍니다.
+      </div>
       <div class="row">
-        <label>노드 수 <input id="g-limit" type="number" value="120" style="width:70px"></label>
-        <label>커뮤니티 <select id="g-comm"><option value="all">all</option></select></label>
-        <label>출처 <select id="g-prov"><option value="">all</option><option>explicit</option><option>rule</option><option>human</option><option>llm</option><option>cooccur</option></select></label>
-        <input id="g-types" type="text" placeholder="유형 필터 (issue,cl)" style="max-width:160px">
+        <label title="개요: 연결 많은 순 상위 N · 이웃: 엔티티 하나에서 몇 홉 안 (그래프 검색이 보는 시야) · 무리 하나: 커뮤니티 안 전부 · 유형별: 노드를 유형 열로 배치">보기
+          <select id="g-view"><option value="overview">개요 (상위 N)</option><option value="neighbors">이웃 (엔티티 중심)</option><option value="community">무리 하나</option><option value="types">유형별 배치</option></select></label>
+        <label title="연결(관계 행 수)이 많은 엔티티부터 N개를 그립니다. 전체가 아닙니다 — 전체 수는 아래 첫 줄에">상위 <input id="g-limit" type="number" value="120" min="1" style="width:70px"> 개 <span id="g-total-hint" class="muted small"></span></label>
+        <span class="small"><button class="secondary small" data-g-limit="50">50</button> <button class="secondary small" data-g-limit="120">120</button> <button class="secondary small" data-g-limit="300">300</button> <button class="secondary small" data-g-limit="all" title="그릴 수 있는 엔티티 전부 (날짜·금액 제외)">전체</button></span>
+        <label title="무리(커뮤니티) 하나만 — 목록은 그래프를 한 번 그린 뒤 채워집니다">무리 <select id="g-comm"><option value="all">전체</option></select></label>
+        <label title="관계가 어떻게 생겼는지로 간선을 거릅니다">관계 출처 <select id="g-prov"><option value="">전부</option><option value="explicit">explicit — front matter related</option><option value="rule">rule — 규칙 정규식·ID 링크</option><option value="human">human — 사람 승인</option><option value="llm">llm — LLM 추출</option><option value="cooccur">cooccur — 같은 청크에 함께 등장</option></select></label>
+        <input id="g-types" type="text" placeholder="유형 필터 (issue,cl)" style="max-width:150px" title="노드 유형(쉼표) — 유형 이름은 아래 첫 줄의 '유형별' 참고">
+        <input id="g-center" type="text" placeholder="중심 엔티티 (이웃 보기)" style="max-width:190px;display:none">
+        <select id="g-hops" style="display:none" title="중심에서 몇 홉까지"><option value="1">1홉</option><option value="2">2홉</option><option value="3">3홉</option></select>
+        <label title="같은 청크에 함께 나온 것(co_occurs)과 문서가 언급함(mentions)은 방향도 뜻도 없는 관계라 기본으로 숨깁니다. 켜면 구조 관계(규칙·front matter·사람·LLM)가 보입니다"><input id="g-structure" type="checkbox" checked> 공동출현 관계 숨김</label>
         <input id="g-find" type="text" placeholder="엔티티 검색/하이라이트">
         <button id="btn-graph">그래프 로드</button>
-        <span class="muted">노드 클릭 → 상세(문서 참조·provenance) · 드래그 가능</span>
+        <button id="btn-g-fit" class="secondary" title="그려진 노드가 모두 보이게 맞춤">맞춤</button>
+        <button id="btn-g-reset" class="secondary" title="확대·이동·선택 초기화">초기화</button>
       </div>
-      <div id="g-prov-counts" class="muted small"></div>
+      <div id="g-summary" class="small"></div>
       <div class="cols">
-        <div class="col wide"><canvas id="gcanvas" width="900" height="600"></canvas><div id="g-legend" class="legend"></div></div>
-        <div class="col"><div id="g-detail" class="small">노드를 클릭하세요.</div><h3>커뮤니티</h3><div id="g-comms" class="small"></div></div>
+        <div class="col wide"><div class="g-wrap"><canvas id="gcanvas" width="900" height="600"></canvas><div id="g-tip" class="g-tip hidden"></div></div><div id="g-legend" class="legend"></div></div>
+        <div class="col"><div id="g-detail" class="small">노드를 클릭하면 상세(관계·문서 참조·근거 문단)가 여기에 나옵니다. 마우스를 올리면 요약이 뜹니다.</div>
+          <h3>무리 (커뮤니티) <small class="muted">그려진 노드가 속한 것만</small></h3><div id="g-comms" class="small"></div></div>
       </div>
     </section>
 
     <section id="tab-graphprof" class="tab">
+      <div class="panel-intro">
+        <b>그래프 진단</b> — 지금 그래프를 보고 <b>무엇이 잘못됐고 무엇을 어떻게 고쳐야 하는지</b>를 <b>소견</b>으로 냅니다.
+        소견마다 증거(숫자·실제 예) → 원인 → 처방(<code>rules.json</code> 에 붙여 넣을 조각 · 고칠 문서 목록 · 튜닝 키 · 실행할 명령) → 확인 방법이 붙습니다.
+        순서: <b>진단 실행 → 소견의 처방 적용(규칙 탭 / 문서) → 빌드(graph) → 이전 실행과 비교</b>. CLI <code>graph profile [--eval] [--compare] [--out]</code> · MCP <code>wiki_graph_profile</code> 과 같은 내용.
+      </div>
       <div class="row">
         <button id="btn-gp-run">진단 실행</button>
         <button id="btn-gp-compare" class="secondary">이전 실행과 비교</button>
         <label><input id="gp-eval" type="checkbox"> 평가 포함 (graph 채널만 hit@k)</label>
         <button id="btn-gp-history" class="secondary">이력</button>
-        <span class="muted small">규칙(data/rules.json)을 바꾸면 그래프가 어떻게 달라지는지 숫자로 — 순서: 진단 → 규칙 편집 → 빌드(graph) → 이전 실행과 비교. CLI <code>graph profile [--eval] [--compare] [--out]</code></span>
       </div>
       <div id="gp-msg" class="muted small"></div>
+      <div id="gp-findings"></div>
+      <h3>지표 <small class="muted">— 소견이 근거로 삼는 숫자</small></h3>
       <div id="gp-cards"></div>
       <div id="gp-suggest"></div>
       <div id="gp-compare" class="hidden"></div>
       <div class="cols">
         <div class="col">
-          <h3>허브 (차수 상위)</h3><div id="gp-hubs"></div>
+          <h3>허브 (연결 상위)</h3><div id="gp-hubs"></div>
           <h3>고립 엔티티 예시</h3><div id="gp-isolated"></div>
-          <h3>규칙 기여 <small class="muted">엔티티/관계 0 = 죽은 규칙</small></h3><div id="gp-rules"></div>
+          <h3>규칙 기여 <small class="muted">엔티티/관계 0 = 죽은 규칙 (원인은 소견에)</small></h3><div id="gp-rules"></div>
         </div>
         <div class="col">
           <h3>문서 커버리지 (유형별)</h3><div id="gp-coverage"></div>
@@ -609,6 +631,10 @@
         </div>
         <div id="gr-dict-list" class="tbl-wrap"></div>
       </details>
+      <div id="gr-snippet-wrap" class="hidden">
+        <h3>그래프 진단이 제안한 규칙 조각 <small class="muted">— 아래 원문 JSON 의 해당 절에 병합해 저장하세요 (자동 병합은 하지 않습니다: 규칙 파일은 사람이 저장합니다)</small></h3>
+        <textarea id="gr-snippet" spellcheck="false" readonly></textarea>
+      </div>
       <details id="gr-raw">
         <summary>원문 JSON 편집 (고급) — 관계 정규식 · <code>chunk_values</code> · <code>id_patterns</code> · <code>link_rules</code> · <code>schema</code></summary>
         <div class="row"><button id="btn-rules-save" class="secondary">규칙 저장 (다음 빌드에 반영)</button><span class="muted small">저장 전에 자동으로 점검합니다 — 오류가 있으면 막고 이유를 보여 줍니다</span></div>

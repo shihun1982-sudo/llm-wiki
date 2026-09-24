@@ -28,6 +28,18 @@
 | `related` | | `{issues:[], cls:[], docs:[], tcs:[], rules:[]}` | **explicit 관계**(provenance=explicit, confidence 0.98). 키별 관계 이름은 `data/rules.json → explicit_rels` |
 | `summary` | | 문자열 | 문서 카드(doc_vector 채널) |
 
+### 2.1 그래프 진단이 코퍼스에 요구하는 것 (2026-09-24)
+
+`graph profile` 의 소견(area = corpus)은 다음을 코퍼스 쪽 처방으로 낸다 — [GRAPH_PROFILE.md](GRAPH_PROFILE.md) §2.5:
+
+| 소견 | 문서에서 할 일 |
+|---|---|
+| `junk_titles` | 파일 첫 줄이 제목이 되므로 코드·shebang 으로 시작하는 파일은 front matter `title:` 을 넣는다 (가져온 NOTE 문서가 흔히 이렇다) |
+| `id_missing` | `id:` 를 유형 규약(§3)대로 — ID 가 없으면 제목이 노드가 되어 다른 문서의 `related.*` 가 닿지 못한다 |
+| `related_key_unmapped` (rules 쪽) | `related.<key>` 를 새로 쓰면 `data/rules.json` 의 `related_key_type`·`explicit_rels` 에도 키를 적는다. 없으면 관계는 `references` 로 뭉개지고 대상 타입이 지어진다 |
+| `structure_share_low` · `dead_rule_no_docs` | 문서끼리의 관계는 `related.*` 와 본문의 ID 표기에서만 온다 — 둘을 채워야 구조 관계가 생긴다 |
+| `uncovered_docs` | 본문 용어가 사전(`entities`)에 없거나 본문이 너무 짧으면 그래프가 그 문서를 못 찾는다 |
+
 ## 3. 유형별 규칙
 
 | doc_type | ID 패턴 | 추가 필수 | 권장 섹션(`## …`) | 결정적 관계(link_rules) |

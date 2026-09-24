@@ -342,14 +342,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_toggle_flags(p)
 
     p = sub.add_parser("graph", help="그래프 요약/내보내기 | profile [--eval] [--compare] [--out FILE] (그래프 진단: 규모·연결성·커버리지·규칙 기여·제안 — docs/history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md §2.5)")
-    p.add_argument("action", nargs="?", choices=["export", "profile"], default="export", help="export(기본) | profile(진단 프로파일)")
+    p.add_argument("action", nargs="?", choices=["export", "profile", "community"], default="export",
+                   help="export(기본: 연결 많은 순 상위 N 노드) | profile(진단 프로파일 + 소견) | community(무리 하나의 안 — --community N)")
     p.add_argument("--eval", action="store_true", help="profile: 그래프 채널만 켠 평가(hit@k/MRR)를 함께 (eval --matrix 의 graph 조합)")
     p.add_argument("--compare", action="store_true", help="profile: 직전 저장 프로파일(data/graph_profiles)과 핵심 지표 비교")
     p.add_argument("--out", default=None, help="profile: 마크다운 리포트를 이 파일에 저장")
-    p.add_argument("--limit", type=int, default=40)
-    p.add_argument("--community", type=int, default=None)
+    p.add_argument("--limit", type=int, default=120, help="export: 연결(degree) 많은 순 상위 N (기본 120 — Web 과 같다)")
+    p.add_argument("--community", type=int, default=None, help="export: 이 무리만 | community: 볼 무리 번호")
     p.add_argument("--provenance", default=None, help="관계 출처 필터: explicit,rule,human,llm,cooccur")
     p.add_argument("--types", default=None, help="노드 유형 필터 (쉼표)")
+    p.add_argument("--edge-kinds", default="all", choices=["all", "structure"], help="structure: 공동출현(co_occurs·mentions) 관계를 뺀다")
+    p.add_argument("--center", default=None, help="이 엔티티를 중심으로 --hops 홉 이웃만 (그래프 검색이 보는 시야)")
+    p.add_argument("--hops", type=int, default=1)
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("entity", help="엔티티 상세")
@@ -1467,7 +1471,7 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
                 if i["fix"]:
                     print("        → %s" % i["fix"])
             print("  오류 %d · 경고 %d%s" % (c["errors"], c["warns"], "  (모든 점검 통과)" if not r["issues"] else ""))
-            print("  ※ 이것은 **파일만** 보는 정적 점검입니다. 빌드된 그래프의 진단은 `graph-prof` 입니다.")
+            print("  ※ 이것은 **파일만** 보는 정적 점검입니다. 빌드된 그래프의 진단은 `graph profile` 입니다.")
             return 0 if c["errors"] == 0 else 1
         if a == "test":
             if not ns.args:
@@ -2232,20 +2236,43 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         _out(prof, as_json, _gp.render_text(prof))
         return 0
 
+    if ns.cmd == "graph" and ns.action == "community":
+        if ns.community is None:
+            print("--community N 이 필요합니다 (무리 번호는 `graph` 출력의 '무리 N' 참고)")
+            return 2
+        d = p.community_export(ns.community)
+        if d is None:
+            print("없는 무리 번호: %s" % ns.community)
+            return 1
+        if as_json:
+            _out(d, True)
+            return 0
+        print("무리 %d · %s · 구성원 %d · 요약(%s): %s" % (d["community"], d["label"], d["size"], "LLM 작성" if d["summary_source"] == "llm" else "규칙 기본문", d["summary"][:200]))
+        print("유형: " + ", ".join("%s %d" % kv for kv in d["types"].items()))
+        print("안쪽 관계: %d (구조 관계 %d) · 출처별 %s" % (len(d["edges"]), d["structural_edges"], json.dumps(d["edge_counts"], ensure_ascii=False)))
+        for m in d["members"][:30]:
+            print("  %-40s %-10s 연결 %-4s 문서 %s" % (m["name"][:40], m["type"], m["degree"], m["n_docs"]))
+        for doc in d["docs"][:10]:
+            print("  📄 %s  %s (%d)" % (doc["doc_id"], (doc["title"] or "")[:50], doc["mentions"]))
+        return 0
+
     if ns.cmd == "graph":
         g = p.graph_export(limit=ns.limit, community=ns.community, provenance=ns.provenance,
-                           types=[x.strip() for x in ns.types.split(",")] if ns.types else None)
+                           types=[x.strip() for x in ns.types.split(",")] if ns.types else None,
+                           edge_kinds=ns.edge_kinds, center=ns.center, hops=ns.hops)
         if as_json:
             _out(g, True)
             return 0
-        print("nodes=%d edges=%d communities=%d provenance=%s" % (len(g["nodes"]), len(g["edges"]), len(g["communities"]), json.dumps(g["provenance_counts"])))
+        print("상위 %d개 (연결 많은 순 · 전체 엔티티 %d) · 간선 %d · 무리 %d/%d · 그려진 간선 출처 %s"
+              % (g["shown"], g["total_entities"], len(g["edges"]), len(g["communities"]), g["all_communities_n"], json.dumps(g["edge_counts_shown"], ensure_ascii=False)))
         for n in g["nodes"][: ns.limit]:
-            print("  %-40s %-10s deg=%-3s C%s [%s]" % (n["name"][:40], n["type"], n["degree"], n["community"], n["source"]))
-        if ns.provenance:
+            print("  %-40s %-10s 연결 %-4s 이웃 %-3s 무리 %s [%s]" % (n["name"][:40], n["type"], n["degree"], n["neighbors"], n["community"], n["source"]))
+        if ns.provenance or ns.edge_kinds == "structure" or ns.center:
             for e in g["edges"][:40]:
                 print("  %s -[%s]-> %s  (%s w=%.2f conf=%.2f)" % (e["src"], e["rel"], e["dst"], e["provenance"], e["weight"], e["confidence"]))
         for c in g["communities"][:10]:
-            print("C%s (n=%s): %s" % (c["community"], c["size"], (c["summary"] or "")[:120]))
+            print("무리 %s (%s · %d개 중 %d개 표시 · 요약 %s): %s" % (c["community"], p.community_label(c), c["size"], c.get("shown", 0),
+                                                            "LLM 작성" if c.get("source") == "llm" else "규칙 기본문", (c["summary"] or "")[:100]))
         return 0
 
     if ns.cmd == "entity":

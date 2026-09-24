@@ -1,7 +1,7 @@
-# GRAPH PROFILE — 지식 그래프 **진단 프로파일** (규모 · 연결성 · 커버리지 · 규칙 기여 · 제안 · 이력 비교)
+# GRAPH PROFILE — 지식 그래프 **진단 프로파일** (소견과 처방 · 규모 · 연결성 · 커버리지 · 규칙 기여 · 이력 비교)
 
 > CLI: `python -m llmwiki graph profile [--json] [--eval] [--compare] [--out FILE]`
-> API: `GET /api/graph/profile[?compare=1&eval=1]` · `GET /api/graph/profile/history`
+> API: `GET /api/graph/profile[?compare=1&eval=1]` · `?format=md`(마크다운 보고서 내려받기) · `GET /api/graph/profile/history`
 > MCP: `wiki_graph_profile(eval?, compare?)`
 > 화면: Knowledge › **그래프 진단** 탭
 > 설계 원문: [IMPLEMENTATION_PLAN_0918_2.md §2.5](history/2026-09-18/IMPLEMENTATION_PLAN_0918_2.md) · 규칙 파일은 [CORPUS_CONTRACT.md](CORPUS_CONTRACT.md)(front matter) · `data/rules.json`
@@ -10,9 +10,9 @@
 
 | 항목 | 내용 |
 |---|---|
-| 무엇 | "`data/rules.json` 을 바꾸면 그래프가 어떻게 달라지는가" 를 **숫자**로 보고, 어디를 고칠지(어느 파일·키) **제안**받는다 |
-| 절 | `size` 규모 · `connectivity` 연결성 · `coverage` 문서 커버리지 · `quality` 품질 신호 · `rules` 규칙 기여 · `usage` 질의 활용 · `suggestions` 제안 · (옵션) `eval` · `compare` |
-| 루프 | `graph profile` → `rules.json` 편집 → `build graph` → `graph profile --compare` |
+| 무엇 | 지금 그래프를 보고 **무엇이 잘못됐고 무엇을 어떻게 고쳐야 하는지**를 **소견**(2026-09-24, §2.5)으로 낸다 — 증거(숫자·실제 예) → 원인 → 처방(rules.json 에 붙여 넣을 조각 · 고칠 문서 목록 · 튜닝 키 · 명령) → 확인 방법. 그 아래에 근거가 되는 지표(규모·연결성·커버리지·품질·규칙 기여·질의 활용)와 이력 비교 |
+| 절 | **`findings` 소견**(§2.5) · `size` 규모 · `connectivity` 연결성 · `coverage` 문서 커버리지 · `quality` 품질 신호 · `rules` 규칙 기여 · `usage` 질의 활용 · `suggestions` 임계값 제안(예전 형식, 호환) · (옵션) `eval` · `compare` |
+| 루프 | `graph profile` → 소견의 처방 적용(`rules.json` 조각 병합 / 문서 수정) → `build graph` → `graph profile --compare` (소견의 `verify.metric` 이 기대대로 움직였는지) |
 | 저장 | 실행마다 `<data_dir>/graph_profiles/gp_<YYYYMMDD_HHMMSS>_<µs>.json`, `graph_profile_keep`(30) 개 보관 |
 | 권한 | **read** (GET · CLI `graph` · MCP readOnlyHint). 색인·설정은 바꾸지 않지만 이력 파일은 남긴다 |
 | 비용 | 큰 그래프에서 몇 초(`/api/graph` 접두 → `HEAVY_GET` 읽기 슬롯). `--eval` 은 질문셋 크기만큼 더 |
@@ -42,7 +42,35 @@
 | `usage` | 최근 `graph_profile_requests` 건의 질의 요청: `seed_share`(그래프 시드 있던 비율) · `requests_with_graph_hit_share` · `graph_hit_share`(최종 근거 중 `graph*` why 비율) · `no_seed_keywords[]`(시드 없던 질의의 키워드 중 엔티티 이름이 아닌 것) · `no_seed_samples` | 시드 비율이 낮으면 질의 어휘가 엔티티 사전에 없다는 뜻 — `no_seed_keywords` 가 곧 엔티티 후보 |
 | `eval` (옵션) | `hit@k` `mrr` `term_recall` `n` `channel="graph"` `k=5` | `toggles.fts/vector` 를 끄고 `graph` 만 켜 `pipe.evaluate(k=5)` — `eval --matrix` 의 graph 조합과 같다. 끝나면 토글 복원 |
 
-## 3. 제안(`suggestions[]`) — 종류와 가리키는 곳
+## 2.5 소견(`findings`) — 무엇이 잘못됐고 무엇을 고칠지 (2026-09-24)
+
+지표만으로는 "그래서 무엇을 고치나" 가 남는다. 소견은 그 답이다. 엔진은 `llmwiki/graph_findings.py`, 세 창구(CLI 텍스트·`--out` md, Web 그래프 진단 탭, MCP `structuredContent`)가 같은 목록을 받는다.
+설계 근거와 실데이터 조사는 [GRAPH_KNOWLEDGE_PLAN_0924.md](history/2026-09-24/GRAPH_KNOWLEDGE_PLAN_0924.md).
+
+소견 하나의 키(전부 같다): `id` · `severity`(error/warn/info) · `area`(rules/corpus/tuning/build/query_rules — **어디를 고치는가**) · `title` · `why` ·
+`evidence{numbers, samples}` · `fix{kind, section?, snippet?, files?, steps[], commands[]}` · `verify{metric, expect, command}`.
+`fix.kind`: `rules_patch`(`snippet` 을 rules.json 의 `section` 절에 병합) · `corpus_edit`(`files` 를 고친다) · `tuning_set` · `build_cmd` · `query_rules_patch`.
+
+| id | 무엇을 보나 | 처방 |
+|---|---|---|
+| `alias_false_positive` | 허브·상위 사전 엔티티의 실제 mention 문맥에서 **단어 안에서 잡힌 비율**(예: `corpus_d[ir]s` 의 IR). 두 얼굴: **지금 규칙으로도** 단어 안에서 잡히면 area=rules, 지금 규칙은 안 잡는데 그래프에 예전 매처의 멘션이 남아 있으면(저장 멘션 ≥ 지금 매칭 ×2) area=**build**("예전 매처로 빌드됨") | rules: `matching` 절 + `entities.<name>.match` 조각 ([GRAPH_RULES.md](GRAPH_RULES.md) §1.1) / build: `build graph --yes` |
+| `related_key_unmapped` | front matter `related.<key>` 중 `related_key_type`·`explicit_rels` 에 없는 키, 그로 생긴 **없는 타입**, 대상 타입 추정 | rules: `related_key_type`·`explicit_rels`·`schema.relations` 조각 |
+| `doc_type_without_rules` | link_rules·explicit_rels·id_patterns 어디에도 없는 문서 유형 | rules: 뼈대 조각 |
+| `dead_rule_no_docs` | 죽은 규칙 중 "그 문서 유형이 0건" · "front matter 에 그 related 키 없음" | corpus: 규약대로 문서/related 를 만든다 |
+| `dead_rule_no_match` | 문서는 있는데 못 잡음 — 정규식 시험 결과와 **코퍼스에 실제로 있는 필드 이름** | rules: 정규식·대상 타입 수정 → `graph-rules test` |
+| `junk_titles` | 코드·shebang·기호·3자 미만·중복 제목 (문서 노드 별칭 오염) | corpus: 파일 목록 + `title:` |
+| `no_communities` | 토글은 켜져 있는데 무리 0 | build: `build graph` / `incremental_communities` |
+| `structure_share_low` | mentions·co_occurs 를 뺀 **구조 관계** 비율 < 15% | corpus: `related.*`·ID 표기·relation_patterns |
+| `uncovered_docs` | 커버리지 미달 유형의 문서를 **왜**(ID 없음 / 사전 엔티티 없음 / 본문 짧음)로 | corpus |
+| `isolated_by_type` | 고립 30%↑ — 사전 엔티티면 `types_for_cooccur`, 아니면 link_rules | rules |
+| `no_seed_queries` | 시드 없는 질의 50%↑ → 키워드 목록 | query_rules: alias 조각 / rules aliases |
+| `hub_type_policy_mismatch` | `types_for_cooccur` 에 date/amount/percent/document | rules |
+| `id_missing` | ext_id 없음/추론 30%↑ (note 제외) | corpus: `id:` |
+
+임계값은 `graph_findings.THRESHOLDS` 이고 결과의 `findings.thresholds` 에 그대로 실린다. 소견 계산이 하나 실패해도 나머지는 살고 `findings.errors` 에 남는다.
+화면(Knowledge › 그래프 진단)에서는 소견이 지표 **위**에 오고, 영역 필터 · 조각 복사 · **규칙 탭에 붙여 넣기**(규칙 탭 상단 상자 + 클립보드; 자동 병합은 하지 않는다) · **보고서(md) 내려받기** 가 있다.
+
+## 3. 제안(`suggestions[]`) — 종류와 가리키는 곳 (예전 형식 — 소견이 같은 내용을 더 자세히 다룬다)
 
 임계값(`THRESHOLDS`, 결과의 `thresholds` 에 그대로): `isolated_ratio` 0.30 · `coverage_pct` 50 · `coverage_min_docs` 3 · `cooccur_share` 0.70 · `no_seed_share` 0.50 · `keyword_min_count` 2 · `hub_warn_min_degree` 5.
 
@@ -149,6 +177,8 @@ python -m unittest tests.test_graph_profile -v
 - 허브 경고 유형에 계획의 "날짜/역할" 외에 `amount/percent/document` 가 포함된다.
 
 ## 11. 구현 파일
+
+- `llmwiki/graph_findings.py` — 소견(§2.5). 테스트 `tests/test_graph_findings_0924.py`.
 
 | 파일 | 내용 |
 |---|---|

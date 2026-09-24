@@ -17,6 +17,7 @@
 | 4 | `.env` (`setup/.env.example` 복사) — API 키/PAT. **바꾸는 키만 추린 샘플 5종(게이트웨이+PAT · Anthropic 호환 · 로컬 Ollama · opencode 전부 · 역할별 혼합)은 [LLM_CONNECT.md](LLM_CONNECT.md) §1**, 전체 키가 든 원본은 `setup/config.example.pat-gateway.json` · `config.example.headless.json`, 에이전트 실행 세부는 §4.1~4.3 | `python -m llmwiki models test --live` · 전환이 config.json 만으로 되는지는 `python tools/verify/verify_llm_switch.py` |
 | 5 | 문서 계약: `schemas/`, 기존 문서에 front matter 추가 또는 `schemas/infer.json` 규칙 | `python -m llmwiki corpus lint` |
 | 6 | 어휘/규칙: `query_rules.json`(질의 확장 — [QUERY_RULES.md](QUERY_RULES.md)), `data/rules.json`(그래프 빌드 — 엔티티 사전·id_patterns·link_rules·`schema` 어휘. 절마다 무엇을 정하는지는 [GRAPH_RULES.md](GRAPH_RULES.md)), `prompts/answer_guide.md` | `rules test "…"` · **`graph-rules lint`**(빌드 전 정적 점검, 오류면 종료 코드 1) · `graph-rules test "<우리 문장>"`(무엇이 노드·관계가 되는지 바로 확인) |
+| **그래프 화면의 상위 N·무리·관계 출처가 무슨 뜻인지 / 그래프의 문제점과 고칠 곳** | [WEB_UI.md](WEB_UI.md) §0.69 · [GRAPH_PROFILE.md](GRAPH_PROFILE.md) §2.5 소견 — `graph profile` 이 rules.json 조각·문서 목록으로 처방한다. 짧은 약어가 영단어 안에서 잡히는 오탐은 `data/rules.json` `matching`(기본 켬, [GRAPH_RULES.md](GRAPH_RULES.md) §1.1) — 기존 그래프는 `build graph` 로 다시 만든다 |
 | 7 | `python -m llmwiki health` → `build --full --trace` → `build verify` | alerts 0, coverage 100% |
 | 8 | 평가셋 `eval/questions.json` 교체 → `eval` → `trial run --name baseline` | hit@k, groundedness 기준선 기록 |
 | 9 | 스케줄 등록 `setup/schedule_build.ps1 -Register` (또는 cron) | `build status`, `logs tail --file build` |
