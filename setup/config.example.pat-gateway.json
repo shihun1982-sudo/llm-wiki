@@ -555,6 +555,7 @@
  "build_lock_timeout": 172800,
  "build_lock_stale_s": 172800,
  "db_busy_timeout_s": 60.0,
+ "db_synchronous": "NORMAL",
  "db_pool_size": 16,
  "llm_retries": 3,
  "llm_retry_backoff_s": 2.0,

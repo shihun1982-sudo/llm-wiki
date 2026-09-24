@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS query_log (
   user TEXT DEFAULT '', role TEXT DEFAULT '', origin TEXT DEFAULT '', via TEXT DEFAULT '',
   ip TEXT DEFAULT '', agent TEXT DEFAULT '', request_id INTEGER DEFAULT 0
 );
+-- 2026-09-23: 질의 피드백만 따로, **영구 보존**.
+--   `requests` 는 keep_requests(기본 2000행 ≈ 실측 8일)로 잘리는데, 피드백은 사람이 남긴 유일한 학습 신호라
+--   같이 잘리면 안 된다. 행 하나가 수십 바이트이고 피드백이 달린 질의만 들어가므로(실측 819건 중 4건)
+--   무제한으로 둬도 부담이 없다. query_log 를 은퇴시키면서 그 역할 중 **이것만** 남긴 것이다.
+CREATE TABLE IF NOT EXISTS query_feedback (
+  request_id INTEGER PRIMARY KEY, ts REAL, query TEXT, user TEXT DEFAULT '',
+  feedback INTEGER, note TEXT DEFAULT '', legacy_qid INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_query_feedback_ts ON query_feedback(ts);
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, payload TEXT, reason TEXT,
   confidence REAL, status TEXT, origin TEXT, applied_at REAL, eval_before TEXT, eval_after TEXT
@@ -142,6 +151,15 @@ MIGRATIONS = [
     # 2026-09-19: 문서 스스로 매긴 접근 등급 (front matter `acl:`). extra JSON 에 두지 않고 컬럼으로 뽑는 이유는
     # doc_meta_map() 이 문서 수천 개의 값을 매 질의마다 읽기 때문이다 — JSON 을 전부 파싱하면 접근 제어가 비싸진다.
     ("doc_meta", "acl", "TEXT DEFAULT ''"),
+    # 2026-09-23: 질의 로그(query_log) 를 requests 로 합친다. 두 표는 질문·답변·근거·판정·trace 가
+    # **내용까지 같았다**(trace 는 바이트까지 동일, 합계 34MB 중복). requests 가 이미 result 를 통째로
+    # 담고 있으므로 query_log 의 고유한 값은 피드백뿐이었다 — 그것만 아래 두 열과 query_feedback 으로 옮긴다.
+    ("requests", "feedback", "INTEGER"),
+    ("requests", "note", "TEXT DEFAULT ''"),
+    ("requests", "role", "TEXT DEFAULT ''"),      # 질의 로그가 갖고 있던 '누가' 필드를 requests 로
+    ("requests", "via", "TEXT DEFAULT ''"),
+    ("requests", "ip", "TEXT DEFAULT ''"),
+    ("requests", "agent", "TEXT DEFAULT ''"),
 ]
 
 
@@ -155,11 +173,19 @@ class Store:
     - 벡터 행렬·엔티티 인덱스·doc_meta 캐시는 인스턴스 하나에 공유되며(읽기 전용 numpy), 적재는 락으로 한 번만 한다.
     """
 
+    #: 허용하는 synchronous 값 (config db_synchronous). 모르는 값이면 NORMAL 로 떨어진다.
+    SYNCHRONOUS = ("OFF", "NORMAL", "FULL", "EXTRA")
+
     def __init__(self, path: str, busy_timeout_s: float = 30.0, pool_size: int = 16,
-                 max_live: int = 64, wait_timeout_s: float = 2.0):
+                 max_live: int = 64, wait_timeout_s: float = 2.0, synchronous: str = "NORMAL"):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.path = path
         self.busy_timeout_s = float(busy_timeout_s or 30.0)
+        sync = str(synchronous or "NORMAL").strip().upper()
+        self.synchronous = sync if sync in self.SYNCHRONOUS else "NORMAL"
+        #: 커밋 없이 세션을 벗어난 횟수 (0-C). 0 이 정상 — 늘면 "쓰고 커밋 안 한 코드" 가 있다는 뜻이고,
+        #  그 코드는 그동안 SQLite 쓰기 잠금을 쥐고 있었다 (2026-09-23: embed_query 가 그랬다).
+        self.uncommitted_exits = 0
         self.pool_size = max(1, int(pool_size or 16))
         # 2026-09-19: pool_size 는 **놀고 있는** 연결만 제한했다. 빌려 간 연결 수에는 상한이 없어서,
         # 세션을 닫지 않는 코드가 하나라도 생기면 연결이 무한히 늘어나도 아무도 몰랐다(메모리·fd).
@@ -190,6 +216,10 @@ class Store:
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA busy_timeout=%d" % int(self.busy_timeout_s * 1000))
+        # WAL + NORMAL: 커밋마다 fsync 하지 않고 체크포인트에서만 한다. DB 손상은 없고(WAL 의 보장),
+        # 정전 시 최근 몇 건의 커밋만 날아간다. 기본값 FULL 은 질의 1건이 커밋을 여러 번 하는
+        # 이 파이프라인에서 동시 질의 지연으로 그대로 나타난다 (config db_synchronous).
+        c.execute("PRAGMA synchronous=%s" % self.synchronous)
         c.set_trace_callback(self._on_sql)   # 단계별 SQL 문 수 집계 (profiler 스레드 로컬 카운터 'sql')
         return c
 
@@ -237,7 +267,13 @@ class Store:
             self._tl.conn = None
             try:
                 if c.in_transaction:
+                    # 2026-09-23: 예전에는 조용히 rollback 만 했다. 그래서 `cache_put()` 처럼 **커밋 없이 INSERT 하고
+                    # 나가는 코드**가 있어도 아무도 몰랐다 — 그 코드는 INSERT 시점부터 여기까지(질의 1건 = 최대 수십 초)
+                    # SQLite 쓰기 잠금을 쥐고 있었고, 다른 동시 질의는 db_busy_timeout_s 만큼 기다리다 실패했다.
+                    # 이제 경고를 남긴다: 쓴 내용이 버려진다는 사실 자체도 알려야 한다.
+                    self.uncommitted_exits += 1
                     c.rollback()
+                    self._warn_uncommitted()
             except Exception:
                 pass
             with self._pool_lock:
@@ -252,12 +288,29 @@ class Store:
                 except Exception:
                     pass
 
+    def _warn_uncommitted(self) -> None:
+        """커밋 없이 세션을 벗어난 쓰기를 알린다 (첫 5회만 — 폭주해도 로그를 덮지 않게)."""
+        if self.uncommitted_exits > 5:
+            return
+        try:
+            import traceback
+            from . import logging_setup as _ls
+            _ls.log("warning", "커밋하지 않은 쓰기가 롤백됐습니다 (%d번째). 그동안 SQLite 쓰기 잠금을 쥐고 있었습니다."
+                    % self.uncommitted_exits, "query",
+                    hint="세션 안에서 INSERT/UPDATE 후 commit() 을 부르지 않은 코드입니다. 아래 호출 위치를 보세요.",
+                    stack="".join(traceback.format_stack()[-6:-1]))
+        except Exception:
+            pass
+
     def pool_info(self) -> Dict[str, Any]:
         """연결 풀 상태. `live` 가 부하가 끝난 뒤에도 0 으로 안 떨어지면 세션을 닫지 않는 코드가 있는 것이다."""
         with self._pool_lock:
             return {"idle": len(self._pool), "max": self.pool_size, "busy_timeout_s": self.busy_timeout_s,
+                    "synchronous": self.synchronous,
                     "live": self._live, "peak_live": self._peak_live, "max_live": self.max_live,
-                    "created": self._created, "overflow": self._overflow}
+                    "created": self._created, "overflow": self._overflow,
+                    # 0 이 정상. 늘면 "쓰고 커밋 안 한 코드" 가 있다는 뜻 (그동안 쓰기 잠금을 쥔다)
+                    "uncommitted_exits": self.uncommitted_exits}
 
     def _on_sql(self, _stmt: str) -> None:
         self.sql_count += 1
@@ -275,7 +328,27 @@ class Store:
             self.conn.execute("UPDATE requests SET user = TRIM(SUBSTR(origin, INSTR(origin, ' ') + 1)) "
                               "WHERE (user IS NULL OR user='') AND origin LIKE '% %'")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user, id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_kind_id ON requests(kind, id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_query_log_user ON query_log(user, id)")
+        if ("requests", "feedback") in added:
+            # query_log 의 피드백을 영구 표로 옮긴다 (한 번만). 사람이 남긴 유일한 학습 신호라
+            # requests 의 2000행 상한에 같이 잘리면 안 된다.
+            self.conn.execute(
+                "INSERT OR IGNORE INTO query_feedback(request_id, ts, query, user, feedback, note, legacy_qid) "
+                "SELECT COALESCE(NULLIF(request_id,0), -id), ts, query, user, feedback, COALESCE(note,''), id "
+                "FROM query_log WHERE feedback IS NOT NULL")
+            # requests 에도 바로 보이게 (목록에서 피드백 열을 그리려고 매번 조인하지 않도록)
+            self.conn.execute(
+                "UPDATE requests SET feedback = (SELECT ql.feedback FROM query_log ql WHERE ql.request_id = requests.id "
+                "AND ql.feedback IS NOT NULL ORDER BY ql.id DESC LIMIT 1) "
+                "WHERE EXISTS (SELECT 1 FROM query_log ql WHERE ql.request_id = requests.id AND ql.feedback IS NOT NULL)")
+            # 누가 물었나: query_log 에만 있던 role/via/ip/agent 를 requests 로
+            self.conn.execute(
+                "UPDATE requests SET role = COALESCE((SELECT ql.role FROM query_log ql WHERE ql.request_id=requests.id ORDER BY ql.id DESC LIMIT 1), role), "
+                "via = COALESCE((SELECT ql.via FROM query_log ql WHERE ql.request_id=requests.id ORDER BY ql.id DESC LIMIT 1), via), "
+                "ip = COALESCE((SELECT ql.ip FROM query_log ql WHERE ql.request_id=requests.id ORDER BY ql.id DESC LIMIT 1), ip), "
+                "agent = COALESCE((SELECT ql.agent FROM query_log ql WHERE ql.request_id=requests.id ORDER BY ql.id DESC LIMIT 1), agent) "
+                "WHERE EXISTS (SELECT 1 FROM query_log ql WHERE ql.request_id = requests.id)")
         if ("relations", "provenance") in added or self.conn.execute("SELECT 1 FROM relations WHERE provenance='' LIMIT 1").fetchone():
             # 구버전 관계에 provenance 백필: source 기준
             self.conn.execute("UPDATE relations SET provenance = CASE WHEN rel IN ('co_occurs','mentions','mentions_date','mentions_amount') THEN 'cooccur' "
@@ -593,22 +666,76 @@ class Store:
         return out
 
     # ---------- embedding cache / runs ----------
+    @staticmethod
+    def norm_model(model: str) -> str:
+        """캐시 키로 쓸 모델 이름을 정규화한다 (2026-09-23).
+
+        Ollama 는 같은 모델을 `bge-m3` 와 `bge-m3:latest` 두 이름으로 부른다. 캐시 키에 이름이 그대로 들어가 있어서
+        표기가 한 번 바뀌자 **전체가 캐시 미스가 되어 처음부터 다시 임베딩**됐고, 두 벌이 남아 65MB 를 낭비했다
+        (실측: 16,654개 sha 가 중복). `:latest` 는 태그가 없을 때의 기본값이므로 같은 것으로 본다.
+        """
+        m = str(model or "").strip()
+        return m[: -len(":latest")] if m.lower().endswith(":latest") else m
+
     def cache_get(self, provider: str, model: str, shas: List[str]) -> Dict[str, np.ndarray]:
+        """캐시 조회. 정규화된 이름과 **원래 이름을 함께** 본다 — 예전에 `:latest` 로 저장된 행도 그대로 쓴다
+        (정규화만 하고 끝내면 기존 캐시가 전부 미스가 되어 재임베딩이 일어난다)."""
+        names = [self.norm_model(model)]
+        if model and model not in names:
+            names.append(model)
         out: Dict[str, np.ndarray] = {}
         for i in range(0, len(shas), 500):
             part = shas[i:i + 500]
             qs = ",".join("?" * len(part))
-            for r in self.conn.execute("SELECT sha, dim, vec FROM embedding_cache WHERE provider=? AND model=? AND sha IN (%s)" % qs, [provider, model] + part):
-                out[r["sha"]] = self._decode_vec(r["vec"], int(r["dim"])).astype(np.float32)
+            ns = ",".join("?" * len(names))
+            for r in self.conn.execute("SELECT sha, dim, vec FROM embedding_cache WHERE provider=? AND model IN (%s) AND sha IN (%s)"
+                                       % (ns, qs), [provider] + names + part):
+                out.setdefault(r["sha"], self._decode_vec(r["vec"], int(r["dim"])).astype(np.float32))
         return out
 
-    def cache_put(self, provider: str, model: str, items: List[Tuple[str, np.ndarray]], dtype: str = "float32") -> None:
+    def cache_put(self, provider: str, model: str, items: List[Tuple[str, np.ndarray]], dtype: str = "float32",
+                  commit: bool = False) -> None:
+        """임베딩 캐시에 넣는다. 새 행은 **정규화된 모델 이름**으로 쓴다.
+
+        `commit=True` 를 쓰는 곳: **질의 경로**(`retrieval.embed_query`). 이유는 이렇다 —
+        Python sqlite3 는 INSERT 앞에서 트랜잭션을 암묵적으로 열고, SQLite 는 첫 쓰기에서 WRITER 잠금을 잡아
+        COMMIT 까지 놓지 않는다. 질의 경로에서는 이 INSERT 가 **벡터 검색 초반**에 일어나고 다음 커밋은
+        **질의 맨 끝**이라, 질의 1건이 자기 수명(실측 98~118초) 내내 쓰기 잠금을 혼자 쥐고 있었다.
+        다른 동시 질의는 db_busy_timeout_s(60초)까지 기다린 뒤 'database is locked' 로 실패했다 (2026-09-23).
+        빌드(`embed_run`)는 배치 단위로 커밋하므로 기본값 False 를 그대로 쓴다.
+        """
         np_dt = np.float16 if dtype == "float16" else np.float32
         now = time.time()
+        name = self.norm_model(model)
         for sha, v in items:
             v = np.asarray(v, dtype=np_dt)
             self.conn.execute("INSERT OR REPLACE INTO embedding_cache(provider,model,sha,dim,vec,ts) VALUES(?,?,?,?,?,?)",
-                              (provider, model, sha, int(v.shape[0]), v.tobytes(), now))
+                              (provider, name, sha, int(v.shape[0]), v.tobytes(), now))
+        if commit:
+            self.conn.commit()
+
+    def cache_merge_models(self, dry_run: bool = False) -> Dict[str, Any]:
+        """모델 이름 표기가 갈려 중복 저장된 캐시 행을 정규화된 이름으로 합친다 (`maintenance cache_merge`).
+
+        `bge-m3:latest` 의 행 중 정규화 이름(`bge-m3`)에 같은 sha 가 이미 있으면 **버리고**, 없으면 **이름만 바꾼다**.
+        벡터 값은 같은 모델이므로 어느 쪽을 남겨도 같다. 실패해도 최악은 '다음 빌드에서 다시 임베딩' 이다.
+        """
+        rows = self.conn.execute("SELECT provider, model, COUNT(*) n FROM embedding_cache GROUP BY provider, model").fetchall()
+        plan = [(r["provider"], r["model"], self.norm_model(r["model"]), int(r["n"]))
+                for r in rows if r["model"] != self.norm_model(r["model"])]
+        out: Dict[str, Any] = {"groups": [{"provider": p, "from": m, "to": t, "rows": n} for p, m, t, n in plan],
+                               "moved": 0, "dropped": 0, "dry_run": bool(dry_run)}
+        if dry_run or not plan:
+            return out
+        for prov, old, new, _n in plan:
+            cur = self.conn.execute(
+                "DELETE FROM embedding_cache WHERE provider=? AND model=? AND sha IN "
+                "(SELECT sha FROM embedding_cache WHERE provider=? AND model=?)", (prov, old, prov, new))
+            out["dropped"] += int(cur.rowcount or 0)
+            cur = self.conn.execute("UPDATE embedding_cache SET model=? WHERE provider=? AND model=?", (new, prov, old))
+            out["moved"] += int(cur.rowcount or 0)
+        self.conn.commit()
+        return out
 
     def cache_stats(self) -> Dict[str, Any]:
         rows = self.conn.execute("SELECT provider, model, dim, COUNT(*) n FROM embedding_cache GROUP BY provider, model, dim").fetchall()
@@ -1098,11 +1225,11 @@ class Store:
 
     def log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
                     error: Optional[str] = None, origin: str = "", keep: int = 2000, user: str = "",
-                    archive_dir: str = "") -> int:
+                    archive_dir: str = "", commit: bool = True) -> int:
         """요청 프로파일 기록. **관측용이므로 실패해도 명령/질의를 죽이지 않는다** — 다른 프로세스가 빌드 중이라
         쓰기 잠금을 못 얻으면 경고만 남기고 0 을 돌려준다 (2026-09-15: 서버 워처와 CLI 질의가 겹쳐 'database is locked' 로 질의가 실패했다)."""
         try:
-            return self._log_request(kind, summary, trace, result, config, error, origin, keep, user, archive_dir)
+            return self._log_request(kind, summary, trace, result, config, error, origin, keep, user, archive_dir, commit)
         except (sqlite3.OperationalError, UnicodeEncodeError) as e:
             # UnicodeEncodeError: 경계에서 걸러지지만, 어떤 경로로든 SQLite 가 담지 못하는 문자열이
             # 들어와도 관측 기록 때문에 질의가 죽지는 않게 한다.
@@ -1111,7 +1238,7 @@ class Store:
 
     def _log_request(self, kind: str, summary: str, trace: Dict[str, Any], result: Any = None, config: Any = None,
                      error: Optional[str] = None, origin: str = "", keep: int = 2000, user: str = "",
-                     archive_dir: str = "") -> int:
+                     archive_dir: str = "", commit: bool = True) -> int:
         sm = (trace or {}).get("summary") or {}
         llm = sm.get("llm") or {}
         if not origin or not user:
@@ -1144,7 +1271,8 @@ class Store:
                 self._warn_locked("요청 결과 파일 보관", e)
         if keep and rid % 50 == 0:  # 주기적으로 오래된 요청 정리 (파일은 requests_keep_days 로 따로 정리)
             self.conn.execute("DELETE FROM requests WHERE id <= ?", (rid - keep,))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return rid
 
     # ---------- 요청 결과 보관 파일 (data/requests/<yyyy-mm>/req_<id>.json) ----------
@@ -1257,73 +1385,245 @@ class Store:
 
     def log_query(self, query: str, config: Dict[str, Any], top_chunks: List[str], answer: str,
                   scores: Dict[str, Any], trace: Dict[str, Any], actor: Optional[Dict[str, Any]] = None,
-                  request_id: int = 0) -> int:
+                  request_id: int = 0, commit: bool = True) -> int:
         """질의 로그(자가진화 입력). 쓰기 잠금이면 건너뛴다 — 답변은 이미 만들어졌으므로 기록 실패로 질의를 실패시키지 않는다.
 
         actor 를 주지 않으면 진행 레지스트리에서 지금 요청의 클라이언트를 읽어 '누가 물었나' 를 함께 남긴다.
         """
         a = dict(actor or self.current_actor())
+        # 2026-09-23: `trace` 는 **더 이상 여기에 저장하지 않는다.**
+        # 같은 trace 가 requests 에도 통째로 들어가 바이트까지 같았다 (실측: 43,072 / 43,072 바이트,
+        # 전체로는 requests 66.2MB + query_log 33.9MB = 34MB 중복). 질의 1건당 직렬화도 두 번 했다.
+        # 읽는 쪽(`get_query`)이 `request_id` 로 requests.trace 를 가져오므로 보이는 정보는 그대로다.
+        # 옛 행에는 값이 남아 있고 `maintenance trim_query_log` 로 회수한다.
         try:
             cur = self.conn.execute(
                 "INSERT INTO query_log(ts,query,config,top_chunks,answer,scores,trace,feedback,note,"
                 "user,role,origin,via,ip,agent,request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (time.time(), query, json.dumps(config, ensure_ascii=False), json.dumps(top_chunks), answer,
-                 json.dumps(scores, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), None, "",
+                 json.dumps(scores, ensure_ascii=False), None, None, "",
                  str(a.get("user") or ""), str(a.get("role") or ""), str(a.get("origin") or ""),
                  str(a.get("via") or ""), str(a.get("ip") or ""), str(a.get("agent") or ""), int(request_id or 0)))
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
             return int(cur.lastrowid)
         except (sqlite3.OperationalError, UnicodeEncodeError) as e:
             self._warn_locked("질의 로그", e)
             return 0
 
-    def set_query_request_id(self, qid: int, request_id: int) -> None:
-        """질의 로그 행을 requests 행과 연결한다 (질의 로그가 먼저 쓰이므로 뒤에 채운다)."""
+    @contextlib.contextmanager
+    def write_bundle(self, what: str = "질의 기록"):
+        """끝에 하는 관측 쓰기들을 **한 트랜잭션**으로 묶는다 (2026-09-23).
+
+        왜: 질의 1건이 끝날 때 `proposals` · `query_log` · `requests` · `query_log UPDATE` · `episodes` 를
+        **각각 커밋**했다. SQLite 쓰기는 WAL 에서도 한 번에 하나라, 동시 질의 8건이 비슷한 시점에 끝나면
+        40~48개의 쓰기 트랜잭션이 한 줄로 선다. 게다가 중간 커밋이 실패하면 그 뒤 연결(`set_query_request_id`)이
+        끊겨 **`query_log.request_id` 가 비어 버렸다** — 실측 805건 중 63건(8%)만 채워져 있었다.
+
+        묶으면 잠금 획득이 1회로 줄고, **id 연결이 같은 트랜잭션 안에서 끝나므로 100% 채워진다.**
+        실패해도 관측 기록일 뿐이므로 예외를 올리지 않고 경고만 남긴다(질의는 이미 답을 냈다).
+        """
+        conn = self.conn
+        try:
+            yield conn
+            conn.commit()
+        except (sqlite3.OperationalError, UnicodeEncodeError) as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            self._warn_locked(what, e)
+
+    def set_query_request_id(self, qid: int, request_id: int, commit: bool = True) -> None:
+        """질의 로그 행을 requests 행과 연결한다 (질의 로그가 먼저 쓰이므로 뒤에 채운다).
+
+        `commit=False` 는 `write_bundle()` 안에서 부를 때 — 그때는 묶음이 한 번에 커밋하므로
+        **연결이 같은 트랜잭션에서 끝나** 비어 있는 일이 없다.
+        """
         if not qid or not request_id:
             return
         try:
             self.conn.execute("UPDATE query_log SET request_id=? WHERE id=?", (int(request_id), int(qid)))
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
         except sqlite3.OperationalError as e:
             self._warn_locked("질의 로그 request_id", e)
 
     def set_feedback(self, qid: int, feedback: int, note: str = "") -> None:
-        self.conn.execute("UPDATE query_log SET feedback=?, note=? WHERE id=?", (feedback, note, qid))
+        """질의에 피드백을 단다. `qid` 는 **requests.id**(신규) 또는 예전 query_log.id 둘 다 받는다.
+
+        피드백은 `query_feedback` 에 **영구 보존**한다 — requests 는 keep_requests(2000행 ≈ 8일)로 잘리는데
+        사람이 남긴 유일한 학습 신호가 같이 잘리면 안 된다. 목록에서 바로 보이도록 requests 에도 함께 적는다.
+        """
+        qid = int(qid or 0)
+        if not qid:
+            return
+        row = self.conn.execute("SELECT id, ts, summary, user FROM requests WHERE id=?", (qid,)).fetchone()
+        legacy = None
+        if row is None:      # 예전 화면이 준 query_log.id 일 수 있다 (하위 호환)
+            legacy = self.conn.execute("SELECT id, ts, query, user, request_id FROM query_log WHERE id=?", (qid,)).fetchone()
+        rid = int((row and row["id"]) or (legacy and legacy["request_id"]) or 0) or (-qid if legacy else qid)
+        ts = float((row and row["ts"]) or (legacy and legacy["ts"]) or time.time())
+        text = str((row and row["summary"]) or (legacy and legacy["query"]) or "")
+        who = str((row and row["user"]) or (legacy and legacy["user"]) or "")
+        self.conn.execute(
+            "INSERT INTO query_feedback(request_id, ts, query, user, feedback, note, legacy_qid) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(request_id) DO UPDATE SET feedback=excluded.feedback, note=excluded.note, ts=excluded.ts",
+            (rid, ts, text[:300], who, feedback, note or "", qid if legacy else 0))
+        if row is not None:
+            self.conn.execute("UPDATE requests SET feedback=?, note=? WHERE id=?", (feedback, note or "", qid))
+        if legacy is not None:
+            self.conn.execute("UPDATE query_log SET feedback=?, note=? WHERE id=?", (feedback, note or "", qid))
         self.conn.commit()
+
+    #: `queries()` 가 돌려주는 모양 — 예전 query_log 행과 **같은 키**를 쓴다. 읽는 곳이 14군데라
+    #: 모양을 바꾸면 전부 손봐야 하므로, 원천만 requests 로 바꾸고 모양은 유지한다.
+    def _query_row(self, r: sqlite3.Row) -> Dict[str, Any]:
+        try:
+            res = json.loads(r["result"]) if r["result"] else {}
+        except Exception:
+            res = {}
+        ev = res.get("evidence") or {}
+        return {
+            "id": int(r["id"]), "request_id": int(r["id"]), "ts": r["ts"],
+            "query": res.get("query") or r["summary"], "answer": res.get("answer") or "",
+            "config": r["config"], "ms": r["ms"],
+            "top_chunks": json.dumps([h.get("chunk_id") for h in (res.get("hits_brief") or [])], ensure_ascii=False),
+            "scores": json.dumps({"n_hits": len(res.get("hits_brief") or []), "verdict": ev.get("verdict"),
+                                  "groundedness": res.get("groundedness")}, ensure_ascii=False),
+            "feedback": r["feedback"], "note": r["note"] or "",
+            "user": r["user"] or "", "role": r["role"] or "", "origin": r["origin"] or "",
+            "via": r["via"] or "", "ip": r["ip"] or "", "agent": r["agent"] or "",
+        }
 
     def queries(self, limit: int = 50, user: Optional[str] = None, q: Optional[str] = None,
                 origin: Optional[str] = None) -> List[Dict[str, Any]]:
-        """질의 로그. user/q/origin 으로 거를 수 있다 ('누가 무엇을 물었나' 를 찾는 창구)."""
-        sql = ("SELECT id,ts,query,config,top_chunks,answer,scores,feedback,note,"
-               "user,role,origin,via,ip,agent,request_id FROM query_log")
-        where, args = [], []
+        """'누가 무엇을 물었나'. 2026-09-23부터 **requests(kind='query')** 가 원천이다.
+
+        예전에는 query_log 를 읽었는데, 두 표가 질문·답변·근거·판정·trace 를 **내용까지 똑같이** 들고 있었다
+        (trace 는 바이트까지 동일). 원천을 하나로 모으고 모양은 그대로 둔다 — 부르는 곳이 14군데라서다.
+        피드백은 잘려 나가지 않는 `query_feedback` 을 우선한다.
+        """
+        sql = ("SELECT r.id, r.ts, r.summary, r.result, r.config, r.ms, r.user, r.role, r.origin, r.via, r.ip, r.agent, "
+               "COALESCE(f.feedback, r.feedback) AS feedback, COALESCE(NULLIF(f.note,''), r.note, '') AS note "
+               "FROM requests r LEFT JOIN query_feedback f ON f.request_id = r.id WHERE r.kind='query'")
+        args: List[Any] = []
         if user:
-            where.append("user=?")
+            sql += " AND r.user=?"
             args.append(user)
         if origin:
-            where.append("origin=?")
-            args.append(origin)
+            # requests.origin 은 'web kh82.kim' 처럼 사용자까지 붙은 옛 형식이 섞여 있다 → 앞부분으로 비교
+            sql += " AND (r.origin=? OR r.origin LIKE ?)"
+            args += [origin, origin + " %"]
         if q:
-            where.append("query LIKE ?")
+            sql += " AND r.summary LIKE ?"
             args.append("%" + q + "%")
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY id DESC LIMIT ?"
+        sql += " ORDER BY r.id DESC LIMIT ?"
         args.append(int(limit))
-        return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+        out = [self._query_row(r) for r in self.conn.execute(sql, args).fetchall()]
+        # 전환기: requests 에 짝이 없는 **옛 query_log 행**도 함께 보여 준다.
+        # (1) 이미 쌓인 이력(실측 826행, 그중 742행은 연결 컬럼이 생기기 전의 것)이 화면에서 사라지면 안 되고
+        # (2) query_log 에만 넣는 옛 코드·테스트가 남아 있을 수 있다.
+        # requests 에 있는 것은 위에서 이미 나왔으므로 request_id 로 중복을 걸러 낸다.
+        if len(out) < int(limit):
+            seen = {r["id"] for r in out}
+            lsql = ("SELECT id,ts,query,config,top_chunks,answer,scores,feedback,note,"
+                    "user,role,origin,via,ip,agent,request_id FROM query_log "
+                    "WHERE (request_id IS NULL OR request_id=0 OR request_id NOT IN (SELECT id FROM requests))")
+            largs: List[Any] = []
+            if user:
+                lsql += " AND user=?"
+                largs.append(user)
+            if origin:
+                lsql += " AND origin=?"
+                largs.append(origin)
+            if q:
+                lsql += " AND query LIKE ?"
+                largs.append("%" + q + "%")
+            lsql += " ORDER BY id DESC LIMIT ?"
+            largs.append(int(limit) - len(out))
+            for r in self.conn.execute(lsql, largs).fetchall():
+                d = dict(r)
+                if d["id"] not in seen:
+                    d["legacy"] = True      # 화면이 '옛 기록' 으로 구분할 수 있게
+                    out.append(d)
+            out.sort(key=lambda d: float(d.get("ts") or 0), reverse=True)
+        return out[:int(limit)]
 
     def query_users(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """질의 로그에 남은 사용자별 집계 (누가 얼마나 물었고 최근은 언제인가)."""
+        """사용자별 질의 집계 (누가 얼마나 물었고 최근은 언제인가). 원천은 requests(kind='query')."""
         rows = self.conn.execute(
-            "SELECT COALESCE(NULLIF(user,''),'(기록 없음)') AS user, COUNT(*) AS n, MAX(ts) AS last_ts, "
-            "SUM(CASE WHEN feedback > 0 THEN 1 ELSE 0 END) AS up, "
-            "SUM(CASE WHEN feedback < 0 THEN 1 ELSE 0 END) AS down "
-            "FROM query_log GROUP BY 1 ORDER BY n DESC LIMIT ?", (int(limit),)).fetchall()
-        return [dict(r) for r in rows]
+            "SELECT COALESCE(NULLIF(r.user,''),'(기록 없음)') AS user, COUNT(*) AS n, MAX(r.ts) AS last_ts, "
+            "SUM(CASE WHEN COALESCE(f.feedback, r.feedback) > 0 THEN 1 ELSE 0 END) AS up, "
+            "SUM(CASE WHEN COALESCE(f.feedback, r.feedback) < 0 THEN 1 ELSE 0 END) AS down "
+            "FROM requests r LEFT JOIN query_feedback f ON f.request_id = r.id "
+            "WHERE r.kind='query' GROUP BY 1 ORDER BY n DESC LIMIT ?", (int(limit),)).fetchall()
+        agg = {r["user"]: dict(r) for r in rows}
+        # 전환기: requests 에 짝이 없는 옛 query_log 행도 합산한다 (§queries 와 같은 이유)
+        for r in self.conn.execute(
+                "SELECT COALESCE(NULLIF(user,''),'(기록 없음)') AS user, COUNT(*) AS n, MAX(ts) AS last_ts, "
+                "SUM(CASE WHEN feedback > 0 THEN 1 ELSE 0 END) AS up, "
+                "SUM(CASE WHEN feedback < 0 THEN 1 ELSE 0 END) AS down FROM query_log "
+                "WHERE (request_id IS NULL OR request_id=0 OR request_id NOT IN (SELECT id FROM requests)) "
+                "GROUP BY 1").fetchall():
+            cur = agg.get(r["user"])
+            if cur is None:
+                agg[r["user"]] = dict(r)
+            else:
+                cur["n"] += r["n"]
+                cur["up"] += r["up"]
+                cur["down"] += r["down"]
+                cur["last_ts"] = max(float(cur["last_ts"] or 0), float(r["last_ts"] or 0))
+        return sorted(agg.values(), key=lambda d: -int(d["n"]))[:int(limit)]
 
     def get_query(self, qid: int) -> Optional[Dict[str, Any]]:
-        r = self.conn.execute("SELECT * FROM query_log WHERE id=?", (qid,)).fetchone()
-        return dict(r) if r else None
+        """질의 한 건 (`queries()` 와 같은 모양 + `trace`). `qid` 는 **requests.id**.
+
+        2026-09-23: 원천이 query_log → requests 로 바뀌었다. 예전 화면·스크립트가 주는 query_log.id 도
+        받아 준다(하위 호환) — 그 행의 `request_id` 로 넘어가고, 그것도 없으면 옛 행을 그대로 돌려준다.
+        """
+        qid = int(qid or 0)
+        r = self.conn.execute(
+            "SELECT r.id, r.ts, r.summary, r.result, r.config, r.ms, r.trace, r.user, r.role, r.origin, r.via, r.ip, r.agent, "
+            "COALESCE(f.feedback, r.feedback) AS feedback, COALESCE(NULLIF(f.note,''), r.note, '') AS note "
+            "FROM requests r LEFT JOIN query_feedback f ON f.request_id = r.id WHERE r.id=?", (qid,)).fetchone()
+        if r is not None:
+            d = self._query_row(r)
+            d["trace"] = r["trace"]
+            return d
+        # 하위 호환: 예전 query_log.id
+        old = self.conn.execute("SELECT * FROM query_log WHERE id=?", (qid,)).fetchone()
+        if not old:
+            return None
+        d = dict(old)
+        if d.get("request_id"):
+            row = self.conn.execute("SELECT trace FROM requests WHERE id=?", (int(d["request_id"]),)).fetchone()
+            if row and row["trace"] and not d.get("trace"):
+                d["trace"] = row["trace"]
+                d["trace_from"] = "requests"
+        return d
+
+    def trim_query_log(self, dry_run: bool = False) -> Dict[str, Any]:
+        """query_log 에 남아 있는 옛 `trace` 를 지운다 (`maintenance trim_query_log`).
+
+        같은 내용이 requests 에 있으므로 정보 손실이 없다. **requests 에 짝이 없는 행은 건드리지 않는다** —
+        그런 행은 그 trace 가 유일한 사본이기 때문이다(keep_requests 로 잘려 나간 오래된 질의).
+        """
+        n_all = self.conn.execute("SELECT COUNT(*) FROM query_log WHERE trace IS NOT NULL").fetchone()[0]
+        row = self.conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(trace)),0) FROM query_log ql WHERE ql.trace IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM requests r WHERE r.id = ql.request_id AND r.trace IS NOT NULL)").fetchone()
+        n, nbytes = int(row[0]), int(row[1])
+        out = {"with_trace": n_all, "safe_to_clear": n, "bytes": nbytes, "mb": round(nbytes / 1048576.0, 1),
+               "kept_unique": n_all - n, "dry_run": bool(dry_run)}
+        if dry_run or not n:
+            return out
+        self.conn.execute(
+            "UPDATE query_log SET trace = NULL WHERE trace IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM requests r WHERE r.id = query_log.request_id AND r.trace IS NOT NULL)")
+        self.conn.commit()
+        out["cleared"] = n
+        return out
 
     def add_proposal(self, kind: str, payload: Dict[str, Any], reason: str, confidence: float, origin: str) -> int:
         # 동일 payload 중복 방지

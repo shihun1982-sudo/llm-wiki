@@ -28,6 +28,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 from . import atomicio
 from . import progress as _pg
+from . import reqledger as _led
 from .config import ROOT, path_for
 
 DEFAULTS: Dict[str, Any] = {
@@ -44,7 +45,10 @@ DEFAULTS: Dict[str, Any] = {
         # HTTP keep-alive 유휴 시간(초). 브라우저는 한 사이트에 연결을 6개까지만 열기 때문에,
         # 연결을 재사용하지 않으면 오래 걸리는 질의가 갱신 요청을 막는다. 0 = keep-alive 끔(HTTP/1.0).
         "keep_alive_s": 30,
-        "queue_max": 64,                  # 슬롯을 기다리는 요청 상한 (초과 → 503 busy)
+        # 슬롯을 기다리는 요청 상한 (초과 → 503 busy). 2026-09-23: 64 → 128.
+        # 질의 1건이 100초 가까이 걸리는 환경(로컬 LLM)에서 64는 30명이 두 번씩만 물어도 가득 찬다.
+        # 대기열이 길어도 queue_timeout_s 가 수명을 끊으므로, 즉시 503(queue_full)보다 FIFO 대기가 낫다.
+        "queue_max": 128,
         "queue_timeout_s": 120,           # 슬롯을 기다리는 최대 시간 (초과 → 503)
         "reads_during_build": "incremental",   # never | incremental | always — 빌드 중 질의 허용 범위 (incremental: 증분 빌드 동안만)
         # 빌드(쓰기)가 진행 중인 읽기가 끝나길 기다리는 최대 시간. 빌드를 취소시키는 값이므로 48시간으로 둔다.
@@ -90,6 +94,26 @@ DEFAULTS: Dict[str, Any] = {
         "live_dir": "data/live",          # 다른 프로세스(CLI/MCP stdio) 작업 파일 위치
         "live_stale_s": 90,               # heartbeat 가 이보다 오래되면 죽은 것으로 간주
     },
+    # 요청 원장(2026-09-23, 요청 3·4) — 서버로 들어온 **모든 요청**을 data/ledger/*.jsonl 에 남긴다.
+    # SQLite 가 아닌 이유: 원장이 기록해야 할 대표 사건이 "DB 가 잠겨 기록하지 못했다" 이고,
+    # 스냅샷 복원(DB 파일 교체)에도 되감기지 않아야 하기 때문이다. 상세: docs/REQUEST_LEDGER.md
+    "ledger": {
+        "enabled": True,
+        "dir": "data/ledger",          # data/… 상대 경로는 data_dir 아래로 본다. logs/ 가 아닌 이유: 로그 총량 정리에 지워지면 안 된다
+        "keep_days": 30,               # 보존 기간(일). 0 = 지우지 않음
+        "max_mb": 512,                 # 폴더 총량 상한. 넘으면 오래된 파일부터 삭제
+        "include_get": "heavy",        # none | heavy | all — 폴링(/api/progress·/api/activity)이 원장을 덮지 않게
+        "queue_max": 10000,            # writer 큐 상한. 넘으면 드롭하고 **드롭 수를 센다**(조용한 유실 금지)
+        "flush_ms": 200,               # writer 가 모아서 쓰는 간격(ms)
+        "live_rows": 500,              # 목록을 빠르게 그리기 위한 메모리 색인 크기
+        "running_grace_s": 900,        # close 없는 항목을 '중단(unknown)' 으로 볼 때까지의 시간(초)
+        # 화면(Observability › 요청) 갱신 주기(ms). 목록·상태 스트립·시간 막대가 **한 번의 요청으로** 함께 갱신된다.
+        # 짧게 잡으면 사람이 많을수록 폴링이 늘어난다(브라우저 1개당 1초에 한 번씩 × 접속자 수).
+        # 0 = 자동 갱신 끔(새로고침 버튼만). 화면에서 사용자가 더 길게 바꿀 수도 있다.
+        "refresh_ms": 5000,
+        "refresh_choices_ms": [2000, 5000, 10000, 30000, 0],   # 화면 드롭다운에 보일 값 (0 = 끔)
+        "histogram_buckets": 60,       # 시간 막대를 몇 칸으로 나눌지 (기간 ÷ 이 수 = 한 칸의 폭)
+    },
     "debug": {
         # 500 응답에 스택트레이스를 포함할지. 기본 false — 트레이스는 error.log 에 참조 id 와 함께 남고
         # 클라이언트는 {"code":"internal","ref":…} 만 받는다 (admin 은 항상 트레이스를 본다). 개발 PC 에서만 true.
@@ -127,6 +151,25 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 SERVER_JSON_NAME = "server"
+
+
+def _data_dir() -> str:
+    """원장 폴더의 기준이 되는 data_dir (격리 환경도 따라가게). 설정을 못 읽으면 ROOT.
+
+    `LLMWIKI_DATA_DIR_PATH` 가 있으면 그것을 **먼저** 본다 (2026-09-23).
+    이유: 테스트와 검증 하네스는 `Settings(data_dir=임시폴더)` 로 격리하는데, RequestManager 는
+    그 Settings 를 받지 않고 프로젝트 설정을 읽는다. 그래서 **테스트가 실제 data/ledger 에 기록**했고,
+    실사용 기록 사이에 `bob`·`u1`·`key:test-client` 같은 픽스처가 섞였다(실측 2,616건 중 다수).
+    `LLMWIKI_LOGS_DIR_PATH` 가 로그에 대해 하는 것과 같은 장치다.
+    """
+    env = os.environ.get("LLMWIKI_DATA_DIR_PATH", "").strip()
+    if env:
+        return env if os.path.isabs(env) else os.path.normpath(os.path.join(ROOT, env))
+    try:
+        from .config import load_settings
+        return str(load_settings().data_dir)
+    except Exception:
+        return ROOT
 
 
 def server_path() -> str:
@@ -210,16 +253,25 @@ def safe_text(s: Any, limit: int = 160) -> str:
 
 
 class Rejected(Exception):
-    """요청을 받지 않음. status: 429(속도 제한) · 503(대기열/점검/차단) · 403(차단)."""
+    """요청을 받지 않음. status: 429(속도 제한) · 503(대기열/점검/차단) · 403(차단).
 
-    def __init__(self, status: int, message: str, retry_after: Optional[float] = None, code: str = ""):
+    `limit` 에는 **무엇이 막았는지**를 담는다 (2026-09-23): 어느 설정 키가 이 한도를 정하고,
+    그때 값이 얼마였으며, 지금 얼마나 차 있었는지. 거절은 로그 파일에 남지 않으므로
+    이 정보가 없으면 나중에 "왜 거절됐는지" 를 알 방법이 아예 없다 — 요청 원장이 이것을 그대로 보여 준다.
+    """
+
+    def __init__(self, status: int, message: str, retry_after: Optional[float] = None, code: str = "",
+                 limit: Optional[Dict[str, Any]] = None):
         Exception.__init__(self, message)
         self.status, self.message, self.retry_after, self.code = status, message, retry_after, code
+        self.limit = dict(limit or {})
 
     def body(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {"error": self.message, "code": self.code or ("rate_limited" if self.status == 429 else "busy")}
         if self.retry_after is not None:
             d["retry_after_s"] = round(float(self.retry_after), 1)
+        if self.limit:
+            d["limit"] = self.limit
         return d
 
 
@@ -388,7 +440,12 @@ class RequestManager:
     READ_WEIGHTS = ("read",)
     WRITE_WEIGHTS = ("write", "exclusive", "soft")
 
-    def __init__(self, cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None, install_publisher: bool = True):
+    def __init__(self, cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None, install_publisher: bool = True,
+                 data_dir: str = ""):
+        # data_dir: 이 서버가 쓰는 데이터 폴더. 주면 원장이 **그 폴더**에 쓴다.
+        # 주지 않으면 프로젝트 설정을 읽는데, 그러면 임시 Settings 로 띄운 서버(테스트·검증 하네스)도
+        # 프로젝트의 data/ledger 에 기록해 실사용 기록과 섞인다 (2026-09-23 실측으로 확인).
+        self.data_dir = data_dir or ""
         self.path = path or server_path()
         self.cfg: Dict[str, Any] = cfg if cfg is not None else load_config(self.path)
         self._lock = threading.Lock()
@@ -403,6 +460,7 @@ class RequestManager:
         self.started = time.time()
         self._durations: Deque[Any] = collections.deque(maxlen=2000)   # (ts, kind, ms, ok)
         self.live = LiveRegistry(self.cfg["monitor"].get("live_dir") or "data/live", float(self.cfg["monitor"].get("live_stale_s") or 90))
+        _led.configure(self.cfg.get("ledger"), self.data_dir or _data_dir())
         if install_publisher:
             _pg.set_publisher(self.live.publish, self.live.cancel_check)
         self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
@@ -416,6 +474,7 @@ class RequestManager:
             self.history = collections.deque(self.history, maxlen=int(self.cfg["monitor"]["history_size"]))
             self.live = LiveRegistry(self.cfg["monitor"].get("live_dir") or "data/live", float(self.cfg["monitor"].get("live_stale_s") or 90))
             _pg.set_publisher(self.live.publish, self.live.cancel_check)
+        _led.configure(self.cfg.get("ledger"), self.data_dir or _data_dir())
         return self.cfg
 
     def set_limits(self, updates: Dict[str, Any], save: bool = True) -> Dict[str, Any]:
@@ -432,7 +491,25 @@ class RequestManager:
                 if "." not in k:
                     raise KeyError("key must be <section>.<name>: %s" % k)
                 sect, name = k.split(".", 1)
-                if sect not in self.cfg or not isinstance(self.cfg[sect], dict) or name not in self.cfg[sect]:
+                if sect not in self.cfg or not isinstance(self.cfg[sect], dict):
+                    raise KeyError("unknown key %s" % k)
+                # 종류별 한도는 3단계다: concurrency.classes.<kind>.<key> · rate_limit.classes.<kind>.<key>.
+                # 아직 없는 <kind> 는 **만들어 준다** — 종류가 늘 때마다 파일을 먼저 고치게 하지 않으려고.
+                # 다만 <key> 는 아는 이름만 받는다 (오타를 조용히 삼키지 않는다).
+                if name.startswith("classes."):
+                    parts = name.split(".")
+                    if len(parts) != 3:
+                        raise KeyError("key must be %s.classes.<kind>.<name>: %s" % (sect, k))
+                    _c, kind_, leaf = parts
+                    known = ({"max_parallel", "max_parallel_per_user", "queue_max", "queue_timeout_s"}
+                             if sect == "concurrency" else {"per_user_per_min"})
+                    if leaf not in known:
+                        raise KeyError("unknown key %s (가능: %s)" % (k, ", ".join(sorted(known))))
+                    classes = self.cfg[sect].setdefault("classes", {})
+                    cur = classes.setdefault(kind_, {})
+                    cur[leaf] = coerce_like(cur.get(leaf, 0), v)
+                    continue
+                if name not in self.cfg[sect]:
                     raise KeyError("unknown key %s" % k)
                 self.cfg[sect][name] = coerce_like(self.cfg[sect][name], v)
             self.history = collections.deque(self.history, maxlen=int(self.cfg["monitor"]["history_size"]))
@@ -471,18 +548,37 @@ class RequestManager:
     def check_access(self, ip: str, user: str, role: str) -> None:
         """차단/허용/점검 모드 — 모든 요청(GET 포함)에 적용. 거부면 Rejected."""
         a = self.cfg.get("access") or {}
+        # 접근 제어 거절도 **무엇이 막았는지**를 함께 남긴다 (2026-09-23). 한도 거절과 같은 모양이라
+        # 원장 상세의 '왜 거절됐나' 가 같은 자리에서 답한다 — 이게 없으면 문구 한 줄뿐이라
+        # "어느 설정을 어떻게 되돌려야 하나" 를 알 수 없다.
         if a.get("allow_ips") and ip and not self._ip_match(ip, a["allow_ips"]):
             self.counters["rejected_blocked"] += 1
-            raise Rejected(403, "허용되지 않은 IP 입니다 (server.json access.allow_ips)", code="ip_not_allowed")
+            raise Rejected(403, "허용되지 않은 IP 입니다 (server.json access.allow_ips)", code="ip_not_allowed",
+                           limit={"what": "허용 IP 목록 밖", "who": ip, "key": "access.allow_ips",
+                                  "value": ", ".join(a.get("allow_ips") or [])[:120],
+                                  "hint": "이 목록이 비어 있지 않으면 **여기 적힌 IP 만** 접속할 수 있습니다. "
+                                          "`server block add allow_ip <주소>` 로 추가합니다"})
         if ip and self._ip_match(ip, a.get("block_ips") or []):
             self.counters["rejected_blocked"] += 1
-            raise Rejected(403, "차단된 IP 입니다", code="ip_blocked")
+            raise Rejected(403, "차단된 IP 입니다", code="ip_blocked",
+                           limit={"what": "IP 차단 목록", "who": ip, "key": "access.block_ips",
+                                  "value": ", ".join(a.get("block_ips") or [])[:120],
+                                  "hint": "`server block remove ip %s` 로 해제합니다" % ip})
         if user and user in (a.get("block_users") or []):
             self.counters["rejected_blocked"] += 1
-            raise Rejected(403, "차단된 사용자입니다: %s" % user, code="user_blocked")
+            raise Rejected(403, "차단된 사용자입니다: %s" % user, code="user_blocked",
+                           limit={"what": "사용자 차단 목록", "who": user, "key": "access.block_users",
+                                  "value": ", ".join(a.get("block_users") or [])[:120],
+                                  "hint": "`server block remove user %s` 로 해제합니다" % user})
         if a.get("maintenance_mode") and role not in (a.get("maintenance_allow_roles") or ["admin"]):
             self.counters["rejected_maintenance"] += 1
-            raise Rejected(503, str(a.get("maintenance_message") or "maintenance"), retry_after=60, code="maintenance")
+            raise Rejected(503, str(a.get("maintenance_message") or "maintenance"), retry_after=60, code="maintenance",
+                           limit={"what": "점검 모드 — 허용 역할 외의 모든 요청을 막습니다",
+                                  "who": "%s (역할 %s)" % (user or "게스트", role or "-"),
+                                  "key": "access.maintenance_mode",
+                                  "value": "켜짐 · 허용 역할: %s" % ", ".join(a.get("maintenance_allow_roles") or ["admin"]),
+                                  "hint": "`server maintenance off` 또는 Web › 서버 모니터에서 끕니다. "
+                                          "특정 역할을 통과시키려면 access.maintenance_allow_roles 에 추가합니다"})
 
     def _rate_check(self, key: str, limit: int, now: float) -> Optional[float]:
         """분당 limit 초과면 재시도까지 남은 초, 아니면 None."""
@@ -531,7 +627,21 @@ class RequestManager:
         client = {k: (safe_text(v, 200) if isinstance(v, str) else v) for k, v in client.items()}
         t = {"token": tok, "kind": kind, "weight": weight, "label": safe_text(label), "client": client, "submitted": now, "started": None,
              "finished": None, "status": "queued", "queue_wait_s": 0.0, "error": "", "pid": os.getpid()}
-        with self._lock:
+        # 원장: 이 티켓에 딸린 원장 항목. HTTP 진입점이 이미 연 span 이 있으면 그 토큰에 덧붙이고,
+        # 없으면(CLI·MCP stdio·잡·스케줄러) 여기서 연다 — 어느 길로 들어오든 한 건은 남는다.
+        led_tok = str(client.get("ledger_token") or "")
+        led_own = False
+        if not led_tok:
+            led_tok = _led.open_(_led.new_token(), kind=kind, origin=client.get("origin") or "",
+                                 user=client.get("user") or "", role=client.get("role") or "",
+                                 via=client.get("via") or "", ip=client.get("ip") or "",
+                                 label=safe_text(label), weight=weight, client_token=tok)
+            led_own = True
+        else:
+            _led.update(led_tok, kind=kind, weight=weight, client_token=tok, label=safe_text(label))
+        t["ledger_token"] = led_tok
+        try:
+          with self._lock:
             self.check_access(client.get("ip") or "", client.get("user") or "", client.get("role") or "")
             if weight != "none":
                 if rl.get("enabled") and not exempt:
@@ -539,24 +649,62 @@ class RequestManager:
                     ra = self._rate_check(ck, int(rl.get("per_user_per_min") or 0), now)
                     if ra is None and client.get("ip"):
                         ra = self._rate_check("ip:" + client["ip"], int(rl.get("per_ip_per_min") or 0), now)
-                    if ra is None and kind == "query":
-                        ra = self._rate_check(ck + ":query", int(rl.get("query_per_user_per_min") or 0), now)
+                    # 종류별 분당 한도 (rate_limit.classes.<kind>.per_user_per_min).
+                    # kind=query 는 예전 키 query_per_user_per_min 을 기본값으로 이어받는다 (하위 호환).
+                    per_min = self._class_limit("rate_limit", kind, "per_user_per_min",
+                                                int(rl.get("query_per_user_per_min") or 0) if kind == "query" else 0)
+                    if ra is None and int(per_min or 0) > 0:
+                        ra = self._rate_check("%s:%s" % (ck, kind), int(per_min), now)
                     if ra is not None:
                         self.counters["rejected_rate"] += 1
                         self._bump_client(client, "rejected")
-                        raise Rejected(429, "요청이 너무 잦습니다 (%s). %.0f초 후 다시 시도하세요" % (ck, ra), retry_after=ra, code="rate_limited")
+                        raise Rejected(429, "요청이 너무 잦습니다 (%s). %.0f초 후 다시 시도하세요" % (ck, ra), retry_after=ra, code="rate_limited",
+                                       limit={"what": "분당 요청 수", "who": ck, "kind": kind,
+                                              "key": "rate_limit.classes.%s.per_user_per_min / rate_limit.per_user_per_min" % kind,
+                                              "value": int(per_min or rl.get("per_user_per_min") or 0)})
+                # 대기열: 전체 상한과 **종류별 상한**을 둘 다 본다 (질의가 대기열을 다 먹어 검색이 못 들어오는 것을 막는다)
                 queued = sum(1 for x in self.active.values() if x["status"] == "queued")
                 if queued >= int(conc.get("queue_max") or 64):
                     self.counters["rejected_queue"] += 1
                     self._bump_client(client, "rejected")
-                    raise Rejected(503, "서버가 바쁩니다: 대기열이 가득 찼습니다 (%d)" % queued, retry_after=10, code="queue_full")
+                    raise Rejected(503, "서버가 바쁩니다: 대기열이 가득 찼습니다 (%d)" % queued, retry_after=10, code="queue_full",
+                                   limit={"what": "전체 대기열 길이", "key": "concurrency.queue_max",
+                                          "value": int(conc.get("queue_max") or 0), "current": queued})
+                kq_max = int(self._class_limit("concurrency", kind, "queue_max", 0) or 0)
+                if kq_max > 0:
+                    kq = sum(1 for x in self.active.values() if x["status"] == "queued" and x["kind"] == kind)
+                    if kq >= kq_max:
+                        self.counters["rejected_queue"] += 1
+                        self._bump_client(client, "rejected")
+                        raise Rejected(503, "%s 대기열이 가득 찼습니다 (%d/%d)" % (kind, kq, kq_max), retry_after=10, code="queue_full_kind",
+                                       limit={"what": "이 **종류**의 대기열 길이", "kind": kind,
+                                              "key": "concurrency.classes.%s.queue_max" % kind,
+                                              "value": kq_max, "current": kq})
                 if not exempt:
                     ck = self._client_key(client)
                     mine = sum(1 for x in self.active.values() if self._client_key(x["client"]) == ck and x["weight"] != "none")
                     if mine >= int(conc.get("max_parallel_per_user") or 999):
                         self.counters["rejected_per_user"] += 1
                         self._bump_client(client, "rejected")
-                        raise Rejected(429, "동시 요청이 너무 많습니다 (%s: %d개 실행/대기 중). 끝난 뒤 다시 시도하세요" % (ck, mine), retry_after=5, code="per_user_limit")
+                        raise Rejected(429, "동시 요청이 너무 많습니다 (%s: %d개 실행/대기 중). 끝난 뒤 다시 시도하세요" % (ck, mine), retry_after=5, code="per_user_limit",
+                                       limit={"what": "사용자(또는 IP)당 동시 요청 수 — 종류 무관", "who": ck,
+                                              "key": "concurrency.max_parallel_per_user",
+                                              "value": int(conc.get("max_parallel_per_user") or 0), "current": mine})
+                    # 종류별 사용자당 동시 수 — 한 사람이 질의로 슬롯을 다 먹어도 그 사람의 검색은 따로 센다
+                    kpu = int(self._class_limit("concurrency", kind, "max_parallel_per_user", 0) or 0)
+                    if kpu > 0:
+                        mine_k = sum(1 for x in self.active.values()
+                                     if x["kind"] == kind and self._client_key(x["client"]) == ck and x["weight"] != "none")
+                        if mine_k >= kpu:
+                            self.counters["rejected_per_user"] += 1
+                            self._bump_client(client, "rejected")
+                            raise Rejected(429, "%s 동시 요청이 너무 많습니다 (%s: %d/%d)" % (kind, ck, mine_k, kpu),
+                                           retry_after=5, code="per_user_limit_kind",
+                                           limit={"what": "이 **종류**의 사용자당 동시 요청 수", "who": ck, "kind": kind,
+                                                  "key": "concurrency.classes.%s.max_parallel_per_user" % kind,
+                                                  "value": kpu, "current": mine_k,
+                                                  "hint": "게스트는 IP 로 묶입니다. 늘리려면 `server limits set "
+                                                          "concurrency.classes.%s.max_parallel_per_user=3`" % kind})
                     ip = client.get("ip") or ""
                     if ip:
                         mine_ip = sum(1 for x in self.active.values() if (x["client"].get("ip") or "") == ip and x["weight"] != "none")
@@ -568,13 +716,26 @@ class RequestManager:
                     self._rate_hit(self._client_key(client), now)
                     if client.get("ip"):
                         self._rate_hit("ip:" + client["ip"], now)
-                    if kind == "query":
-                        self._rate_hit(self._client_key(client) + ":query", now)
+                    self._rate_hit("%s:%s" % (self._client_key(client), kind), now)
             self.active[tok] = t
             self._bump_client(client, "active")
             self._bump_client(client, "total")
             self.counters["submitted"] += 1
+        except Rejected as e:
+            # 거절은 예전에 **메모리 카운터만** 올리고 어디에도 남지 않았다 (요청 4 원인 C).
+            # 이제 원장에 사유·코드·HTTP 와 함께 남는다. span 이 이미 열려 있으면 그쪽이 닫는다.
+            # `limit` 에 **무엇이 막았고 그때 서버가 얼마나 차 있었는지** 를 함께 남긴다.
+            # 거절은 로그 파일에 남지 않으므로 이게 없으면 나중에 원인을 알 방법이 아예 없다.
+            lim = json.dumps(e.limit, ensure_ascii=False) if e.limit else None
+            if led_own:
+                _led.close(led_tok, "rejected", http=e.status, code=e.code, error=e.message,
+                           ms=round((time.time() - now) * 1000, 1), kind=kind, limit_json=lim,
+                           user=client.get("user") or "", origin=client.get("origin") or "")
+            else:
+                _led.update(led_tok, status="rejected", code=e.code, error=e.message, http=e.status, limit_json=lim)
+            raise
         _pg.bind(tok, kind, label or kind, client=client)
+        _led.update(led_tok, status="queued")
         with self._lock:
             pend = self._pending_cancel.pop(tok, None)
         if pend:
@@ -614,10 +775,13 @@ class RequestManager:
                 t["started"] = time.time()
                 t["queue_wait_s"] = round(t["started"] - t["submitted"], 3)
             _pg.set_queue(tok, None)
+            _led.update(led_tok, status="running", queue_wait_s=t["queue_wait_s"], lock_mode=t.get("lock_mode"),
+                        limit_s=limit_s)
             yield t
             status = "done"
         except _pg.Cancelled as e:
-            status = "cancelled"
+            # watchdog 이 시간 제한으로 끊은 것과 사람이 멈춘 것을 원장에서 구분한다
+            status = "timeout" if "watchdog" in str(e) or "시간 제한" in str(e) else "cancelled"
             t["error"] = str(e)[:200]
             raise
         except Rejected as e:
@@ -649,10 +813,64 @@ class RequestManager:
                     if t["ms"] >= float(self.cfg["monitor"].get("slow_request_ms") or 30000):
                         self.counters["slow"] += 1
             _pg.unbind(status, t.get("error") or "")
+            # 원장 종료. span 이 있으면(HTTP) 거기서 닫으므로 여기서는 값만 덧붙인다 — 한 요청이 두 줄로 닫히지 않게.
+            # run_id 를 함께 남긴다 (2026-09-23): 이게 없으면 원장에서 **로그로 가는 길이 끊긴다**
+            # (📜 링크도, 요청 상세의 로그 절도 run_id 로 거른다). 실측에서 한 건도 기록되지 않고 있었다.
+            fin = {"ms": t["ms"], "queue_wait_s": t.get("queue_wait_s"), "request_id": t.get("request_id"),
+                   "run_id": t.get("run_id"), "kind": kind,
+                   "note": t.get("note"), "error": t.get("error") or "", "stage": (_pg.get(tok) or {}).get("stage_label")}
+            if led_own:
+                _led.close(led_tok, status, **fin)
+            else:
+                _led.update(led_tok, status=status, **fin)
+
+    # ---- 종류(kind)별 한도 ----
+    def _class_limit(self, section: str, kind: str, key: str, default: Any = 0) -> Any:
+        """`<section>.classes.<kind>.<key>` — 없으면 default (보통은 공용 값).
+
+        질의와 채널 검색에 **별도 한도**를 두기 위한 것이다(2026-09-23 요청 2).
+        `concurrency.classes.query.max_parallel` 을 전체 슬롯보다 작게 잡으면 그 차이가
+        빠른 요청(검색)의 **예약 슬롯**이 된다 — 별도 예약 설정을 만들지 않고 상한 하나로 같은 효과를 낸다.
+        """
+        try:
+            cls = ((self.cfg.get(section) or {}).get("classes") or {}).get(kind)
+        except Exception:
+            return default
+        # 설정 파일의 설명용 `_comment` 는 문자열이라 종류 설정이 아니다 (파일에 주석을 적을 수 있게 허용한다)
+        if not isinstance(cls, dict):
+            return default
+        v = cls.get(key)
+        return default if v is None or v == "" else v
+
+    def class_view(self) -> List[Dict[str, Any]]:
+        """화면·CLI 가 보여 줄 종류별 한도 표 (유효값 + 어디서 왔는지)."""
+        conc, rl = self.cfg["concurrency"], self.cfg["rate_limit"]
+        total = int(conc.get("max_parallel_reads") or 8)
+        # `_comment` 로 시작하는 키는 파일에 적은 설명이지 종류 이름이 아니다
+        named = [k for src in (conc.get("classes") or {}, rl.get("classes") or {}) for k in src if not str(k).startswith("_")]
+        kinds = sorted(set(named + ["query", "search", "mcp", "cli"]))
+        out = []
+        for k in kinds:
+            mp = int(self._class_limit("concurrency", k, "max_parallel", 0) or 0)
+            out.append({"kind": k,
+                        "max_parallel": mp or total, "max_parallel_set": bool(mp),
+                        "max_parallel_per_user": int(self._class_limit("concurrency", k, "max_parallel_per_user", 0) or 0)
+                        or int(conc.get("max_parallel_per_user") or 0),
+                        "queue_max": int(self._class_limit("concurrency", k, "queue_max", 0) or 0) or int(conc.get("queue_max") or 0),
+                        "queue_timeout_s": float(self._class_limit("concurrency", k, "queue_timeout_s", 0) or 0)
+                        or float(conc.get("queue_timeout_s") or 0),
+                        "per_user_per_min": int(self._class_limit("rate_limit", k, "per_user_per_min",
+                                                                  int(rl.get("query_per_user_per_min") or 0) if k == "query" else 0) or 0),
+                        "timeout_s": float((self.cfg.get("timeouts") or {}).get("%s_s" % k, 0) or 0),
+                        "reserved_for_others": max(0, total - mp) if mp else 0})
+        return out
 
     def _wait_read_slot(self, t: Dict[str, Any]) -> None:
         conc = self.cfg["concurrency"]
-        deadline = time.time() + float(conc.get("queue_timeout_s") or 120)
+        kind = t["kind"]
+        # 대기 시간도 종류별로 — 검색은 15초 안에 못 들어가면 기다릴 이유가 없다(거절이 낫다)
+        deadline = time.time() + float(self._class_limit("concurrency", kind, "queue_timeout_s",
+                                                         conc.get("queue_timeout_s") or 120) or 120)
         tok = t["token"]
         # 1) 읽기 락 (배타 작업 중이면 대기)
         def on_wait(what: str) -> None:
@@ -663,13 +881,23 @@ class RequestManager:
         # 2) 동시 실행 슬롯
         batch_max = int(conc.get("max_parallel_batch") or 0)
         is_batch = t["kind"] in BATCH_KINDS
+        total_max = int(conc.get("max_parallel_reads") or 8)
+        # 종류별 상한. 전체보다 작게 잡으면 그 차이가 **다른 종류의 예약 슬롯**이 된다
+        # (질의 6 < 전체 8 → 슬롯 2개는 언제나 비어 있어 빠른 채널 검색이 즉시 실행된다).
+        kind_max = int(self._class_limit("concurrency", kind, "max_parallel", 0) or 0)
+        if kind_max > total_max:
+            kind_max = total_max        # 전체보다 크게 잡아도 의미가 없다 — 조용히 절단하고 화면이 알린다
         with self._cv:
             while True:
                 running = sum(1 for x in self.active.values() if x["status"] == "running" and x["weight"] == "read")
                 # 배치 작업(평가·trial·사전계산)은 따로 센다 — 여러 개가 동시에 돌면 대화형 질의가 다 밀린다
                 batch_running = (sum(1 for x in self.active.values()
                                      if x["status"] == "running" and x["kind"] in BATCH_KINDS) if is_batch else 0)
-                if running < int(conc.get("max_parallel_reads") or 8) and not (is_batch and batch_max and batch_running >= batch_max):
+                kind_running = (sum(1 for x in self.active.values()
+                                    if x["status"] == "running" and x["weight"] == "read" and x["kind"] == kind) if kind_max else 0)
+                if (running < total_max
+                        and not (is_batch and batch_max and batch_running >= batch_max)
+                        and not (kind_max and kind_running >= kind_max)):
                     return
                 ahead = sum(1 for x in self.active.values() if x["status"] == "queued" and x["weight"] == "read" and x["submitted"] < t["submitted"])
                 _pg.set_queue(tok, ahead + 1, sum(1 for x in self.active.values() if x["status"] == "queued"))
@@ -677,7 +905,15 @@ class RequestManager:
                 if left <= 0:
                     self.rw.release_read()
                     self.counters["rejected_queue_timeout"] += 1
-                    raise Rejected(503, "대기 시간 초과 (%.0f초): 서버가 바쁩니다" % float(conc.get("queue_timeout_s") or 120), retry_after=15, code="queue_timeout")
+                    waited = float(self._class_limit("concurrency", kind, "queue_timeout_s", conc.get("queue_timeout_s") or 120) or 120)
+                    raise Rejected(503, "대기 시간 초과 (%.0f초): 서버가 바쁩니다 (%s)" % (waited, kind),
+                                   retry_after=15, code="queue_timeout",
+                                   limit={"what": "대기열에서 기다릴 수 있는 시간", "kind": kind,
+                                          "key": "concurrency.classes.%s.queue_timeout_s / concurrency.queue_timeout_s" % kind,
+                                          "value": waited, "current": running, "slots": total_max,
+                                          "hint": "슬롯이 %d개인데 %d개가 실행 중이었습니다. 슬롯을 늘리기 전에 "
+                                                  "LLM 엔드포인트가 그만큼 받아 주는지 먼저 확인하세요 (docs/REQUEST_LEDGER.md §2)"
+                                                  % (total_max, running)})
                 self._cv.wait(min(1.0, left))
                 try:
                     _pg.check_cancel()
@@ -813,10 +1049,15 @@ class RequestManager:
             circuits = _prov.circuit_all()
         except Exception:
             circuits = {}
+        try:
+            ledger = _led.stats(days=0.25)
+        except Exception:
+            ledger = {}
         return {"uptime_s": round(now - self.started, 0), "running": running, "queued": queued, "window_min": win / 60,
                 "throughput_per_min": round(len(recent) / max(1.0, win / 60), 2), "errors_in_window": errs, "latency": lat,
                 "counters": counters, "clients": clients, "lock": self.rw.state(), "circuits": circuits,
-                "limits": self.public_config(), "pid": os.getpid(), "host": socket.gethostname()}
+                "limits": self.public_config(), "classes": self.class_view(), "ledger": ledger,
+                "pid": os.getpid(), "host": socket.gethostname()}
 
     def kick_user(self, user: str) -> int:
         """사용자의 실행 중/대기 중 요청을 모두 취소."""
@@ -833,18 +1074,33 @@ class RequestManager:
 _MANAGER: Optional[RequestManager] = None
 
 
-def get_manager(create: bool = True) -> Optional[RequestManager]:
+def get_manager(create: bool = True, data_dir: str = "") -> Optional[RequestManager]:
+    """서버 프로세스당 하나. `data_dir` 은 **처음 만들 때만** 쓰인다 (원장을 그 폴더에 쓰게 한다)."""
     global _MANAGER
     if _MANAGER is None and create:
-        _MANAGER = RequestManager()
+        _MANAGER = RequestManager(data_dir=data_dir)
     return _MANAGER
 
 
-def install_cli_publisher() -> None:
-    """CLI/MCP stdio 프로세스: 서버 없이도 진행 상황을 data/live 에 발행하고 서버의 취소 요청을 받는다."""
+def install_cli_publisher(data_dir: str = "") -> None:
+    """CLI/MCP stdio 프로세스: 서버 없이도 진행 상황을 data/live 에 발행하고 서버의 취소 요청을 받는다.
+
+    2026-09-23: 원장도 함께 켠다. `data/live` 는 **살아 있는 동안만** 보이는 휘발성 파일이라
+    CLI 빌드·질의가 끝나면 흔적이 사라졌다 — '진행 중 작업' 에는 보이지만 어디에도 남지 않는 것이다.
+    원장은 파일 append 라 다른 프로세스에서 써도 안전하므로, 여기서 같은 폴더에 함께 남긴다.
+
+    2026-09-24: `data_dir` 을 **받는다**. 받지 않으면 프로젝트 설정의 data_dir 로 떨어지는데,
+    임시 Settings 로 도는 단위 테스트가 CLI 경로를 지날 때 **실제 data/ledger 에 기록**했다
+    (실측: 한 번 돌릴 때마다 질의 픽스처 수십 건). 이 실행이 실제로 쓰는 data_dir 에 남기는 것이 맞다.
+    """
     cfg = load_config()
-    live = LiveRegistry(cfg["monitor"].get("live_dir") or "data/live", float(cfg["monitor"].get("live_stale_s") or 90))
+    live_dir = cfg["monitor"].get("live_dir") or "data/live"
+    if data_dir and not os.path.isabs(live_dir):
+        # 'data/…' 는 그 실행의 data_dir 아래로 (reqledger.configure 와 같은 규칙)
+        live_dir = os.path.join(data_dir, live_dir[len("data/"):] if live_dir.startswith("data/") else live_dir)
+    live = LiveRegistry(live_dir, float(cfg["monitor"].get("live_stale_s") or 90))
     _pg.set_publisher(live.publish, live.cancel_check)
+    _led.configure(cfg.get("ledger"), data_dir or _data_dir())
 
 
 def weight_for_level(level: str, op: str = "", body: Optional[Dict[str, Any]] = None) -> str:

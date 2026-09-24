@@ -184,24 +184,48 @@
     $('#cand-json').onclick = () => copyText(JSON.stringify({ query: r.query, output_mode: r.output_mode, candidates: cands, lists: r.lists || {}, stages: st }, null, 1), '후보 JSON');
   }
 
-  async function runQuery() {
+  // 질의는 **잡으로** 보낸다 (2026-09-23).
+  //
+  // 예전에는 `await api('/api/query', …)` 로 동기 호출이라, 응답이 올 때까지 HTTP 연결을 물고 있었다.
+  // 브라우저는 한 사이트에 연결을 6개까지만 열기 때문에 질의를 몇 건 연속으로 보내면
+  // **화면 갱신 폴링이 브라우저 안에서 출발조차 못 하고** UI 전체가 멈춘 것처럼 보였다
+  // (실측: 질의 6건 동시 · 각 250초 · 그동안 아무 화면도 갱신되지 않음).
+  // 이제 서버가 토큰만 즉시 돌려주고, 연결은 바로 풀린다 — 몇 건을 던져도 화면이 살아 있고
+  // 대기 순번·단계가 실시간으로 보인다. 탭을 잠깐 떠났다 와도 결과는 잡에 남아 있다.
+  function runQuery() {
     const q = $('#q').value.trim(); if (!q) return;
     $('#btn-query').disabled = true;
-    // 응답을 기다리는 동안 단계/LLM 대기 시간을 보여 준다 (progress_token → GET /api/progress/<token>, 락 없이 응답)
-    const token = 'q-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const liveEl = $('#q-live'); LW.renderLive(liveEl, { status: 'running', label: '질의 전송 중…' });
-    const stopWatch = LW.watchProgress(token, liveEl, 500);
-    let j;
-    try {
-      j = await api('/api/query', { q, overrides: overrides(), log: $('#q-log').checked, preset: presetNames().join(','), mode: $('#q-mode').value, progress_token: token });
-    } finally { stopWatch(); }
-    try {
-      if (!j.result) { LW.renderLive(liveEl, { status: j.cancelled ? 'cancelled' : 'error', detail: j.error || '응답 없음', elapsed_s: 0, log: liveEl._log || [] }, '', token); return; }
-      // 완료 상태와 단계 로그를 그대로 남긴다 (✕ 로 닫기 · 📋 로 복사)
-      LW.renderLive(liveEl, { status: 'done', elapsed_s: (j.result.ms || 0) / 1000, detail: j.result.answer_mode, log: liveEl._log || [] }, '', token);
-      renderResult(j.result, j.trace, q);
-      loadMyRequests();
-    } finally { $('#btn-query').disabled = false; }
+    const done = (j, token) => {
+      try {
+        const res = (j.result && j.result.result) || j.result;      // 잡 결과는 {result, trace} 로 감싸여 온다
+        const trace = (j.result && j.result.trace) || j.trace;
+        if (!res) {
+          LW.renderLive(liveEl, { status: j.status === 'cancelled' ? 'cancelled' : 'error', detail: j.error || '응답 없음', elapsed_s: j.elapsed_s || 0, log: liveEl._log || [] }, '', token);
+          return;
+        }
+        LW.renderLive(liveEl, { status: 'done', elapsed_s: (res.ms || 0) / 1000, detail: res.answer_mode, log: liveEl._log || [] }, '', token);
+        renderResult(res, trace, q);
+        loadMyRequests();
+      } finally { $('#btn-query').disabled = false; }
+    };
+    api('/api/query', {
+      q, overrides: overrides(), log: $('#q-log').checked, preset: presetNames().join(','),
+      mode: $('#q-mode').value, async: true,
+    }).then((j) => {
+      if (!j || j.error || !j.job) {
+        // 거절(429/503)·오류는 여기서 바로 보인다 — 연결을 잡고 기다리지 않으므로 즉시 알 수 있다
+        LW.renderLive(liveEl, { status: 'error', detail: (j && j.error) || '요청이 접수되지 않았습니다', elapsed_s: 0 }, '');
+        $('#btn-query').disabled = false;
+        return;
+      }
+      // onTick 으로 Ask 의 진행 패널을 직접 갱신한다 (pollJob 이 쓰는 log 영역은 Ask 에 없다).
+      // 대기 중이면 대기열 순번이, 실행 중이면 단계·LLM 대기가 그대로 보인다.
+      LW.pollJob(j.job, null, (fin) => done(fin, j.job), (tick) => {
+        const live = (tick.live && tick.live.status) ? tick.live : { status: tick.status, label: q, elapsed_s: tick.elapsed_s };
+        LW.renderLive(liveEl, live, '', j.job);
+      });
+    });
   }
 
   // 질의 결과를 화면에 그린다. 방금 실행한 결과와 **지난 요청에서 불러온 결과**가 같은 함수를 쓴다

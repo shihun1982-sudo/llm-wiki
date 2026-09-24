@@ -35,6 +35,7 @@
 |---|---|---|
 | `verify_docs.py` | 문서가 주장하는 것을 코드/파일에서 확인 — 링크 · `python -m llmwiki <명령>` · 설정 키/토글 · 저장소 파일 · `/api` 경로 · **`<!--live:키-->` 로 표시한 규모 숫자** · README/BRINGUP 에서 도달 못 하는 **고아 문서** | 1초 |
 | `verify_surface_align.py` | CLI·Web·MCP **정렬** 두 방향 — ①표의 이름이 실제로 있는가 ②**코드에 있는 명령·경로·도구가 빠짐없이 표에 있는가**(2026-09-20 추가) ③비워 둔 칸에 이유가 적혀 있는가. `--inventory` 는 코드에서 뽑은 전수 목록, `--md` 는 문서용 표 | 1초 |
+| `verify_ledger_merge.py` | 요청 원장이 **기존 세 화면(요청 프로파일·진행 중 작업·질의 로그)의 정보를 하나도 잃지 않았는지** 항목별로 대조한다. 옮기지 않은 항목은 이유가 적혀 있어야 통과한다. `--live` 면 서버를 띄워 실제 응답까지 확인 |
 | `verify_tri_surface.py` | 세 창구가 **같은 답을 주는가** — `build` → `serve` 기동 → **`python -m llmwiki …` 를 실제 실행** → 같은 서버의 `POST /mcp` 호출. 상태·운영 통계·해부·시간·검색·유형 필터·엔티티·문서·그래프 규칙·규칙 설명·질의(인용 매핑)·오버라이드, 그리고 **실패 정렬**(빈 용어를 셋 다 거절하는가)까지 42건. `--json` 출력에 안내 줄이 섞이면 그 자체로 실패 — [docs/SURFACE_ALIGNMENT.md](../../docs/SURFACE_ALIGNMENT.md) | 4초 |
 | `verify_stage_align.py` | 파이프라인 단계 이름이 **코드·레지스트리·화면 라벨·손잡이** 네 곳에서 같은가 | 1초 |
 
@@ -45,6 +46,8 @@
 | `verify_llm_switch.py` | **`config.json` 두 줄만 바꿔 API ↔ headless 로 전환**되는가를 말이 아니라 실행으로. API 모드에서 CLI·Web·MCP 세 창구를 돌리고, 전환 뒤 다른 설정 파일과 `llmwiki/*.py` 의 **수정 시각이 그대로인지**(= 코드를 안 고쳤는지) 확인한 다음 같은 세 창구를 다시 돌린다. 역할 하나만 바꾸기·되돌리기까지 18건 — [docs/LLM_CONNECT.md](../../docs/LLM_CONNECT.md) | 5초 |
 | `verify_build_load.py` | **사람들이 쓰는 중에 빌드해도 되는가** — 30명이 계속 질의하는 동안 빌드를 걸고 **빌드가 도는 구간에 시작된 질의만** 추려 잰다. 증분·채널(`fts`/`vector`/`graph`)·전체 리빌드 × `reads_during_build` 정책별 26건 — [docs/BUILD_UNDER_LOAD.md](../../docs/BUILD_UNDER_LOAD.md) | 17초 |
 | `verify_timeouts.py` | 실패를 **일부러 일으켜** 버티는지 본다(mock 훅 `LLMWIKI_MOCK_FAIL`·`LLMWIKI_MOCK_DELAY_MS`) — LLM 무응답·느림·외부 RAG 다운·폭주 24항목 | 2분 |
+| `verify_request_ledger.py` | **사라지는 요청을 재현하고** 요청 원장이 그것을 잡는지 — 서로 다른 질의를 동시에 던져 일부를 일부러 거절시키고, ①보낸 것 ②`requests` 테이블(예전 구조) ③`data/ledger` 세 가지를 대조한다. 점검 모드 거절의 **사유·설정 키**, 강제 종료 시의 **중단 기록**까지. `--capacity` 는 동시 실행 수별 처리량(그 환경의 슬롯 수를 정하는 근거). 임시 폴더 + mock LLM + 자체 포트로 **완전히 격리**된다 — [docs/REQUEST_LEDGER.md](../../docs/REQUEST_LEDGER.md) | 2~4분 |
+| `verify_three_surface_load.py` | **30명이 Web·CLI·MCP 로 동시에** 쓸 때 — 브라우저 18명(비동기 질의 + 1.5초 폴링 + 검색) · MCP 6명(`POST /mcp` 도구 호출) · CLI 6명(**별도 프로세스**로 `python -m llmwiki query`)을 한꺼번에 돌린다. 창구별 성공/거절/5xx/p50/p95 와 함께 ①5xx 0건 ②**보낸 수 ↔ 원장 기록 수가 창구마다 일치** ③깨진 원장 줄 0개 ④`database is locked` 0건 ⑤느린 질의가 도는 동안에도 검색이 갇히지 않는가 ⑥화면 폴링이 계속 응답하는가 를 본다. `verify_tri_surface.py`(순차·정합)와 달리 **동시 부하**다 — [docs/REQUEST_LEDGER.md](../../docs/REQUEST_LEDGER.md) §10 | 2~3분 |
 | `verify_soak.py` | 오래 돌렸을 때의 자원 누수(연결 풀·스레드·메모리) | 수 분 |
 | `verify_collab_many.py` | 협업 채팅·게시판에 여러 명이 동시에(`--people 10`) | 1분 |
 | `verify_mcp.py` | MCP 종단 — 전송 3종(stdio·Streamable HTTP·브리지) · 프로토콜 적합성 · **도구 전부 실제 호출** · 잘못된 호출 · 인증 · 페더레이션 · 동시성. `--quick` 은 3분 | 3~10분 |

@@ -13,7 +13,7 @@
 | 질의가 한 번에 하나씩 처리되나? | 아니다. 기본 **동시 8건**(`concurrency.max_parallel_reads`). LLM 응답 대기가 대부분이라 코어 수보다 크게 잡아도 된다 |
 | 빌드 중에 질의가 되나? | **증분 빌드 중에는 된다**(기본). 전체 리빌드는 배타 실행이라 질의가 대기한다. `concurrency.reads_during_build` 로 never/incremental/always |
 | 한 사람이 서버를 독점할 수 있나? | 없다. 사용자당 동시 3건 · 분당 60건 · 질의 분당 20건 (초과 → 429 + Retry-After) |
-| 대기가 길어지면? | 대기열 64건·120초를 넘으면 **503 + 안내**. 무한 대기하지 않는다 |
+| 대기가 길어지면? | 대기열 128건·120초를 넘으면 **503 + 안내**. 무한 대기하지 않는다 |
 | 진행 중인 작업을 볼 수 있나? | 누구나 `GET /api/activity`(Web ‘진행 중 작업’ 탭). admin 은 IP·오류까지 |
 | 오래 걸리는 작업을 멈출 수 있나? | 본인 요청은 누구나, 남의 것은 admin. Web ■ 중지 · `DELETE /api/jobs/<id>` · `server cancel <token>` |
 | CLI 로 돌린 빌드도 서버에서 보이나? | 보인다. CLI 가 `data/live/` 에 진행 상황을 발행하고 서버가 합쳐 보여 준다(취소도 가능) |
@@ -92,7 +92,7 @@
 | `concurrency.max_parallel_batch` | 1 | 평가·trial·사전계산처럼 **안에서 질의를 여러 번 도는 배치 작업**의 동시 실행 수. 이런 작업은 수 분~수십 분 읽기 슬롯을 물고 있어서, 여러 개가 동시에 돌면 대화형 질의가 전부 대기열로 밀린다. 0 = 무제한 |
 | `concurrency.max_body_mb` | 8 | 요청 본문 상한(MB). 초과하면 본문을 읽지도 않고 413 `body_too_large` (0 = 무제한) |
 | `concurrency.keep_alive_s` | 30 | HTTP 연결 재사용(keep-alive) 유휴 시간(초). 0 이면 응답마다 연결을 끊는다(HTTP/1.0). **0 으로 두지 마세요** — 브라우저는 한 사이트에 동시 연결을 6개까지만 열기 때문에, 오래 걸리는 질의 몇 개가 연결을 물고 있으면 화면 갱신이 브라우저 안에서 줄을 서다가 한꺼번에 처리된다 |
-| `concurrency.queue_max` | 64 | 대기열 상한 (초과 → 503 `queue_full`) |
+| `concurrency.queue_max` | 128 | 대기열 상한 (초과 → 503 `queue_full`). 2026-09-23 에 64 → 128 로 올렸다: 질의 1건이 100초 가까이 걸리는 환경(로컬 LLM)에서 64는 30명이 두 번씩만 물어도 가득 찬다. 대기열이 길어도 수명은 `queue_timeout_s` 가 끊으므로, 즉시 `queue_full` 로 돌려보내는 것보다 FIFO 로 기다리게 하는 편이 낫다. **대기열은 슬롯을 대신하지 못한다** — 슬롯 8 · 질의 100초면 대기열 128번째는 이론상 1,600초를 기다리므로 실제로는 `queue_timeout_s`(120초)에서 503 이 된다 |
 | `concurrency.queue_timeout_s` | 120 | 대기 최대 시간 (초과 → 503 `queue_timeout`) |
 | `concurrency.write_wait_timeout_s` | 172800 (48시간) | 쓰기(빌드)가 진행 중인 읽기를 기다리는 최대 시간. 짧으면 긴 빌드가 시작도 못 하고 503 `write_wait_timeout` 으로 거부된다 |
 | `concurrency.read_wait_timeout_s` | 900 | 읽기가 배타 작업을 기다리는 최대 시간. **이 값은 빌드가 아니라 질의의 수명**이라 일부러 짧다 — 크게 잡으면 전체 재빌드 동안 질의 스레드가 쌓여 서버가 마비된다. 빌드 중에도 질의를 받으려면 `reads_during_build` 를 쓴다 |
@@ -276,9 +276,36 @@ extract→규칙 그래프만. 무엇이 실패했고 무엇으로 대체했는�
 
 ## 8. SQLite 동시성
 
-- **WAL** 모드라 읽기는 쓰기를 막지 않는다.
+- **WAL** 모드라 읽기는 쓰기를 막지 않는다. (실측: 쓰기 잠금이 걸린 상태에서 다른 연결의 읽기 **0.02ms**)
 - 스레드마다 연결을 빌려 쓴다(`db_pool_size`, 기본 16 — 동시 실행 수 이상으로).
 - 쓰기끼리는 `db_busy_timeout_s`(기본 60초)만큼 기다린다. 다른 **프로세스**(CLI 빌드·서버 워처)와도 이 규칙이 적용된다.
+- 커밋 내구성은 `db_synchronous`(기본 `NORMAL`). WAL 에서 `NORMAL` 은 **DB 손상이 없고** 체크포인트에서만 fsync 한다 — 질의 1건이 커밋을 여러 번 하므로 `FULL`(SQLite 기본값)로 두면 동시 질의가 몰릴 때 그대로 지연이 된다.
+
+### 8.0 "읽기만 하는데 왜 잠기나" — 질의는 읽기 전용이 아니다 (2026-09-23)
+
+읽기는 잠그지 않는다. 그런데도 동시 질의가 서로를 막던 이유는 **질의가 쓰기도 하기 때문**이었고,
+그중 하나가 **커밋하지 않는 쓰기**였다.
+
+`retrieval.embed_query()` 는 질의 벡터를 `embedding_cache` 에 넣는데 `Store.cache_put()` 이 `commit()` 을 하지 않았다.
+Python `sqlite3` 는 INSERT 앞에서 트랜잭션을 암묵적으로 열고, SQLite 는 첫 쓰기에서 **WRITER 잠금을 잡아 COMMIT 까지 놓지 않는다.**
+이 INSERT 는 질의 **초반**(벡터 검색)에 일어나고 그 연결의 다음 커밋은 질의 **맨 끝**이었다 —
+
+> **질의 1건이 자기 수명(실측 98~118초) 내내 SQLite 쓰기 잠금을 혼자 쥐고 있었다.**
+
+다른 동시 질의는 자기 `cache_put` 에서 `db_busy_timeout_s`(60초)까지 기다린 뒤 `database is locked` 로 실패했고,
+그 실패는 `except Exception: pass` 가 조용히 삼켜 **로그에도 남지 않았다**.
+캐시가 **적중**하면 쓰기가 없으므로 같은 질문을 반복할 때는 멀쩡했고, **서로 다른 질문을 여러 명이 동시에 던질 때** 터졌다.
+
+고친 뒤 (실측, 같은 조건):
+
+| | 전 | 후 |
+|---|---|---|
+| 질의 진행 중 다른 연결의 쓰기 | 3,310ms 대기 후 `database is locked` | **0.89ms 성공** |
+| 질의 1건의 임베딩 호출 | 최대 3회(같은 문자열을 `vector_search`·`doc_vector_search`·`doc_expand` 가 각각) | **1회** (나머지는 캐시 적중 — 실측 약 5초 단축) |
+
+**재발 방지**: 커밋 없이 세션을 벗어나면 이제 경고를 남기고 센다 —
+`Observability › 서버 모니터` 의 `db_pool.uncommitted_exits` 가 **0 이 아니면 그런 코드가 있다는 뜻**이다.
+회귀 테스트는 `tests/test_db_lock_0923.py`. 자세한 배경과 포팅 절차는 [REQUEST_LEDGER.md](REQUEST_LEDGER.md).
 - 관측용 기록(요청 프로파일·질의 로그)이 잠금을 못 얻으면 **건너뛰고 경고만 남긴다** — 답변은 정상 반환된다.
 - 스냅샷 복원은 모든 연결을 닫고 파일을 바꾼 뒤 다시 여는 `Store.reopen()` 으로 처리한다(Windows 파일 잠금 재시도 포함).
 
@@ -331,6 +358,9 @@ RequestManager._lock  →  RWLock._cv  →  progress._LOCK  →  Store._pool_loc
 | “다른 작업이 끝나기를 기다리는 중…” 이 길다 | 배타 작업(빌드/복원) 대기 | 진행 패널에서 남은 시간 확인, 필요하면 중지 |
 | 특정 모델만 계속 실패 | 게이트웨이 장애 | `server circuits` 로 차단 확인 → 원인 해결 후 `server circuits reset` |
 | CLI 질의가 `database is locked` | 서버 워처/빌드와 겹침 | 기본값으로 이미 건너뛰고 응답한다. 계속되면 `db_busy_timeout_s` ↑ 또는 `auto_build_interval` ↑ |
+| **동시 질의가 서로를 막는다 / `database is locked`** | 빌드가 없는데도 나면 **커밋하지 않는 쓰기**다 (§8.0) | 서버 모니터의 `db_pool.uncommitted_exits` 를 본다 — 0 이 아니면 그런 코드가 있다. 2026-09-23 에 `embed_query` 에서 고쳤다 |
+| 질의가 임베딩에 오래 걸린다 | 같은 문자열을 한 요청에서 여러 번 임베딩 | `embed_query` 를 지나는지 확인. 단계 note 의 `query_embed_cached` 가 `false` 로만 나오면 캐시가 안 먹는 것 |
+| 임베딩 캐시가 통째로 빗나갔다 | 모델 이름 표기 변경(`bge-m3` ↔ `bge-m3:latest`) | 정규화가 들어가 더는 빗나가지 않는다. 중복 회수는 `maintenance cache_merge`([REQUEST_LEDGER.md](REQUEST_LEDGER.md) §3.1) |
 | 며칠 켜 두면 점점 느려지고 메모리가 는다 | SQLite 세션 누수 | 서버 모니터의 `db_pool` 을 본다 — 한가한데 `live` 가 0 이 아니거나 `overflow` 가 늘면 누수다(§8.1). 임시 완화는 재시작, 원인은 `with store.session():` 을 벗어나지 못하는 경로 |
 | 특정 IP 가 서버를 점유 | 스크립트 폭주 | `server block add ip <주소>` · `max_parallel_per_ip` ↓ |
 
@@ -341,6 +371,7 @@ RequestManager._lock  →  RWLock._cv  →  progress._LOCK  →  Store._pool_loc
 | 무엇 | 어떻게 |
 |---|---|
 | 요청 격리·락·대기열·속도 제한·취소·스케줄러·카탈로그 | `python -m unittest tests.test_concurrency_0915` (32개) |
+| **질의 경로가 쓰기 잠금을 쥐지 않는가** (§8.0) · 임베딩 캐시 적중·이름 정규화·미커밋 감지 | `python -m unittest tests.test_db_lock_0923` (7개) |
 | **자원 누수** — 연결 회계·부드러운 상한·스레드/진행 표시 복귀 | `python -m unittest tests.test_resource_limits` (9개, §8.1) |
 | **timeout·retry 동작과 세 창구 정합** | `python tools/verify/verify_timeouts.py` (47개) — 재시도로 살아나기·회로 차단·강등·취소·죽은 외부 소스, 그리고 §1.5 의 **Web=CLI=MCP 같은 값** 비교(§4.1) |
 | 동시 30건 질의 · 빌드 중 질의 · 긴 작업 취소 · DEBUG 로그 분리 | 같은 파일의 `StressTest` |

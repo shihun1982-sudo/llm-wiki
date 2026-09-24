@@ -1,10 +1,10 @@
-﻿# TESTING GUIDE — 무엇을 고쳤을 때 무엇을 돌리나
+# TESTING GUIDE — 무엇을 고쳤을 때 무엇을 돌리나
 
 > 대상: 코드를 고친 사람(또는 LLM). "수정마다 어떤 테스트를 돌려야 하나" 를 한 표로. 전체 검증 절차와 실측 숫자는
 > [VERIFICATION.md](VERIFICATION.md), 하네스 각각의 설명은 [tools/verify/README.md](../tools/verify/README.md).
 > 모든 테스트·하네스는 **격리 임시 환경**(임시 폴더 + `LLMWIKI_*_PATH`)에서 돌아 실제 색인·설정·로그를 건드리지 않는다.
 >
-> 지금 규모: 단위 테스트 <!--live:tests-->773개 · 검증 하네스 <!--live:harness-->27종.
+> 지금 규모: 단위 테스트 <!--live:tests-->784개 · 검증 하네스 <!--live:harness-->30종.
 > **테스트를 새로 쓸 거면 §2.5 를 먼저 읽는다** — 진짜 폴더를 건드리지 않는 법과, 그 테스트가 정말 무언가를 지키는지 확인하는 법.
 
 ## 0. 세 단계 규칙
@@ -43,6 +43,7 @@ Windows PowerShell 에서 한글 출력이 깨지면 `$env:PYTHONIOENCODING='utf
 | **컨텍스트 예산 · claim 검증** `models_catalog.context_budget` `answer.py`(`build_context`·`split_claims`·`check_claims`) | `tests.test_context_budget` `tests.test_rag_edge_cases` `tests.test_answer_modes` | `verify_web.py`(`/api/query` 의 claims) · `verify_mcp.py --quick` | [QA_HARDENING_0919.md §2](history/2026-09-19/QA_HARDENING_0919.md) · [TUNING.md](TUNING.md) |
 | **창구 정합(값까지)** 세 창구 중 하나의 응답 모양을 바꿨을 때 | `tests.test_surface_consistency`(17건) | `verify_surface_align.py`(①존재 + ②전수) · **`verify_tri_surface.py`**(③동작 — `serve`·CLI 프로세스·`POST /mcp` 를 진짜 띄워 54건) · `verify_mcp.py` | [SURFACE_ALIGNMENT.md](SURFACE_ALIGNMENT.md) · [QA_HARDENING_0919.md §1](history/2026-09-19/QA_HARDENING_0919.md) · [MCP.md §2.01](MCP.md) |
 | **연결 풀 · 자원 누수** `store.py`(`session`/`pool_info`) | `tests.test_resource_limits` `tests.test_concurrency_0915` | `verify_soak.py` · `verify_monkey.py` | [CONCURRENCY.md §8.1](CONCURRENCY.md) |
+| **질의 경로의 쓰기 잠금 · 임베딩 캐시** `store.py`(`cache_get`/`cache_put`/`session`) `retrieval.py`(`embed_query`) | `tests.test_db_lock_0923`(7건 — **커밋 없이 세션을 벗어나지 않는가**·다른 연결의 쓰기가 막히지 않는가·캐시 적중·모델 이름 정규화·병합·`db_synchronous`) | `verify_soak.py` | [CONCURRENCY.md §8.0](CONCURRENCY.md) · [REQUEST_LEDGER.md](REQUEST_LEDGER.md) |
 | **운영 통계 · 추세 차트** `opstats.py` (+ `observability.js` 의 `chart()`) | `tests.test_opstats`(21건 — **읽기 전용**·빈 환경·섹션 필터·표본 수·**admin 전용 절 가리기**) · `tests.test_quality_ux_0920.TrendTest`(일/주/월 묶음·기간·스파크라인) | `verify_cli.py`(`stats --full`) · `verify_web.py`(게스트에게 `users` 절이 안 나가는가) · `verify_buttons.py`(`btn-ops` 가 **차트 SVG·일/주/월 버튼**까지) · `verify_tri_surface.py` §2.5 | [OPS_STATS.md](OPS_STATS.md) · [SECURITY.md §2.2](SECURITY.md) |
 | **관리자 초기화** `reset.py` | `tests.test_reset`(29건 — 미리보기·지키는 것·로그 폴더 격리) | `verify_cli.py`(`reset … --apply` 는 임시 환경에서만) · `verify_buttons.py` | [RESET.md](RESET.md) |
 | **제안 설명** `proposal_explain.py` `evolve.describe_proposal` | `tests.test_proposal_explain`(29건) | `verify_cli.py`(`evolve show`) · `verify_tri_surface.py` | [EVOLVE.md §1.5](EVOLVE.md) |
@@ -65,7 +66,7 @@ Windows PowerShell 에서 한글 출력이 깨지면 `$env:PYTHONIOENCODING='utf
 | 화면 요소 추가 | id 를 `index.html` 과 JS 양쪽에 (verify_ui_wiring) · 버튼은 눌렀을 때 **무언가 일어나야** 한다 (verify_buttons 는 무반응을 FAIL 로 본다) |
 | 문서 추가 | **현행 문서**(`docs/` 바로 아래, 날짜 없는 이름)는 README §0 색인이나 BRINGUP_GUIDE 에서 링크한다. **기록 문서**(`docs/history/<날짜>/`)는 [history/README.md](history/README.md) 회차 표에 줄을 더한다. 둘 다 빠지면 고아로 잡힌다 — [DOC_MAP.md §1·§8](DOC_MAP.md) |
 | **기능을 추가** (CLI 명령·MCP 도구·설정 키) | 코드만 넣고 끝내면 `verify_docs.py` 가 **"현행 문서 어디에도 없다"** 로 실패한다. 그 기능을 설명할 현행 문서에 한 줄이라도 적어야 한다 — 문서만 보고 올리는 사람에게는 적히지 않은 기능이 **없는 기능**이다 |
-| 지금의 규모를 문서에 숫자로 씀 | `<!--live:키-->` 표시를 붙인다 (`CLI 명령 <!--live:cli-->48개`). 화면에는 안 보이고, 코드와 어긋나면 `verify_docs.py` 가 잡는다. 키: `cli`·`api`·`mcp`·`tests`·`harness`·`docs` |
+| 지금의 규모를 문서에 숫자로 씀 | `<!--live:키-->` 표시를 붙인다 (`CLI 명령 <!--live:cli-->49개`). 화면에는 안 보이고, 코드와 어긋나면 `verify_docs.py` 가 잡는다. 키: `cli`·`api`·`mcp`·`tests`·`harness`·`docs` |
 
 ## 2.5 테스트를 **새로 쓸 때**의 규칙 (사람이든 LLM 이든)
 

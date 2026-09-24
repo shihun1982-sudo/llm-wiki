@@ -74,6 +74,12 @@ class _Base(unittest.TestCase):
         except Exception:
             return -1
 
+    def query_history(self):
+        """'질의 이력' 건수. 2026-09-23부터 원천이 query_log → requests(kind='query') 다.
+        옛 행도 함께 세어, 전환기에 이 검사가 원천 하나만 보고 착각하지 않게 한다."""
+        return self.rows("query_log") + int(self.p.store.conn.execute(
+            "SELECT COUNT(*) FROM requests WHERE kind='query'").fetchone()[0])
+
 
 class PreviewIsReadOnlyTest(_Base):
     """미리보기는 **아무것도 바꾸지 않아야 한다** — 이 하나가 틀리면 나머지가 다 위험해진다."""
@@ -107,7 +113,7 @@ class DataScopeTest(_Base):
     def setUp(self):
         super().setUp()
         self.p.query("RX DMA underrun 원인", log=True)     # 질의 로그·요청 이력을 만든다
-        self.before_queries = self.rows("query_log")
+        self.before_queries = self.query_history()
         self.r = R.run(self.p, "data", actor="test")
 
     def test_index_is_cleared(self):
@@ -124,7 +130,7 @@ class DataScopeTest(_Base):
 
     def test_query_history_survives(self):
         """질의 로그는 '로그' 범위의 것이다 — 데이터 초기화가 가져가면 안 된다."""
-        self.assertEqual(self.rows("query_log"), self.before_queries)
+        self.assertEqual(self.query_history(), self.before_queries)
         self.assertGreater(self.before_queries, 0)
 
     def test_embedding_cache_survives_by_default(self):
@@ -162,7 +168,7 @@ class LogScopeTest(_Base):
         self.p.query("RX DMA underrun 원인", log=True)
         self.pid = self.p.store.add_proposal("synonym", {"term": "dma", "expansion": "직접메모리접근"},
                                              "테스트", 0.9, "manual")
-        self.assertGreater(self.rows("query_log"), 0)
+        self.assertGreater(self.query_history(), 0)
         self.r = R.run(self.p, "logs", actor="test")
 
     def test_history_tables_are_cleared(self):

@@ -1,6 +1,6 @@
 {
- "ts": 1789880460.7792218,
- "when": "2026-09-20 14:01",
+ "ts": 1789909278.8392518,
+ "when": "2026-09-20 22:01",
  "rows": [
   {
    "key": "unit",
@@ -8,10 +8,10 @@
    "argv": "-m unittest discover -s tests",
    "ok": true,
    "code": 0,
-   "passed": 758,
-   "total": 758,
-   "seconds": 160.8,
-   "tail": ".\n----------------------------------------------------------------------\nRan 758 tests in 160.537s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=680, family=2, type=1, proto=0, laddr=('127.0.0.1', 64031)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=912, family=2, type=1, proto=0, laddr=('127.0.0.1', 64036)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=936, family=2, type=1, proto=0, laddr=('127.0.0.1', 58444)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1256, family=2, type=1, proto=0, laddr=('127.0.0.1', 61948)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2492, family=2, type=1, proto=0, laddr=('127.0.0.1', 61958)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2244, family=2, type=1, proto=0, laddr=('127.0.0.1', 62020)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1948, family=2, type=1, proto=0, laddr=('127.0.0.1', 62037)>"
+   "passed": 773,
+   "total": 773,
+   "seconds": 158.8,
+   "tail": ".\n----------------------------------------------------------------------\nRan 773 tests in 158.486s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=892, family=2, type=1, proto=0, laddr=('127.0.0.1', 57586)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=968, family=2, type=1, proto=0, laddr=('127.0.0.1', 57591)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1180, family=2, type=1, proto=0, laddr=('127.0.0.1', 51052)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1260, family=2, type=1, proto=0, laddr=('127.0.0.1', 56558)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=784, family=2, type=1, proto=0, laddr=('127.0.0.1', 56566)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=2704, family=2, type=1, proto=0, laddr=('127.0.0.1', 51062)>\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=1080, family=2, type=1, proto=0, laddr=('127.0.0.1', 51079)>"
   },
   {
    "key": "stress",
@@ -21,8 +21,8 @@
    "code": 0,
    "passed": 9,
    "total": 9,
-   "seconds": 24.5,
-   "tail": "..C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 429: 'Too Many Requests'>\n  _warnings.warn(self.warn_message, ResourceWarning)\nC:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 503: 'Service Unavailable'>\n  _warnings.warn(self.warn_message, ResourceWarning)\n.C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 499: ''>\n  _warnings.warn(self.warn_message, ResourceWarning)\n..\n----------------------------------------------------------------------\nRan 9 tests in 24.336s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=684, family=2, type=1, proto=0, laddr=('127.0.0.1', 53706)>"
+   "seconds": 23.6,
+   "tail": "..C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 429: 'Too Many Requests'>\n  _warnings.warn(self.warn_message, ResourceWarning)\nC:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 503: 'Service Unavailable'>\n  _warnings.warn(self.warn_message, ResourceWarning)\n.C:\\Users\\user\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 499: ''>\n  _warnings.warn(self.warn_message, ResourceWarning)\n..\n----------------------------------------------------------------------\nRan 9 tests in 23.390s\n\nOK\n<sys>:0: ResourceWarning: unclosed <socket.socket fd=180, family=2, type=1, proto=0, laddr=('127.0.0.1', 51160)>"
   },
   {
    "key": "docs",
@@ -33,7 +33,7 @@
    "passed": null,
    "total": null,
    "seconds": 0.2,
-   "tail": "문서 43개(현행) + 28개(기록) · 검사: 링크 749 · CLI 140 · 설정 16 · 파일 663 · API 228 · 규모 수치 20 · 기능 설명 246 · 코드→문서 참조 58\n지금 규모: CLI 48 · Web 113 · MCP 20 · 단위 테스트 758 · 하네스 27\n\n요약: 어긋남 0 · 없는 문서 참조 0 · 고아 문서 0\n\nRESULT OK"
+   "tail": "문서 43개(현행) + 28개(기록) · 검사: 링크 750 · CLI 140 · 설정 16 · 파일 664 · API 229 · 규모 수치 20 · 기능 설명 246 · 코드→문서 참조 58\n지금 규모: CLI 48 · Web 113 · MCP 20 · 단위 테스트 773 · 하네스 27\n\n요약: 어긋남 0 · 없는 문서 참조 0 · 고아 문서 0\n\nRESULT OK"
   },
   {
    "key": "align",
@@ -44,7 +44,7 @@
    "passed": null,
    "total": null,
    "seconds": 0.1,
-   "tail": "협업 채팅·게시판                –              `/api/collab`              –                Web 전용 부수 기능 (토글 collab)\n계정별 화면 프로파일 (테마·토글·고정 탭· –              `/api/profile`             –                Web 전용 — 저장 대상이 **그 사람의 화면 상태**라 C\n테마 목록                    –              `/api/themes`              –                Web 전용 — `static/themes/themes.jso\n화면에서 CLI 실행              –              `/api/cli`                 –                Web 관리 › 콘솔. **터미널을 못 여는 사람**(원격·공\n서버 기동                    `serve`        –                          –                명령 자체가 서버를 띄운다\nMCP 서버 기동·점검             `mcp`          –                          –                〃\n\n기능 79개 · CLI 명령 48 · Web 경로 113(표에 기재 100) · MCP 도구 20\n세 창구 모두 제공: 24개 · MCP 는 읽기 전용이라 의도적으로 뺀 것: 54개\n전수 대조: CLI 48/48 · Web 113/113 · MCP 20/20 가 표에 들어 있다\n\nRESULT OK"
+   "tail": "협업 채팅·게시판                –              `/api/collab`              –                Web 전용 부수 기능 (토글 collab)\n계정별 화면 프로파일 (테마·토글·고정 탭· –              `/api/profile`             –                Web 전용 — 저장 대상이 **그 사람의 화면 상태**라 C\n테마 목록                    –              `/api/themes`              –                Web 전용 — `static/themes/themes.jso\n화면에서 CLI 실행              –              `/api/cli`                 –                Web 관리 › 콘솔. **터미널을 못 여는 사람**(원격·공\n서버 기동                    `serve`        –                          –                명령 자체가 서버를 띄운다\nMCP 서버 기동·점검             `mcp`          –                          –                〃\n\n기능 80개 · CLI 명령 48 · Web 경로 113(표에 기재 101) · MCP 도구 20\n세 창구 모두 제공: 24개 · MCP 는 읽기 전용이라 의도적으로 뺀 것: 55개\n전수 대조: CLI 48/48 · Web 113/113 · MCP 20/20 가 표에 들어 있다\n\nRESULT OK"
   },
   {
    "key": "tri_surface",
@@ -52,10 +52,10 @@
    "argv": "tools/verify/verify_tri_surface.py --port 8879",
    "ok": true,
    "code": 0,
-   "passed": 58,
-   "total": 58,
-   "seconds": 4.9,
-   "tail": "\n[12] 요청 단위 오버라이드 (output_mode=fused)\n  OK   output_mode=fused 의 result_type                      셋 다 candidates_fused 여야 한다\n\n[13] 실패 정렬 — 빈 용어는 세 창구가 모두 거절해야 한다\n  OK   Web 은 빈 term 을 400 으로 거절한다                           code=400\n  OK   MCP 도 빈 term 을 오류로 돌려준다                              {\"_error\": \"action=explain 에는 term(용어) 이 필요합니다\"}\n  OK   CLI 도 빈 용어를 0 이 아닌 코드로 거절한다                          exit=1\n\n검사 58건 · 통과 58 · 실패 0 · 4.8s\n\nRESULT OK"
+   "passed": 65,
+   "total": 65,
+   "seconds": 5.7,
+   "tail": "\n[12] 요청 단위 오버라이드 (output_mode=fused)\n  OK   output_mode=fused 의 result_type                      셋 다 candidates_fused 여야 한다\n\n[13] 실패 정렬 — 빈 용어는 세 창구가 모두 거절해야 한다\n  OK   Web 은 빈 term 을 400 으로 거절한다                           code=400\n  OK   MCP 도 빈 term 을 오류로 돌려준다                              {\"_error\": \"action=explain 에는 term(용어) 이 필요합니다\"}\n  OK   CLI 도 빈 용어를 0 이 아닌 코드로 거절한다                          exit=1\n\n검사 65건 · 통과 65 · 실패 0 · 5.6s\n\nRESULT OK"
   },
   {
    "key": "stage_align",
@@ -76,7 +76,7 @@
    "code": 0,
    "passed": 64,
    "total": 64,
-   "seconds": 2.6,
+   "seconds": 2.4,
    "tail": "| fill-defaults | reload | fill-defaults 뒤 서버가 파일을 읽는다 | OK |\n| tuning | Settings → Pipeline | 튜닝 저장이 Pipeline 데이터(/api/architecture)에 바로 보인다 | OK |\n| tuning | Settings → Pipeline | config 원천 튜닝 키도 Pipeline 데이터에 보인다 | OK |\n| config | Settings → Pipeline | config 저장이 Pipeline 데이터에 바로 보인다 | OK |\n| models | Settings → 시간 제한 | 역할 타임아웃 변경이 단계 시간 제한에 반영된다 | OK |\n| models | Settings → Pipeline | 같은 값이 Pipeline 단계 표에도 있다 | OK |\n================================================================================================\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_settings_sync_result.json\n\n검사 64개 중 64개 통과\n\nRESULT OK"
   },
   {
@@ -98,8 +98,8 @@
    "code": 0,
    "passed": 26,
    "total": 26,
-   "seconds": 18.4,
-   "tail": "── 요약 (30명 동시 · 빌드가 도는 구간 기준) ──\n  시나리오               빌드(s)     질의     거절     실패   p50(ms)   p95(ms)   max(ms)\n  증분 빌드                0.4    116      0      0      21.5      44.7      94.9\n  채널 빌드 fts            0.3     88      0      0      26.4      95.7     188.8\n  채널 빌드 vector         1.5    524      0      0      21.4      75.0     678.4\n  채널 빌드 graph          0.3     63      0      0      27.3     132.8     206.2\n  전체 리빌드               0.6     24      0      0     547.3     598.1     602.7\n  ※ max 가 빌드 시간에 가까우면 그 빌드가 **읽기를 막고 있다**는 뜻이다 (배타 락).\n\n검사 26개 중 26개 통과 · 실패 0개\n\nRESULT OK"
+   "seconds": 17.9,
+   "tail": "── 요약 (30명 동시 · 빌드가 도는 구간 기준) ──\n  시나리오               빌드(s)     질의     거절     실패   p50(ms)   p95(ms)   max(ms)\n  증분 빌드                0.3     97      0      0      27.1      70.2     162.5\n  채널 빌드 fts            0.3     97      0      0      10.9      85.1     113.3\n  채널 빌드 vector         0.9    325      0      0      10.4      57.6     641.6\n  채널 빌드 graph          0.6    178      0      0      18.4     129.7     157.8\n  전체 리빌드               0.7     29      0      0     560.3     608.0     615.6\n  ※ max 가 빌드 시간에 가까우면 그 빌드가 **읽기를 막고 있다**는 뜻이다 (배타 락).\n\n검사 26개 중 26개 통과 · 실패 0개\n\nRESULT OK"
   },
   {
    "key": "cli",
@@ -109,8 +109,8 @@
    "code": 0,
    "passed": 361,
    "total": 361,
-   "seconds": 162.8,
-   "tail": "OK  models ensemble show answer (반영)           code=0   160ms  answer    ensemble=ON  wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  query (앙상블 켠 상태)                           code=0   213ms  {\nOK  models ensemble set answer --enabled false code=0   166ms  saved llm_roles.answer.ensemble: enabled=False members=['mock/mock-a×1.5', 'mock/mock-b×1.0'] aggregator=(첫 멤버\nOK  models ensemble show answer (끔)            code=0   165ms  answer    ensemble=off wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  rerun --points                             code=0   163ms  plan         계획부터 (질의 규칙 · 라우터 · 질의 확장)\nOK  rerun --list                               code=0   161ms  #412        74.1 KB  09-20 13:13\nOK  config reset (no --yes)                    code=4   161ms  !! 파괴적 작업: config.json 을 기본값으로 덮어쓰기\nOK  config reset --yes                         code=0   162ms  config reset\nOK  help                                       code=0    76ms  usage: llmwiki [-h] [--version] [--user CLI_USER] [--password CLI_PASSWORD]\nOK  query --help                               code=0    74ms  usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]\nOK  server --help                              code=0    72ms  usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]\nOK  schedule --help                            code=0    71ms  usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
+   "seconds": 162.5,
+   "tail": "OK  models ensemble show answer (반영)           code=0   164ms  answer    ensemble=ON  wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  query (앙상블 켠 상태)                           code=0   213ms  {\nOK  models ensemble set answer --enabled false code=0   162ms  saved llm_roles.answer.ensemble: enabled=False members=['mock/mock-a×1.5', 'mock/mock-b×1.0'] aggregator=(첫 멤버\nOK  models ensemble show answer (끔)            code=0   156ms  answer    ensemble=off wait=all timeout_s=60 min_results=1 prompt=ensemble_merge\nOK  rerun --points                             code=0   164ms  plan         계획부터 (질의 규칙 · 라우터 · 질의 확장)\nOK  rerun --list                               code=0   167ms  #412        74.1 KB  09-20 21:33\nOK  config reset (no --yes)                    code=4   160ms  !! 파괴적 작업: config.json 을 기본값으로 덮어쓰기\nOK  config reset --yes                         code=0   163ms  config reset\nOK  help                                       code=0    75ms  usage: llmwiki [-h] [--version] [--user CLI_USER] [--password CLI_PASSWORD]\nOK  query --help                               code=0    73ms  usage: llmwiki query [-h] [--k K] [--no-log] [--analyze] [--print-analysis]\nOK  server --help                              code=0    72ms  usage: llmwiki server [-h] [--url URL] [--token TOKEN] [--json]\nOK  schedule --help                            code=0    72ms  usage: llmwiki schedule [-h] [--task TASK] [-n N] [--url URL] [--token TOKEN]"
   },
   {
    "key": "web",
@@ -120,7 +120,7 @@
    "code": 0,
    "passed": 379,
    "total": 379,
-   "seconds": 39.5,
+   "seconds": 38.9,
    "tail": "OK  guest query overrides.answer_mode=best_effort → result_type=best_effort POST /api/query                    200  result_type=best_effort answer_llm.meta.answer_mode=best_effort\nOK  class1 query overrides.openai_base_url → 403 (화이트리스트) POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: openai_base_url — URL·헤더·경로·서버 운영 설정은 admin 이 Sett\nOK  guest query overrides.corpus_dirs → 403  POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: corpus_dirs — URL·헤더·경로·서버 운영 설정은 admin 이 Settings\nOK  viewer query overrides.llm_roles.answer.base_url → 403 POST /api/query                    403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: llm_roles.answer.base_url — URL·헤더·경로·서버 운영 설정은 ad\nOK  viewer query overrides.llm_roles.answer.model 허용 POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  admin query overrides.openai_base_url 허용 POST /api/query                    200  {\"result\": \"…\", \"trace\": \"…\"}\nOK  guest rerun overrides.openai_base_url → 403 POST /api/query/rerun              403  {\"error\": \"요청 단위 overrides 에 허용되지 않는 키: openai_base_url — URL·헤더·경로·서버 운영 설정은 admin 이 Sett\nOK  mcp tools/list: wiki_sweep · wiki_rules · wiki_graph_profile POST /mcp                          200  tools=21\nOK  mcp wiki_query output_mode=fused → structuredContent.candidates POST /mcp                          200  {\"jsonrpc\": \"2.0\", \"id\": 42, \"result\": \"…\"}\nOK  viewer logout (v1)                       POST /api/auth/logout              200  {\"ok\": true}\nOK  csrf origin → 403                        POST /api/query                    403  {\"error\": \"cross-origin 요청 차단 (Origin http://evil.example)\", \"status\": 403}\nOK  admin logout                             POST /api/auth/logout              200  {\"ok\": true}"
   },
   {
@@ -131,7 +131,7 @@
    "code": 0,
    "passed": 129,
    "total": 129,
-   "seconds": 6.6,
+   "seconds": 5.6,
    "tail": "  OK   재귀 방지: 하위 프로세스는 페더레이션 안 함                      []\n  OK   재귀 방지: 하위에서 중계 호출 거부                           federated tool mock__search is not available through a federated call (recursion guard)\n\n[8] 자가 점검 명령\n  OK   mcp --doctor --json (심어 둔 결함만 오류로)             ok=False · 오류 ['플러그인'] · 경고 0 · 도구 22\n  OK   doctor: 플러그인 오류 검출                             오류: [{'file': 'broken.py', 'error': \"SyntaxError: '(' was never closed (broken.py, line 1)\n  OK   doctor: 도구 목록에 확장 포함                           22\n  OK   doctor: 페더레이션 도구 보고                            \n  OK   mcp --doctor (사람이 읽는 출력)                       ['MCP 자가 점검 — 프로토콜 2025-06-18 (지원 2025-06-18, 2025-03-26, 2024-11-05)']\n  OK   mcp --client-config (stdio/http/브리지)           ['_how', 'stdio_claude_code', 'stdio_json', 'http_claude_code', 'http_json', 'bridge_json']\n\nMCP OK  129/129 통과"
   },
   {
@@ -143,7 +143,7 @@
    "passed": null,
    "total": null,
    "seconds": 0.1,
-   "tail": "   imbalance: {'(': 1022, ')': 1024, '{': 219, '}': 219, '[': 103, ']': 103}\nobservability.js   refs=105 created= 15 missing=- balanced=False\npipeline.js        refs= 39 created=  0 missing=- balanced=True\n   imbalance: {'(': 580, ')': 581, '{': 118, '}': 118, '[': 36, ']': 36}\nquality.js         refs= 50 created=  5 missing=- balanced=False\n   imbalance: {'(': 403, ')': 407, '{': 231, '}': 232, '[': 49, ']': 49}\nsettings.js        refs=197 created= 55 missing=- balanced=False\nJS 가 부르는 API 경로: 106 | 서버에 없는 경로: -\nLW 헬퍼 구조분해 누락: -\n탭에 매인 CSS 인데 JS 가 렌더: -\n정의 없는 CSS 변수: -\nRESULT OK"
+   "tail": "   imbalance: {'(': 1022, ')': 1024, '{': 219, '}': 219, '[': 103, ']': 103}\nobservability.js   refs=105 created= 15 missing=- balanced=False\npipeline.js        refs= 39 created=  0 missing=- balanced=True\n   imbalance: {'(': 580, ')': 581, '{': 118, '}': 118, '[': 36, ']': 36}\nquality.js         refs= 50 created=  5 missing=- balanced=False\n   imbalance: {'(': 420, ')': 424, '{': 233, '}': 234, '[': 51, ']': 51}\nsettings.js        refs=197 created= 55 missing=- balanced=False\nJS 가 부르는 API 경로: 106 | 서버에 없는 경로: -\nLW 헬퍼 구조분해 누락: -\n탭에 매인 CSS 인데 JS 가 렌더: -\n정의 없는 CSS 변수: -\nRESULT OK"
   },
   {
    "key": "browser",
@@ -153,8 +153,8 @@
    "code": 0,
    "passed": null,
    "total": null,
-   "seconds": 24.5,
-   "tail": "  \"has_roles-show-policy\": true,\n  \"has_build-external\": true\n },\n \"login\": {\n  \"dom_len\": 126537,\n  \"console_lines\": 3,\n  \"errors\": []\n },\n \"tabs_checked\": 36\n}\n정적 그대로인 탭(빈 목록이거나 loader 가 그릴 내용이 없음): ask/debug\nBROWSER OK"
+   "seconds": 24.6,
+   "tail": "  \"has_roles-show-policy\": true,\n  \"has_build-external\": true\n },\n \"login\": {\n  \"dom_len\": 126530,\n  \"console_lines\": 3,\n  \"errors\": []\n },\n \"tabs_checked\": 36\n}\n정적 그대로인 탭(빈 목록이거나 loader 가 그릴 내용이 없음): ask/debug\nBROWSER OK"
   },
   {
    "key": "responsive",
@@ -175,7 +175,7 @@
    "code": 0,
    "passed": 136,
    "total": 136,
-   "seconds": 427.5,
+   "seconds": 427.8,
    "tail": "OK   query      채팅 보내기 → 말풍선           fetch=5  \nOK   query      게시 대화상자 열기             fetch=5  \nOK   query      게시 대화상자에 작업 목록         fetch=3  \nOK   query      게시 대화상자 닫기             fetch=5  \nOK   query      게시판 열기                 fetch=4  \nOK   query      게시판으로 이동               fetch=6  \nOK   query      게시판 새로고침               fetch=4  \n\n버튼 136개 중 136개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_buttons_result.json\n\nRESULT OK"
   },
   {
@@ -184,10 +184,10 @@
    "argv": "tools/verify/verify_ensemble_ui.py",
    "ok": true,
    "code": 0,
-   "passed": 18,
-   "total": 18,
-   "seconds": 6.2,
-   "tail": "OK   경고에 역할 모델이 무엇인지 적혀 있다                          \nOK   요약 pill 이 'ON' 만 말하지 않고 멤버 0 을 알린다             \nOK   멤버 #3 은 처음에 모델이 비어 있다                          \nOK   「쓰기」를 켜면 멤버 #3 에 역할 모델이 자동으로 채워진다              \nOK   멤버 #3 줄이 더 이상 꺼진(off) 상태가 아니다                  \nOK   멤버가 생기면 '멤버 0개' 경고가 사라진다                       \nOK   모델을 다시 비우면 '모델을 골라야 켜집니다' 라고 말한다               \nOK   「빈 멤버 채우기」 로 「쓰기」가 켜진 3칸이 모두 채워진다              \nOK   저장 뒤 서버 유효값에 멤버가 생긴다 (UI → 파일 → 유효값)           \n\n18개 중 18개 통과\nENSEMBLE-UI OK"
+   "passed": 28,
+   "total": 28,
+   "seconds": 9.2,
+   "tail": "OK   폴백 기본이 켜짐이다 (앙상블 탓에 답이 아예 안 나오는 일이 없게)         \nOK   되돌아갈 역할 모델을 화면이 말해 준다                          \nOK   모드 세 가지를 고를 수 있다 (auto·merge·rerun)            \nOK   화면에서 폴백을 끄면 서버 유효값도 꺼진다 (UI → 파일 → 유효값)        \nOK   화면에서 고른 모드가 서버 유효값에 온다                         \nOK   API 가 최악 소요를 계산해 준다                            \nOK   API 가 요청 상한(query_s)도 함께 준다                    \nOK   화면에 「최악 소요」가 보인다                               \nOK   최악 소요에 '한 번 = N회 × M초' 근거가 적혀 있다               \n\n28개 중 28개 통과\nENSEMBLE-UI OK"
   },
   {
    "key": "waterfall",
@@ -208,8 +208,8 @@
    "code": 0,
    "passed": 58,
    "total": 58,
-   "seconds": 140.2,
-   "tail": "==============================================================================\n  색인 DB 복사 중 (524 MB)…\n  로그인(verify.plain): HTTP 200\nOK   사용자 추가 폼이 감춰짐                      fetch=3  \nOK   왜 못 쓰는지 화면에 표시                     fetch=3  \nOK   API 키 영역은 비어 있음 (발급 버튼 없음)         fetch=3  \nOK   내 비밀번호 변경은 그대로 쓸 수 있다              fetch=4  알림: 비밀번호 변경됨\n\n검사 58개 중 58개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_security_ui_result.json\n\nRESULT OK"
+   "seconds": 140.1,
+   "tail": "==============================================================================\n  색인 DB 복사 중 (409 MB)…\n  로그인(verify.plain): HTTP 200\nOK   사용자 추가 폼이 감춰짐                      fetch=3  \nOK   왜 못 쓰는지 화면에 표시                     fetch=3  \nOK   API 키 영역은 비어 있음 (발급 버튼 없음)         fetch=3  \nOK   내 비밀번호 변경은 그대로 쓸 수 있다              fetch=4  알림: 비밀번호 변경됨\n\n검사 58개 중 58개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_security_ui_result.json\n\nRESULT OK"
   },
   {
    "key": "rerun_ui",
@@ -230,8 +230,8 @@
    "code": 0,
    "passed": 20,
    "total": 20,
-   "seconds": 32.2,
-   "tail": "  스크린샷: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_10.png\n  OK   10명이 동시에 움직이는 동안 오류 없음                               []\n  OK   서버가 10명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)                people=11 · 경과 13.1s\n  OK   협업 부하 중에도 RAG 질의가 정상                                 0.60s\n  OK   협업 부하 중에도 MCP tools/list 정상                          도구 20개 · 0.02s\n  OK   협업 부하 중에도 MCP wiki_query 정상                          0.06s\n  OK   본체 확인 중 협업 오류 없음                                     []\n  OK   협업 호출이 활동 목록(읽기 슬롯)에 쌓이지 않는다                         running=0 queued=0\n  OK   변화가 없으면 접속자 목록을 생략한다 (폴링 대역 절감)                      8.5KB → 0.2KB (97% 절감)\n  OK   누가 움직이면 목록을 다시 보낸다                                   people=11 rev 657→659\n\nCOLLAB OK  20/20 통과"
+   "seconds": 31.9,
+   "tail": "  스크린샷: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_10.png\n  OK   10명이 동시에 움직이는 동안 오류 없음                               []\n  OK   서버가 10명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)                people=11 · 경과 13.0s\n  OK   협업 부하 중에도 RAG 질의가 정상                                 0.58s\n  OK   협업 부하 중에도 MCP tools/list 정상                          도구 20개 · 0.02s\n  OK   협업 부하 중에도 MCP wiki_query 정상                          0.04s\n  OK   본체 확인 중 협업 오류 없음                                     []\n  OK   협업 호출이 활동 목록(읽기 슬롯)에 쌓이지 않는다                         running=0 queued=0\n  OK   변화가 없으면 접속자 목록을 생략한다 (폴링 대역 절감)                      8.5KB → 0.2KB (97% 절감)\n  OK   누가 움직이면 목록을 다시 보낸다                                   people=11 rev 654→656\n\nCOLLAB OK  20/20 통과"
   },
   {
    "key": "act_load",
@@ -242,7 +242,7 @@
    "passed": 7,
    "total": 7,
    "seconds": 18.2,
-   "tail": "OK   최근 완료 항목이 2개 이상                                3개\nOK   ① 처음 열기 — 로딩 문구가 사라진다                          0.5s · RX DMA 드라이버의 code map querylocal q-mu9bczkb8ze9ss ↩ Ask 화면에서 열기 📄 요청 프\nOK   ① 채워지는 데 10초 미만                                0.5s\n      표본: 0.0s RX DMA 드라이버의 code map querylocal q-mu9bczkb8ze | 0.5s RX DMA 드라이버의 code map querylocal q-mu9bczkb8ze\nOK   ② 닫았다 다시 열기 — 다시 채워진다                          0.5s\nOK   ③ 빠르게 다른 항목 클릭 — 멈추지 않는다                       0.5s · ISSUE-2001 의 원인과 수정 CL 은? querylocal q-mu9bcxzy0bp1k6 ↩ Ask 화면에서 열기 📄 \nOK   ③ 마지막으로 누른 항목의 상세가 남는다                         True\nOK   JS 오류 없음                                       []\n\n검사 7개 중 7개 통과 · 실패 0개\n\nRESULT OK"
+   "tail": "OK   최근 완료 항목이 2개 이상                                3개\nOK   ① 처음 열기 — 로딩 문구가 사라진다                          0.5s · RX DMA 드라이버의 code map querylocal q-mu9t8qr9gxua1y ↩ Ask 화면에서 열기 📄 요청 프\nOK   ① 채워지는 데 10초 미만                                0.5s\n      표본: 0.0s RX DMA 드라이버의 code map querylocal q-mu9t8qr9gxu | 0.5s RX DMA 드라이버의 code map querylocal q-mu9t8qr9gxu\nOK   ② 닫았다 다시 열기 — 다시 채워진다                          0.5s\nOK   ③ 빠르게 다른 항목 클릭 — 멈추지 않는다                       0.5s · ISSUE-2001 의 원인과 수정 CL 은? querylocal q-mu9t8p72ep6p2h ↩ Ask 화면에서 열기 📄 \nOK   ③ 마지막으로 누른 항목의 상세가 남는다                         True\nOK   JS 오류 없음                                       []\n\n검사 7개 중 7개 통과 · 실패 0개\n\nRESULT OK"
   },
   {
    "key": "schedule_ui",
@@ -263,7 +263,7 @@
    "code": 0,
    "passed": 47,
    "total": 47,
-   "seconds": 139.5,
+   "seconds": 136.4,
    "tail": "OK   server.json timeouts.job_s = 172800                172800\nOK   server.json concurrency.write_wait_timeout_s = 172800 172800\nOK   setup/server.example.json timeouts.job_s = 172800  172800\nOK   config.json build_lock_timeout = 172800            172800\nOK   config.json build_lock_stale_s = 172800            172800\nOK   setup/config.example.json build_lock_stale_s = 172800 172800\nOK   read_wait_timeout_s 는 짧게 유지된다 (빌드가 아니라 질의의 수명)     900초\n\n검사 47개 중 47개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_timeouts_result.json\n\nRESULT OK"
   },
   {
@@ -274,8 +274,8 @@
    "code": 0,
    "passed": 10,
    "total": 10,
-   "seconds": 86.9,
-   "tail": "OK   예상 밖 오류(5xx·연결실패) 0건                             요청 5323건 · 200=5323 · 거절(429/503)=0 · 5xx=0\nOK   정상 처리된 요청이 있다                                    200 5323건 · 창구별 {\"web:poll\": 376, \"mcp:query\": 1654, \"mcp:list\": 1654, \"web:search\": 1339, \"cli:search\": 83, \"\nOK   p95 지연이 60초 미만                                   p50=21ms p95=960ms max=24428ms\nOK   부하 뒤 health 통과                                   HTTP 200 fails=0 warn=2\nOK   부하 뒤 색인 무결성                                      HTTP 200 orphans=없음\nOK   부하 뒤 실행 중 작업이 남지 않음                              running=0 queued=0\nOK   부하 뒤 정상 질의가 된다                                   HTTP 200\n\n검사 10개 중 10개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_soak_result.json\n\nRESULT OK"
+   "seconds": 64.1,
+   "tail": "OK   예상 밖 오류(5xx·연결실패) 0건                             요청 4201건 · 200=4201 · 거절(429/503)=0 · 5xx=0\nOK   정상 처리된 요청이 있다                                    200 4201건 · 창구별 {\"web:poll\": 336, \"mcp:query\": 1326, \"mcp:list\": 1326, \"web:search\": 982, \"cli:search\": 61, \"w\nOK   p95 지연이 60초 미만                                   p50=19ms p95=918ms max=23547ms\nOK   부하 뒤 health 통과                                   HTTP 200 fails=0 warn=2\nOK   부하 뒤 색인 무결성                                      HTTP 200 orphans=없음\nOK   부하 뒤 실행 중 작업이 남지 않음                              running=0 queued=0\nOK   부하 뒤 정상 질의가 된다                                   HTTP 200\n\n검사 10개 중 10개 통과 · 실패 0개\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_soak_result.json\n\nRESULT OK"
   },
   {
    "key": "monkey",
@@ -285,8 +285,8 @@
    "code": 0,
    "passed": null,
    "total": null,
-   "seconds": 1849.0,
-   "tail": "\n요청 1205건 / 1482초 (1 req/s)\n상태 코드: 200×463, 404×212, conn-err×198, 400×156, 503×114, 501×57, 405×5\n정상 처리·정상 거절: 950 / 500 오류: 0 / 연결 실패: 198\n폭격 중 정상 질의: 2/18 성공, 지연 0.0~180.0s\n30초 초과 요청 233건 (예: [(60.0, 'POST', '/api/memory'), (60.0, 'POST', '/api/models/test'), (60.0, 'POST', '/api/pins')])\n사후 확인: 서버 살아 있음 · 정상 질의 FAIL code=-1 (180.0s)\n결함 후보 0건: -\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_monkey_result.json\n  참고: 폭격 직후 정상 질의가 -1 로 거절됐습니다 — 대기열이 빠지는 중이면 정상입니다.\n\nRESULT OK"
+   "seconds": 657.9,
+   "tail": "\n요청 1205건 / 381초 (3 req/s)\n상태 코드: 200×406, 503×351, 404×162, 400×142, conn-err×79, 501×56, 405×9\n정상 처리·정상 거절: 1070 / 500 오류: 0 / 연결 실패: 79\n폭격 중 정상 질의: 0/7 성공, 지연 0.0~180.0s\n30초 초과 요청 79건 (예: [(60.0, 'POST', '/api/cli'), (60.0, 'POST', '/api/build/verify'), (60.0, 'POST', '/api/memory')])\n사후 확인: 서버 살아 있음 · 정상 질의 FAIL code=503 (0.0s)\n결함 후보 0건: -\n결과: C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\verify_monkey_result.json\n  참고: 폭격 직후 정상 질의가 503 로 거절됐습니다 — 대기열이 빠지는 중이면 정상입니다.\n\nRESULT OK"
   }
  ],
  "ok": true,

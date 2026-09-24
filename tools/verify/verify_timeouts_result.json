@@ -67,7 +67,7 @@
  {
   "ok": true,
   "name": "근거 기반 답변이 여전히 나온다",
-  "detail": "mode=extractive · 4620자"
+  "detail": "mode=extractive · 3557자"
  },
  {
   "ok": true,
@@ -97,7 +97,7 @@
  {
   "ok": true,
   "name": "느린 질의 중에도 활동·진행 조회가 막히지 않는다",
-  "detail": "0.03s"
+  "detail": "0.02s"
  },
  {
   "ok": true,

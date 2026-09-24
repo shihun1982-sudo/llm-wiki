@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from ..evalset import load_questions
 from .. import evolve as ev
 from .. import auth as _authmod
 from .. import progress as _pg
+from .. import reqledger as _led
 from .. import snapshots as _snap
 from .. import reqmgr as _rq
 from ..auth import Auth, AuthError, User, RANK, ROLES, ROLE_LABEL, LEVELS, LEVEL_LABEL, DEFAULT_LEVEL_ROLE, classify_api, classify_cli
@@ -77,8 +79,19 @@ _SCHED: Dict[str, Any] = {"scheduler": None}
 
 
 def _mgr() -> _rq.RequestManager:
-    """공통 요청 관리자 (서버 프로세스당 하나). 테스트처럼 serve() 를 거치지 않으면 첫 사용 시 생성."""
-    return _rq.get_manager()
+    """공통 요청 관리자 (서버 프로세스당 하나). 테스트처럼 serve() 를 거치지 않으면 첫 사용 시 생성.
+
+    **이 서버가 쓰는 data_dir 을 함께 넘긴다** — 원장이 그 폴더에 쓰이게 하기 위해서다.
+    넘기지 않으면 임시 Settings 로 띄운 서버(테스트·검증 하네스)도 프로젝트의 data/ledger 에 기록해
+    실사용 기록과 섞인다 (2026-09-23 실측: 테스트 한 번에 1,000건 이상 유입).
+    """
+    pipe = getattr(Handler, "pipe", None)
+    dd = ""
+    try:
+        dd = str(getattr(getattr(pipe, "s", None), "data_dir", "") or "")
+    except Exception:
+        dd = ""
+    return _rq.get_manager(data_dir=dd)
 
 
 class BadRequest(ValueError):
@@ -361,8 +374,34 @@ class Handler(BaseHTTPRequestHandler):
         """요청 관리자/진행 레지스트리에 남길 클라이언트 정보."""
         if user and user.via == "apikey" and origin == "web":
             origin = "api"
-        return {"user": user.name if user else "guest", "role": user.role if user else "", "via": user.via if user else "anon",
-                "ip": self._ip(), "origin": origin, "agent": (self.headers.get("User-Agent") or "")[:100]}
+        cl = {"user": user.name if user else "guest", "role": user.role if user else "", "via": user.via if user else "anon",
+              "ip": self._ip(), "origin": origin, "agent": (self.headers.get("User-Agent") or "")[:100]}
+        # 이 HTTP 요청의 원장 항목을 티켓에 이어 준다 — 한 요청이 원장에 두 줄로 나뉘지 않게.
+        sp = getattr(self, "_led", None)
+        if sp is not None:
+            sp.promote()            # 티켓을 받는 요청은 폴링이 아니므로 반드시 남긴다
+            sp.set(user=cl["user"], role=cl["role"], via=cl["via"], origin=origin)
+            cl["ledger_token"] = sp.token
+        return cl
+
+    @contextlib.contextmanager
+    def _ledger_span(self, method: str, path: str):
+        """이 HTTP 요청 하나를 원장에 남긴다 (진입점 4곳이 공유).
+
+        티켓 **이전**에 죽는 요청(차단·점검 모드·413·인증 실패·잘못된 JSON·500)까지 덮으려면
+        디스패치 바깥에서 감싸야 한다. GET 은 폴링이 잦아 `ledger.include_get` 정책을 따르되,
+        **실패는 정책과 무관하게 남긴다**.
+        """
+        heavy = method != "GET" or path.startswith(Handler.HEAVY_GET)
+        record_ok = method != "GET" or _led.should_record_get(path, heavy)
+        sp = _led.span(record_ok=record_ok, kind="http", origin="web", method=method, path=path,
+                       ip=self._ip(), agent=(self.headers.get("User-Agent") or "")[:100], label="%s %s" % (method, path))
+        self._led = sp
+        try:
+            with sp:
+                yield sp
+        finally:
+            self._led = None
 
     def _can_see_users(self, user: Optional[User]) -> bool:
         """남의 사용자 id·IP·에이전트를 볼 수 있나.
@@ -510,6 +549,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _mcp(self, method: str) -> None:
         """POST/GET/DELETE /mcp — 인증(Bearer API 키·쿠키·익명) 과 read 등급 권한은 authorize() 로, 본문은 mcp.handle_http 로."""
+        with self._ledger_span(method, "/mcp") as sp:
+            sp.set(origin="mcp")
+            return self._mcp_inner(method, sp)
+
+    def _mcp_inner(self, method: str, sp) -> None:
         from .. import mcp as _mcp
         auth = self._auth()
         body = b""
@@ -584,20 +628,25 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/mcp":
             return self._mcp("DELETE")
-        if u.path.startswith("/api/jobs/") or u.path.startswith("/api/activity/"):
-            # 실행 중인 잡/요청 취소 (본인 또는 admin)
-            tok = u.path.rsplit("/", 1)[-1]
-            try:
-                user = self._user()
-            except AuthError as e:
-                return self._deny(e, None, u.path, "read")
-            if user is None:
-                return self._json({"error": "로그인이 필요합니다"}, 401)
-            r = _mgr().cancel(tok, by=user.name, reason="user request", allow_owner=None if user.role == "admin" else user.name,
-                              pending_ok=self._job_cancellable(tok, user))
-            self._auth().audit(user, "cancel " + tok, "read", bool(r.get("ok")), self._ip())
-            return self._json(r, 200 if r.get("ok") else 404)
-        self.send_error(404)
+        with self._ledger_span("DELETE", u.path) as sp:
+            if u.path.startswith("/api/jobs/") or u.path.startswith("/api/activity/"):
+                # 실행 중인 잡/요청 취소 (본인 또는 admin)
+                tok = u.path.rsplit("/", 1)[-1]
+                try:
+                    user = self._user()
+                except AuthError as e:
+                    sp.status, sp.http = "rejected", e.status
+                    return self._deny(e, None, u.path, "read")
+                if user is None:
+                    sp.status, sp.http = "rejected", 401
+                    return self._json({"error": "로그인이 필요합니다"}, 401)
+                sp.set(user=user.name, role=user.role, label="cancel " + tok)
+                r = _mgr().cancel(tok, by=user.name, reason="user request", allow_owner=None if user.role == "admin" else user.name,
+                                  pending_ok=self._job_cancellable(tok, user))
+                self._auth().audit(user, "cancel " + tok, "read", bool(r.get("ok")), self._ip())
+                return self._json(r, 200 if r.get("ok") else 404)
+            sp.status, sp.http = "error", 404
+            self.send_error(404)
 
     # ---------------- GET ----------------
     def do_GET(self) -> None:
@@ -607,19 +656,32 @@ class Handler(BaseHTTPRequestHandler):
             return self._mcp("GET")
         if Handler.mcp_only and u.path not in ("/api/auth/me", "/api/progress", "/api/activity", "/mcp"):
             return self._json({"error": "mcp-only server: use POST /mcp"}, 404)
-        try:
-            with self.pipe.request_scope():      # 스레드 전용 DB 연결 + 설정 사본 (GET 은 락을 잡지 않는다)
-                self._do_get(u, qs)
-        except _rq.Rejected as e:
-            self._rejected(e)
-        except _pg.Cancelled as e:
-            self._json({"error": "cancelled: %s" % e, "cancelled": True}, 499)
-        except AuthError as e:      # identify() 단계의 거부 (잘못된/폐기된 API 키 등)
-            self._deny(e, None, u.path, "read")
-        except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
-            self._bad_request(u.path, e)
-        except Exception as e:
-            self._server_error(u.path, e)
+        with self._ledger_span("GET", u.path) as sp:
+            try:
+                with self.pipe.request_scope():      # 스레드 전용 DB 연결 + 설정 사본 (GET 은 락을 잡지 않는다)
+                    self._do_get(u, qs)
+            except _rq.Rejected as e:
+                sp.status, sp.http = "rejected", e.status
+                # 거절 사유의 맥락(무엇이 막았나 · 설정 키 · 되돌리는 법)을 원장에 함께 싣는다.
+                # 거절은 로그 파일에 남지 않으므로 여기서 놓치면 나중에 알 방법이 없다.
+                sp.set(code=e.code, error=e.message,
+                       limit_json=(json.dumps(e.limit, ensure_ascii=False) if getattr(e, "limit", None) else None))
+                self._rejected(e)
+            except _pg.Cancelled as e:
+                sp.status, sp.http = "cancelled", 499
+                self._json({"error": "cancelled: %s" % e, "cancelled": True}, 499)
+            except AuthError as e:      # identify() 단계의 거부 (잘못된/폐기된 API 키 등)
+                sp.status, sp.http = "rejected", e.status
+                sp.set(code="auth", error=e.error)
+                self._deny(e, None, u.path, "read")
+            except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
+                sp.status, sp.http = "error", 400
+                sp.set(error="%s: %s" % (type(e).__name__, e))
+                self._bad_request(u.path, e)
+            except Exception as e:
+                sp.status, sp.http = "error", 500
+                sp.set(error="%s: %s" % (type(e).__name__, e))
+                self._server_error(u.path, e)
 
     def _server_error(self, path: str, e: BaseException) -> None:
         """서버 결함(500). 트레이스는 **로그(error.log)에** 남기고 클라이언트에는 참조 id 만 준다.
@@ -649,6 +711,246 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET 중 무거운 것(분석 리포트·health ping·verify·system 통계)은 읽기 슬롯을 받는다; 나머지 조회는 등록도 하지 않는다 (폴링 비용 0)
     HEAVY_GET = ("/api/analysis", "/api/optimize/bundle", "/api/health", "/api/build/verify", "/api/system", "/api/graph", "/api/embed/report", "/api/corpus/lint", "/api/forensic")
+
+    # ---------------- 요청 원장 (모든 요청 통합 조회) ----------------
+    #: 화면의 뷰 프리셋 — 흡수한 탭들이 여기 필터로 들어온다 (docs/REQUEST_LEDGER.md §6.2).
+    LEDGER_VIEWS = {
+        "all": {},
+        "live": {"status": ["running", "queued"]},
+        "problems": {"status": ["rejected", "timeout", "error", "cancelled", "unknown"]},
+        "query": {"kind": "query"},
+        "slow": {"min_ms": 30000},
+        "mine": {"_mine": True},
+    }
+
+    def _ledger_api(self, u, qs: Dict[str, str], user: Optional[User], auth) -> None:
+        """`GET /api/ledger` 목록 · `/api/ledger/<token>` 한 건 · `/api/ledger/export` 내보내기.
+
+        권한은 새로 만들지 않는다 — 기존 작업 권한 `requests all` 이 있으면 전체, 없으면 **내 것만**.
+        """
+        me = (user.name if user else "") or ""
+        can_all = (auth is None) or auth.mode == "off" or bool(user and auth.allowed(user.role, "run", "requests all"))
+        rest = u.path[len("/api/ledger"):].strip("/")
+        view = (qs.get("view") or "all").lower()
+        base = dict(Handler.LEDGER_VIEWS.get(view) or {})
+        mine_only = base.pop("_mine", False) or not can_all
+
+        def scrub(r: Dict[str, Any]) -> Dict[str, Any]:
+            r = dict(r)
+            if not self._can_see_users(user) and (r.get("user") or "") != me:
+                r["user"] = "(비공개)" if r.get("user") else ""
+            if not (user and user.role == "admin"):
+                r.pop("ip", None)
+                r.pop("agent", None)
+            return r
+
+        if rest and rest != "export":
+            rec = _led.one(rest)
+            if not rec:
+                return self._json({"error": "원장에 없는 요청입니다: %s" % rest}, 404)
+            if mine_only and (rec.get("user") or "") != me:
+                return self._json({"error": "다른 사용자의 요청입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
+            out = scrub(rec)
+            secs = [s for s in (qs.get("sections") or "").split(",") if s]
+            if not secs or "concurrent" in secs:
+                # '같은 시각의 요청' 은 남의 요청 목록이 드러나므로 전체 조회 권한이 있을 때만 준다
+                out["concurrent"] = [scrub(x) for x in _led.concurrent_with(rest)] if can_all else []
+                out["concurrent_hidden"] = not can_all
+            # 요청 프로파일(requests) · 질의 로그(query_log) · 로그 줄을 **여기서 합쳐 준다** — 탭을 옮기지 않아도 되게.
+            # 무거운 것(trace 워터폴)은 sections 로 골라 받는다: 목록을 열 때마다 60KB 를 끌고 오지 않도록.
+            out.update(self._ledger_join(out.get("request_id"), secs))
+            out.update(self._ledger_logs(out.get("run_id") or (out.get("profile") or {}).get("run_id"), secs))
+            return self._json(out)
+
+        # 로그 본문으로 요청 찾기 (2026-09-23). 로그 줄의 98%가 요청에 속하므로(run_id 보유),
+        # "이 문구가 나온 요청" 을 찾는 일은 로그 탭이 아니라 여기서 되어야 한다.
+        # 로그 → run_id → requests.id → 원장 줄 순으로 이어 붙인다.
+        log_ids: Optional[set] = None
+        if qs.get("log_q"):
+            log_ids = self._request_ids_by_log_text(qs["log_q"])
+        status = [s for s in (qs.get("status") or "").split(",") if s] or base.get("status")
+        rows, total = _led.read(status=status, kind=qs.get("kind") or base.get("kind", ""),
+                                origin=qs.get("origin") or "", user=(me if mine_only else (qs.get("user") or "")),
+                                q=qs.get("q") or "", min_ms=float(qs.get("min_ms") or base.get("min_ms", 0) or 0),
+                                http=int(qs["http"]) if qs.get("http", "").isdigit() else None,
+                                since=float(qs.get("since") or 0), until=float(qs.get("until") or 0),
+                                limit=_qint(qs, "limit", 100), offset=_qint(qs, "offset", 0),
+                                include_sub=qs.get("include_sub") == "1")
+        if log_ids is not None:
+            rows = [r for r in rows if int(r.get("request_id") or 0) in log_ids]
+            total = len(rows)
+        # 실행 중인 줄에는 **지금 어느 단계인지**를 붙여 준다 — 원장은 종료 시점에만 단계를 적으므로
+        # 그대로 두면 실행 중 줄의 '단계' 칸이 비어 있다 (사용자가 가장 궁금해하는 칸이다).
+        for r in rows:
+            if r.get("status") in ("running", "queued"):
+                live = _pg.get(str(r.get("client_token") or "")) or _pg.get(str(r.get("token") or "")) or {}
+                if live:
+                    r["stage"] = live.get("stage_label") or r.get("stage")
+                    r["pct"] = live.get("pct")
+                    r["eta_s"] = live.get("eta_s")
+                    llm = live.get("llm") or {}
+                    if llm.get("active"):
+                        r["llm"] = {"model": llm.get("model"), "elapsed_s": llm.get("elapsed_s")}
+                    if live.get("queue"):
+                        r["queue_pos"] = (live["queue"] or {}).get("position")
+        rows = [scrub(r) for r in rows]
+        if rest == "export":
+            if not can_all:
+                return self._json({"error": "내보내기는 전체 조회 권한이 필요합니다 (작업 'requests all')"}, 403)
+            return self._export_ledger(rows, (qs.get("format") or "jsonl").lower())
+        since = float(qs.get("since") or 0) or (time.time() - 3600)
+        mgr = _mgr()
+        lcfg = mgr.cfg.get("ledger") or {}
+        return self._json({
+            "rows": rows, "total": total, "view": view, "views": sorted(Handler.LEDGER_VIEWS),
+            "me": me, "can_all": can_all, "scope": "all" if not mine_only else "mine",
+            "statuses": list(_led.STATUSES), "hist_keys": list(_led.HIST_KEYS),
+            # 화면이 하드코딩하지 않게 서버가 알려 준다 (server.json ledger.refresh_ms / refresh_choices_ms)
+            "refresh_ms": int(lcfg.get("refresh_ms", 5000) or 0),
+            "refresh_choices_ms": list(lcfg.get("refresh_choices_ms") or [2000, 5000, 10000, 30000, 0]),
+            "histogram": _led.histogram(since, float(qs.get("until") or 0) or time.time(),
+                                        buckets=_qint(qs, "buckets", int(lcfg.get("histogram_buckets", 60) or 60))
+                                        ) if qs.get("histogram", "1") != "0" else [],
+            "summary": {"running": sum(1 for t in mgr.active.values() if t["status"] == "running"),
+                        "queued": sum(1 for t in mgr.active.values() if t["status"] == "queued"),
+                        "lock": mgr.rw.state(), "classes": mgr.class_view(),
+                        "limits": {"max_parallel_reads": mgr.cfg["concurrency"]["max_parallel_reads"],
+                                   "queue_max": mgr.cfg["concurrency"]["queue_max"]},
+                        "ledger": _led.stats(days=float(qs.get("stat_days") or 1))}})
+
+    def _ledger_join(self, request_id: Any, sections: List[str]) -> Dict[str, Any]:
+        """원장 한 건에 **요청 프로파일 + 질의 로그**를 붙인다 (2026-09-23).
+
+        세 화면(진행 중 작업·요청 프로파일·질의 로그)은 같은 사건을 원천별로 쪼개 놓은 것이라,
+        한 요청을 이해하려면 탭 셋을 오가야 했다. 원장 한 줄이 `token`·`request_id`·`run_id` 를
+        모두 들고 있으므로 여기서 조인해 한 응답으로 돌려준다.
+
+        `sections` 로 고를 수 있다 — `answer`(답변·근거·피드백) · `trace`(단계 워터폴·설정).
+        비워 두면 **가벼운 것만**(answer 요약) 준다: trace 는 한 건에 수십 KB 라 목록을 훑을 때마다 끌고 올 수 없다.
+        """
+        out: Dict[str, Any] = {}
+        try:
+            rid = int(request_id or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if not rid:
+            return out
+        p = self.pipe
+        want_trace = "trace" in sections
+        want_answer = (not sections) or "answer" in sections
+        rec = None
+        if want_answer or want_trace:
+            rec = p.store.get_request(rid, archive_dir=p.s.requests_archive_dir())
+        if not rec:
+            out["profile_missing"] = True      # keep_requests 로 잘렸다 — 원장에는 남아 있다는 뜻
+            return out
+        res = rec.get("result") or {}
+        if want_answer:
+            out["profile"] = {"id": rec.get("id"), "kind": rec.get("kind"), "ms": rec.get("ms"),
+                              "llm_calls": rec.get("llm_calls"), "input_tokens": rec.get("input_tokens"),
+                              "output_tokens": rec.get("output_tokens"), "sql_count": rec.get("sql_count"),
+                              "run_id": rec.get("run_id"), "error": rec.get("error"), "summary": rec.get("summary")}
+            out["answer"] = {"text": res.get("answer"), "mode": res.get("answer_mode"), "model": res.get("model"),
+                             "cited": res.get("cited"), "hits": res.get("hits_brief"),
+                             "verdict": (res.get("evidence") or {}).get("verdict"),
+                             "groundedness": res.get("groundedness"), "cached": res.get("cached"),
+                             "query": res.get("query") or rec.get("summary")}
+            try:
+                ql = p.store.conn.execute(
+                    "SELECT id, feedback, note, scores FROM query_log WHERE request_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+            except Exception:
+                ql = None
+            if ql:
+                try:
+                    scores = json.loads(ql["scores"] or "{}")
+                except Exception:
+                    scores = {}
+                out["qlog"] = {"id": ql["id"], "feedback": ql["feedback"], "note": ql["note"], "scores": scores}
+        if want_trace:
+            out["trace"] = rec.get("trace")
+            out["config"] = rec.get("config")
+        return out
+
+    def _request_ids_by_log_text(self, text: str) -> set:
+        """로그 본문에서 문구를 찾아 **그 줄이 속한 요청들**의 id 를 돌려준다 (2026-09-23).
+
+        실측: 로그 줄의 98%가 `run_id` 를 갖는다 = 거의 모든 줄이 어떤 요청에 속한다.
+        그래서 "이 문구가 나온 요청이 뭐였나" 는 로그 탭을 뒤지는 대신 여기서 답한다.
+        """
+        out: set = set()
+        try:
+            from .. import logging_setup as _ls
+            d = _ls.log_dir() or path_for("logs_dir")
+            runs: set = set()
+            for name in ("llmwiki", "query", "build", "error"):
+                p = os.path.join(d, name + ".log")
+                if not os.path.exists(p):
+                    continue
+                for r in _ls.grep(p, text=text, limit=400):
+                    if r.get("run_id"):
+                        runs.add(str(r["run_id"]))
+            if not runs:
+                return out
+            qs_ = ",".join("?" * len(runs))
+            for row in self.pipe.store.conn.execute(
+                    "SELECT id FROM requests WHERE run_id IN (%s)" % qs_, list(runs)):
+                out.add(int(row["id"]))
+        except Exception:
+            pass
+        return out
+
+    def _ledger_logs(self, run_id: Any, sections: List[str]) -> Dict[str, Any]:
+        """이 요청이 남긴 **로그 줄**을 붙인다 (2026-09-23, 사용자 제안).
+
+        로그 탭은 그대로 둔다 — 로그 파일에는 **요청에 속하지 않는 줄**(빌드 단계·워처 스캔·디스크 경고·
+        서버 기동·스케줄러)이 절반쯤 있어서, 요청 화면이 그것까지 대신할 수는 없기 때문이다.
+        대신 요청 하나에 딸린 줄(`run_id` 가 같은 것)은 여기로 끌어와 탭을 오가지 않게 한다.
+        """
+        run = str(run_id or "")
+        if not run or (sections and "logs" not in sections):
+            return {}
+        try:
+            from .. import logging_setup as _ls
+            d = _ls.log_dir() or path_for("logs_dir")
+            rows: List[Dict[str, Any]] = []
+            for name in ("llmwiki", "query", "build"):
+                path = os.path.join(d, name + ".log")
+                if not os.path.exists(path):
+                    continue
+                for r in _ls.grep(path, run_id=run, limit=60):
+                    r["file"] = name
+                    rows.append(r)
+            rows.sort(key=lambda r: float(r.get("ts") or 0))
+            # 경고 이상은 따로 세어 준다 — 상세를 펼치지 않아도 '이 요청에 문제가 있었나' 를 바로 알 수 있게
+            warn = sum(1 for r in rows if str(r.get("level") or "").upper() in ("WARNING", "ERROR", "CRITICAL"))
+            return {"logs": rows[:120], "logs_warn": warn, "logs_run_id": run}
+        except Exception as e:      # 로그를 못 읽어도 상세는 보여야 한다
+            return {"logs": [], "logs_error": str(e)[:200]}
+
+    def _export_ledger(self, rows: List[Dict[str, Any]], fmt: str) -> None:
+        """현재 필터 결과를 CSV/JSONL 로 (사내 반입 환경에서 분석을 넘길 때 쓴다)."""
+        if fmt == "csv":
+            import csv
+            import io
+            cols = ["token", "opened", "closed", "status", "kind", "origin", "user", "role", "label",
+                    "method", "path", "http", "code", "ms", "queue_wait_s", "request_id", "run_id", "error"]
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                w.writerow({c: r.get(c, "") for c in cols})
+            data = buf.getvalue().encode("utf-8-sig")       # Excel 이 한글을 바르게 열도록 BOM
+            ctype, name = "text/csv; charset=utf-8", "ledger.csv"
+        else:
+            data = ("\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows) + "\n").encode("utf-8")
+            ctype, name = "application/x-ndjson; charset=utf-8", "ledger.jsonl"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _do_get(self, u, qs: Dict[str, str]) -> None:
         p = self.pipe
@@ -901,6 +1203,8 @@ class Handler(BaseHTTPRequestHandler):
                     if self._not_my_request(r, user, auth):
                         return self._json({"error": "다른 사용자의 질의입니다 (전체 조회 권한 필요: 작업 'requests all')"}, 403)
                     return self._json(json.loads(r["trace"]) if r else {})
+                if u.path.startswith("/api/ledger"):
+                    return self._ledger_api(u, qs, user, auth)
                 if u.path == "/api/requests":
                     # scope=mine(기본) | all. 남의 요청까지 보려면 'run' 등급 이상 (security.json permissions 로 조정).
                     me = (user.name if user else "") or ""
@@ -1328,19 +1632,43 @@ class Handler(BaseHTTPRequestHandler):
             return self._mcp("POST")
         if Handler.mcp_only and u.path not in ("/api/auth/login", "/api/auth/logout"):
             return self._json({"error": "mcp-only server: use POST /mcp"}, 404)
-        try:
-            with self.pipe.request_scope():
-                self._do_post(u)
-        except _rq.Rejected as e:
-            self._rejected(e)
-        except _pg.Cancelled as e:
-            self._json({"error": "cancelled: %s" % e, "cancelled": True}, 499)
-        except AuthError as e:      # 디스패치 안의 거부 (요청 단위 overrides 화이트리스트 등) → 401/403, 500 이 아니다
-            self._deny(e, None, u.path, "?")
-        except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
-            self._bad_request(u.path, e)
-        except Exception as e:
-            self._server_error(u.path, e)
+        with self._ledger_span("POST", u.path) as sp:
+            try:
+                with self.pipe.request_scope():
+                    self._do_post(u)
+            except _rq.Rejected as e:
+                sp.status, sp.http = "rejected", e.status
+                # 거절 사유의 맥락(무엇이 막았나 · 설정 키 · 되돌리는 법)을 원장에 함께 싣는다.
+                # 거절은 로그 파일에 남지 않으므로 여기서 놓치면 나중에 알 방법이 없다.
+                sp.set(code=e.code, error=e.message,
+                       limit_json=(json.dumps(e.limit, ensure_ascii=False) if getattr(e, "limit", None) else None))
+                self._rejected(e)
+            except _pg.Cancelled as e:
+                sp.status, sp.http = "cancelled", 499
+                self._json({"error": "cancelled: %s" % e, "cancelled": True}, 499)
+            except AuthError as e:      # 디스패치 안의 거부 (요청 단위 overrides 화이트리스트 등) → 401/403, 500 이 아니다
+                sp.status, sp.http = "rejected", e.status
+                # 권한 거부도 **무엇이 막았는지**를 남긴다 — 한도 거절과 같은 자리에 같은 모양으로.
+                # 이게 없으면 원장 상세에 오류 문구 한 줄뿐이라 "뭘 어떻게 바꿔야 하나" 를 알 수 없다.
+                need = getattr(e, "need", None) or {}
+                sp.set(code="auth", error=e.error,
+                       limit_json=json.dumps({"what": "권한 (작업 등급)", "kind": "auth",
+                                              "who": (need.get("role_now") or "현재 역할"),
+                                              "value": need.get("level") or need.get("role") or "",
+                                              "current": need.get("op") or u.path,
+                                              "key": "security.json permissions.ops / overrides.allow_extra",
+                                              "hint": "관리자가 security.json 에서 이 작업의 등급을 조정하거나, "
+                                                      "요청 단위 오버라이드라면 overrides.allow_extra 에 키를 추가합니다 (docs/SECURITY.md §4)"},
+                                             ensure_ascii=False))
+                self._deny(e, None, u.path, "?")
+            except (BadRequest, TypeError, AttributeError, ValueError, KeyError, OverflowError) as e:
+                sp.status, sp.http = "error", 400
+                sp.set(error="%s: %s" % (type(e).__name__, e))
+                self._bad_request(u.path, e)
+            except Exception as e:
+                sp.status, sp.http = "error", 500
+                sp.set(error="%s: %s" % (type(e).__name__, e))
+                self._server_error(u.path, e)
 
     def _bad_request(self, path: str, e: BaseException) -> None:
         """입력 모양이 잘못된 요청은 400 으로 돌려준다 (500 은 서버 결함만). 원인은 로그에 남겨 진짜 버그를 놓치지 않는다."""
@@ -1770,6 +2098,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "empty query"}, 400)
                 # 클라이언트가 준 progress_token 이 곧 요청 관리자의 티켓 토큰 → GET /api/progress/<token> 으로 단계·대기열을 보고 DELETE 로 취소
                 tok = str(body.get("progress_token") or "")[:64] or None
+                if body.get("async"):
+                    # 2026-09-23: **화면이 멈추지 않게** 질의를 잡으로 돌린다.
+                    #
+                    # 동기 응답은 질의가 끝날 때까지 HTTP 연결을 물고 있다. 브라우저는 한 사이트에 연결을
+                    # 6개까지만 열기 때문에, 질의를 몇 건 연속으로 보내면 **화면 갱신 폴링이 브라우저 안에서
+                    # 출발조차 못 하고** UI 전체가 멈춘 것처럼 보인다 (실측: 질의 6건 동시 · 각 250초).
+                    # 서버가 대기열에 넣어 줘도 연결은 그대로 잡혀 있으므로 슬롯을 낮추는 것만으로는 해결되지 않는다.
+                    # 빌드·평가가 이미 쓰는 잡 구조를 그대로 써서 **즉시 토큰만 돌려주고** UI 는 폴링한다.
+                    # CLI·MCP·기존 클라이언트를 위해 동기 경로는 그대로 둔다 (async 를 주지 않으면 예전과 같다).
+                    started = self._start_job("query", lambda progress: self._do_query(body, q, ov, actor=_actor_from_client(client)),
+                                              label=q[:120], client=client, weight="read")
+                    return self._json(dict(started, token=started.get("job"), q=q, mode="async"))
                 with mgr.ticket("query", "read", client=client, label=q[:120], token=tok) as tk:
                     out = self._do_query(body, q, ov, actor=_actor_from_client(client))
                     r = out.get("result") if isinstance(out, dict) else None
@@ -1778,6 +2118,7 @@ class Handler(BaseHTTPRequestHandler):
                         tk["note"] = "캐시" if r.get("cached") else ("사전계산" if r.get("precomputed") else "")
                         # 활동 목록에서 끝난 작업을 눌렀을 때 그때의 결과·프로파일로 바로 갈 수 있게
                         tk["request_id"] = r.get("request_id")
+                        tk["run_id"] = r.get("run_id")      # 로그로 가는 길
                     return self._json(out)
             # 나머지 POST: 권한 등급으로 가중치 결정 (read/run → 읽기 슬롯, index → soft, 그 밖의 쓰기 → 배타)
             weight = _rq.weight_for_level(level, op, body)
@@ -2324,6 +2665,16 @@ class Handler(BaseHTTPRequestHandler):
         """백그라운드 잡. job id 가 곧 요청 관리자 티켓 토큰 = progress 토큰 → /api/jobs/<id> 로 진행, DELETE /api/jobs/<id> 로 취소.
         weight: read(평가·trial·precompute 처럼 색인을 읽기만) · soft(증분 빌드: 정책상 질의 허용) · exclusive(전체/채널 리빌드)."""
         jid = uuid.uuid4().hex[:8]
+        # 잡은 POST 응답이 나간 **뒤에도** 계속 돈다. POST 의 원장 항목에 붙이면 잡이 도는 중에 닫혀 버리므로
+        # 떼어 내고, `ticket()` 이 잡 전용 원장 항목을 새로 연다. 이렇게 해야 sweep·trial·precompute·fusion 처럼
+        # 지금까지 `requests` 에 아무것도 남기지 않던 잡의 실행·실패·취소가 원장에 남는다 (요청 4 원인 G).
+        client = {k: v for k, v in (client or {}).items() if k != "ledger_token"}
+        # 그러면 한 동작이 원장에 **두 줄**로 보인다 — 잡을 띄운 POST(1ms) 와 실제 작업.
+        # 목록에서는 한 줄만 보이게 POST 쪽에 `sub="job"` 표시를 달고 기본 조회에서 접는다.
+        # 지우지는 않는다: POST 자체가 실패하거나 폭주할 때는 그 기록이 필요하다 (include_sub=1 로 볼 수 있다).
+        sp = getattr(self, "_led", None)
+        if sp is not None:
+            sp.set(sub="job", spawned=jid, label="%s → %s" % (sp.fields.get("path") or "", kind))
         job = {"id": jid, "kind": kind, "status": "running", "started": time.time(), "log": [], "result": None, "error": None,
                "label": label or kind, "user": (client or {}).get("user"), "weight": weight}
         with _JOBS_LOCK:
@@ -2347,6 +2698,18 @@ class Handler(BaseHTTPRequestHandler):
                     # 빌드·유지보수처럼 색인을 쓰는 잡은 이미 등급(index/rebuild)으로 걸러진다.
                     with pipe.request_scope(actor=_actor_from_client(client)):
                         job["result"] = fn(progress)
+                    # 끝난 잡을 **그때의 결과(요청 프로파일)** 로 이어 준다.
+                    # 이것이 없으면 원장·활동 목록의 완료된 줄에 📄 링크가 붙지 않아
+                    # "끝났는데 어디서 보나" 가 된다 (동기 질의 경로는 이미 이렇게 하고 있었다).
+                    res = job["result"]
+                    inner = res.get("result") if isinstance(res, dict) and isinstance(res.get("result"), dict) else {}
+                    if isinstance(res, dict):
+                        rid = res.get("request_id") or inner.get("request_id")
+                        run = res.get("run_id") or inner.get("run_id") or (res.get("trace") or {}).get("run_id")
+                        if rid:
+                            t["request_id"] = rid
+                        if run:
+                            t["run_id"] = run      # 로그로 가는 길 (📜 링크·상세의 로그 절이 이것으로 거른다)
                 job["status"] = "done"
             except _pg.Cancelled as e:
                 job["status"] = "cancelled"
@@ -2507,3 +2870,9 @@ def serve(pipe, host: str = "127.0.0.1", port: int = 8765, insecure: bool = Fals
         if _SCHED.get("scheduler"):
             _SCHED["scheduler"].stop()
         httpd.server_close()
+        # 원장 writer 는 daemon 스레드라 그냥 두면 **버퍼에 들고 있던 줄이 사라진다**.
+        # "요청이 기록 없이 사라지지 않게" 하는 기능이 정작 종료 때 기록을 잃으면 안 되므로 마저 쓰고 끝낸다.
+        try:
+            _led.stop()
+        except Exception:
+            pass

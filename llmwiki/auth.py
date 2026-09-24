@@ -262,7 +262,11 @@ _REBUILD_CLI = {("build", "--full"), ("build", "--reset"), ("build", "fts"), ("b
 _READ_CLI = {"query", "search", "health", "stats", "requests", "logs", "forensic", "graph", "entity", "docs", "arch", "time",
              "system", "corpus", "rules", "graph-rules", "pin", "embed", "memory", "evolve", "preset", "prompts", "tuning", "config", "models",
              "build", "precompute", "trial", "fusion", "eval", "mcp-source", "snapshot", "users", "security", "wiki", "apikey", "analyze",
-             "sweep"}     # 스윕은 rerun 재생의 반복 — 재실행과 같은 read 등급 (색인·설정을 바꾸지 않는다)
+             "sweep",     # 스윕은 rerun 재생의 반복 — 재실행과 같은 read 등급 (색인·설정을 바꾸지 않는다)
+             # 요청 원장 조회 — `requests` 와 같은 read 등급. 남의 요청까지 보이는지는 여기서가 아니라
+             # 작업 권한 `requests all` 이 정한다 (Web/API 와 같은 규칙). `ledger prune` 은 보존 정책대로
+             # 오래된 파일만 지우는 정리라 별도 등급을 두지 않는다.
+             "ledger"}
 _READ_CLI_ACTIONS = {  # (cmd, 첫 action) 이 이 집합이면 read.
     "build": {"status", "verify"}, "embed": {"report", "status", "runs"}, "memory": {"status", "episodes"}, "evolve": {"status", "review", "list", "feedback"},
     "preset": {"list", "show", "diff"}, "prompts": {"list", "show", "path"}, "tuning": {"show", "doc"}, "config": {"show", "paths"},

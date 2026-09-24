@@ -155,6 +155,20 @@ def wait_server(base: str, tries: int = 90) -> None:
 
 CHECKS = [
     # (이름, 준비 JS, 클릭 JS, 성공 판정 JS)
+    # 요청 원장 — 여기 두 줄이 2026-09-23 의 실사용 결함을 막는다: 목록은 나오는데 **행을 눌러도
+    # 아무것도 안 보이던** 문제(상세가 100줄짜리 표 아래에 열려 화면 밖이었다). 이제 누른 줄 바로 아래에 편다.
+    ("요청 원장: 목록 렌더",
+     "location.hash='#observability/ledger'; 'ok'",
+     "'noop'",
+     "!!document.querySelector('#led-table table') || document.querySelector('#led-table').textContent.indexOf('없습니다')>=0"),
+    ("요청 원장: 행 클릭 → **누른 줄 바로 아래** 상세",
+     "location.hash='#observability/ledger'; 'ok'",
+     "(function(){var tr=document.querySelector('#led-table tr[data-led-tok]'); if(!tr) return 'no-row'; tr.click(); return tr.dataset.ledTok;})()",
+     # 행이 하나도 없으면(빈 원장) 검사 대상이 아니므로 통과로 본다
+     "(function(){var d=document.querySelector('#led-drow');"
+     " if(!d) return document.querySelector('#led-table tr[data-led-tok]')?false:true;"
+     " var prev=d.previousElementSibling;"
+     " return !!prev && prev.hasAttribute('data-led-tok') && d.textContent.indexOf('사건')>=0;})()"),
     ("요청 프로파일: 행 클릭 → 상세",
      "location.hash='#observability/requests'; 'ok'",
      "(function(){var tr=document.querySelector('#req-list tr[data-id]'); if(!tr) return 'no-row'; tr.click(); return tr.dataset.id;})()",

@@ -511,6 +511,10 @@ class Settings:
     build_lock_timeout: int = 172800   # 다른 빌드가 락을 잡고 있을 때 기다릴 초 (0 = 즉시 실패). 기본 48시간 = 앞 빌드가 끝날 때까지 기다린다
     build_lock_stale_s: int = 172800   # 빌드 락을 '주인이 죽었다'고 보고 회수하기까지의 시간(초). 빌드 자체의 최대 수명이므로 가장 긴 빌드보다 길어야 한다
     db_busy_timeout_s: float = 60.0   # SQLite 쓰기 잠금 대기(초). 다른 프로세스(CLI 빌드·서버 워처)가 쓰는 동안 기다리는 시간. 초과하면 관측용 기록(요청 로그)은 건너뛰고 질의는 정상 응답한다
+    # 2026-09-23: 커밋 내구성. WAL 에서 NORMAL 은 **DB 손상이 없고**(체크포인트에서만 fsync) 정전 시 최근 몇 건의
+    # 커밋만 날아간다 — 그 내용은 색인·관측 기록이라 재빌드로 복구된다. FULL 은 커밋마다 fsync 라,
+    # 질의 1건이 커밋을 여러 번 하는 이 파이프라인에서는 동시 질의가 몰릴 때 그대로 지연이 된다.
+    db_synchronous: str = "NORMAL"    # OFF | NORMAL | FULL | EXTRA
     db_pool_size: int = 16         # 서버가 스레드별로 재사용하는 SQLite 읽기 연결 풀 크기 (동시 질의 수 이상이면 충분)
     # 2026-09-19: pool_size 는 '놀고 있는' 연결만 제한한다. 아래 둘은 **빌려 나가 있는** 연결의 부드러운 상한 —
     # 세션을 닫지 않는 코드가 생겼을 때 연결이 무한히 늘지 않게 한다. 넘어도 질의를 실패시키지는 않는다.
@@ -1383,6 +1387,7 @@ SETTING_HELP: Dict[str, str] = {
     "build_lock_timeout": "다른 프로세스가 빌드 중일 때 락을 기다릴 초 (0=즉시 실패). 기본 172800(48시간) — 앞 빌드가 끝나면 이어서 시작한다.",
     "build_lock_stale_s": "빌드 락의 주인이 살아 있어도 이 시간(초)이 지나면 죽은 락으로 보고 회수한다. 빌드 1회의 최대 수명이므로 가장 오래 걸리는 빌드보다 길게 (기본 172800=48시간).",
     "db_busy_timeout_s": "SQLite 쓰기 잠금 대기(초). CLI 빌드가 쓰는 동안 서버 질의의 로그 기록이 기다리는 시간 (WAL 이라 읽기는 기다리지 않음).",
+    "db_synchronous": "SQLite 커밋 내구성 PRAGMA (OFF|NORMAL|FULL|EXTRA). 기본 NORMAL — WAL 에서는 **DB 가 깨지지 않고** 체크포인트에서만 fsync 하므로, 질의 1건이 커밋을 여러 번 하는 이 파이프라인에서 동시 질의 지연이 크게 준다. 정전 시 최근 몇 건의 커밋(색인·관측 기록)이 날아갈 수 있고 재빌드로 복구된다. 규정상 더 엄격해야 하면 FULL.",
     "db_pool_size": "서버 스레드별 SQLite 연결 풀 크기 (server.json concurrency.max_parallel_reads 이상 권장). **놀고 있는** 연결만 제한한다 — 빌려 나간 연결 수는 db_max_live_connections 가 본다.",
     "db_max_live_connections": "동시에 **빌려 나가 있는** SQLite 연결의 부드러운 상한 (0 = 무제한, 예전 동작). 넘으면 db_pool_wait_timeout_s 만큼 반납을 기다렸다가, 그래도 없으면 만들어서라도 진행하고 overflow 로 센다 — 질의를 실패시키지 않는다. 정상 운영에서는 걸리지 않는 값이므로 `/api/admin/server` 의 db_pool.overflow 가 늘면 세션 누수나 과부하 신호다.",
     "db_pool_wait_timeout_s": "db_max_live_connections 를 넘었을 때 다른 스레드가 연결을 반납하기를 기다리는 시간(초). 길게 잡으면 버스트가 평평해지지만 응답이 그만큼 늦어진다.",

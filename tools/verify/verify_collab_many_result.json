@@ -1,5 +1,5 @@
 {
- "ts": "2026-09-20 13:25:47",
+ "ts": "2026-09-20 21:46:22",
  "people": 10,
  "seconds": 12.0,
  "screenshot": "C:\\Users\\user\\project\\llm-wiki-rag-selfevolving\\tools\\verify\\collab_many_10.png",
@@ -69,12 +69,12 @@
   {
    "check": "서버가 10명을 모두 들고 있다 (화면을 보는 사람이 있으면 +1)",
    "ok": true,
-   "detail": "people=11 · 경과 13.1s"
+   "detail": "people=11 · 경과 13.0s"
   },
   {
    "check": "협업 부하 중에도 RAG 질의가 정상",
    "ok": true,
-   "detail": "0.60s"
+   "detail": "0.58s"
   },
   {
    "check": "협업 부하 중에도 MCP tools/list 정상",
@@ -84,7 +84,7 @@
   {
    "check": "협업 부하 중에도 MCP wiki_query 정상",
    "ok": true,
-   "detail": "0.06s"
+   "detail": "0.04s"
   },
   {
    "check": "본체 확인 중 협업 오류 없음",
@@ -104,7 +104,7 @@
   {
    "check": "누가 움직이면 목록을 다시 보낸다",
    "ok": true,
-   "detail": "people=11 rev 657→659"
+   "detail": "people=11 rev 654→656"
   }
  ]
 }

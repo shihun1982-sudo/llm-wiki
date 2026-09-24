@@ -435,6 +435,30 @@ def _prune_snapshots(pipe) -> int:
     return removed
 
 
+def _ledger_restore_event(pipe, snap: Dict[str, str], phase: str) -> None:
+    """스냅샷 복원을 **원장에 사건으로** 남긴다 (2026-09-23, 요청 4 원인 E).
+
+    복원은 `db.sqlite3` 를 통째로 교체한다. 그 파일 안에 `requests`·`query_log`·`forensics`·`episodes` 가
+    들어 있으므로 **그 사이에 처리된 모든 요청 기록이 스냅샷 시점으로 되감긴다.** 게다가
+    `apply_proposal()` 은 평가가 나빠지거나 예외가 나면 이것을 **자동으로** 한다.
+    원장은 `data/ledger/` 의 별도 파일이라 되감기지 않으므로, 여기에 "언제·무엇으로 되감았고
+    requests id 가 어디서 어디로 갔는지" 를 남겨 두면 "그 시각 이후 기록이 왜 없나" 에 답할 수 있다.
+    """
+    try:
+        from . import reqledger as _led
+        rid = 0
+        try:
+            r = pipe.store.conn.execute("SELECT MAX(id) FROM requests").fetchone()
+            rid = int((r and r[0]) or 0)
+        except Exception:
+            pass
+        _led.note_event("snapshot_restore", phase=phase, snapshot=os.path.basename(str(snap.get("dir") or "")),
+                        label="스냅샷 복원 %s (%s)" % (phase, os.path.basename(str(snap.get("dir") or ""))),
+                        max_request_id=rid)
+    except Exception:
+        pass
+
+
 def _restore(pipe, snap: Dict[str, str]) -> None:
     """스냅샷으로 되돌린다 (DB 파일 교체 + rules/wiki/config 복원).
 
@@ -442,6 +466,7 @@ def _restore(pipe, snap: Dict[str, str]) -> None:
     Store 인스턴스를 갈아끼우지 않으므로, 교체가 실패하더라도 서버는 원래 DB 로 계속 동작한다(예전에는 여기서 실패하면 모든 요청이 죽었다)."""
     s = pipe.s
     d = snap["dir"]
+    _ledger_restore_event(pipe, snap, "before")     # 되감기 **전**의 requests id 를 남겨 둔다
 
     def swap() -> None:
         shutil.copy2(os.path.join(d, "db.sqlite3"), s.db_path)
@@ -450,6 +475,7 @@ def _restore(pipe, snap: Dict[str, str]) -> None:
             if os.path.exists(p):
                 os.remove(p)
     pipe.store.reopen(before=swap)
+    _ledger_restore_event(pipe, snap, "after")      # 되감긴 **뒤**의 id — 둘을 보면 무엇이 사라졌는지 안다
     if os.path.exists(os.path.join(d, "rules.json")):
         from .graph_rules import rules_path as _rules_path
         shutil.copy2(os.path.join(d, "rules.json"), _rules_path())

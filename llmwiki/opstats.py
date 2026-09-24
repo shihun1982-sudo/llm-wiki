@@ -126,8 +126,18 @@ def collect(pipe, days: float = 7.0, sections: Optional[List[str]] = None, top: 
         b["n_builds"] = len(hist)
         out["build"] = b
 
-    qrows = _rows(store, "SELECT ts, origin, user, feedback, request_id FROM query_log WHERE ts>=? "
-                         "ORDER BY id DESC LIMIT ?", (since, max_rows)) if ({"queries", "quality", "users"} & set(want)) else []
+    # 2026-09-23: 질의 이력의 원천이 query_log → requests(kind='query') 로 바뀌었다.
+    # 피드백은 잘려 나가지 않는 query_feedback 을 우선한다 (requests 는 keep_requests 로 잘린다).
+    # 전환기의 옛 query_log 행(요청 짝이 없는 것)도 합쳐 세야 과거 집계가 갑자기 비지 않는다.
+    qrows = (_rows(store,
+                   "SELECT r.ts, r.origin, r.user, COALESCE(f.feedback, r.feedback) fb, r.id "
+                   "FROM requests r LEFT JOIN query_feedback f ON f.request_id = r.id "
+                   "WHERE r.kind='query' AND r.ts>=? ORDER BY r.id DESC LIMIT ?", (since, max_rows))
+             + _rows(store,
+                     "SELECT ts, origin, user, feedback, request_id FROM query_log "
+                     "WHERE ts>=? AND (request_id IS NULL OR request_id=0 OR request_id NOT IN (SELECT id FROM requests)) "
+                     "ORDER BY id DESC LIMIT ?", (since, max_rows))
+             ) if ({"queries", "quality", "users"} & set(want)) else []
 
     if "queries" in want:
         by_origin: Dict[str, int] = {}
@@ -262,7 +272,13 @@ def _trend(store, bucket: str = "day", days: Optional[float] = None, max_rows: i
         return q.setdefault(key, {"bucket": key, "queries": 0, "ms": [], "in_tok": 0, "out_tok": 0,
                                   "llm_calls": 0, "builds": 0, "build_ms": 0.0, "insufficient": 0, "down": 0, "up": 0})
 
-    for ts, fb in _rows(store, "SELECT ts, feedback FROM query_log WHERE ts>=? ORDER BY id DESC LIMIT ?", (since, max_rows)):
+    trend_q = (_rows(store, "SELECT r.ts, COALESCE(f.feedback, r.feedback) FROM requests r "
+                            "LEFT JOIN query_feedback f ON f.request_id = r.id "
+                            "WHERE r.kind='query' AND r.ts>=? ORDER BY r.id DESC LIMIT ?", (since, max_rows))
+               + _rows(store, "SELECT ts, feedback FROM query_log WHERE ts>=? "
+                              "AND (request_id IS NULL OR request_id=0 OR request_id NOT IN (SELECT id FROM requests)) "
+                              "ORDER BY id DESC LIMIT ?", (since, max_rows)))
+    for ts, fb in trend_q:
         s = slot(_bucket_key(ts, bucket))
         s["queries"] += 1
         if fb is not None:

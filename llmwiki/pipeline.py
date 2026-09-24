@@ -120,7 +120,8 @@ class Pipeline:
         self.store = Store(settings.db_path, busy_timeout_s=float(getattr(settings, "db_busy_timeout_s", 30.0) or 30.0),
                            pool_size=int(getattr(settings, "db_pool_size", 16) or 16),
                            max_live=int(getattr(settings, "db_max_live_connections", 64) or 0),
-                           wait_timeout_s=float(getattr(settings, "db_pool_wait_timeout_s", 2.0) or 0.0))
+                           wait_timeout_s=float(getattr(settings, "db_pool_wait_timeout_s", 2.0) or 0.0),
+                           synchronous=str(getattr(settings, "db_synchronous", "NORMAL") or "NORMAL"))
         self._seen_version = self.store.build_version()
         self._llms = _LlmCache()
         self._embedders: Dict[str, Any] = {}
@@ -1838,6 +1839,14 @@ class Pipeline:
             # 보관 폴더에서 requests_keep_days 를 넘긴 결과 파일만 지운다 (DB 는 건드리지 않는다).
             pr = self.store.prune_request_archive(self.s.requests_archive_dir(), int(self.s.requests_keep_days or 0))
             return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "archive": pr}
+        elif action in ("cache_merge", "cache_merge_dry"):
+            # 모델 이름 표기가 갈려 중복 저장된 임베딩 캐시를 합친다 (docs/REQUEST_LEDGER.md §3.1).
+            mg = self.store.cache_merge_models(dry_run=(action == "cache_merge_dry"))
+            return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "merge": mg}
+        elif action in ("trim_query_log", "trim_query_log_dry"):
+            # query_log 에 남은 옛 trace 회수 — 같은 내용이 requests 에 있는 행만 지운다 (docs/REQUEST_LEDGER.md §3.2).
+            tr = self.store.trim_query_log(dry_run=(action == "trim_query_log_dry"))
+            return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "trim": tr}
         else:
             return {"error": "unknown action %s" % action}
         return {"ok": True, "action": action, "ms": round((time.perf_counter() - t0) * 1000, 1), "stats": self.store.stats()}

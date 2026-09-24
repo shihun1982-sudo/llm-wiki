@@ -1011,3 +1011,32 @@ table.roles button[data-ens-toggle]{margin-top:3px}
 .ens-budget.over{background:var(--banner-warn-bg);border-color:var(--warn)}
 .ens-budget .warn-line{margin-top:4px;color:var(--ink);font-weight:500}
 .ens-bad td{opacity:.7}
+
+/* 요청 원장 — 시간 밀도 막대 (색 = 상태). "언제 몰렸나" 를 숫자 대신 그림으로 보여 준다. */
+.led-hist { display:flex; align-items:flex-end; gap:1px; height:46px; margin:6px 0 10px; padding:2px 0; border-bottom:1px solid var(--line); }
+.led-hist i { flex:1 1 0; min-width:2px; background:var(--accent, #4a90d9); opacity:.75; border-radius:1px 1px 0 0; }
+.led-hist i.slow { background:#e8a33d; }
+.led-hist i.bad  { background:#d9534f; opacity:.95; }
+.led-hist i:hover { opacity:1; }
+table.req.led td.sum { max-width:32em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+table.req.led tr[data-led-tok] { cursor:pointer; }
+table.req.led tr[data-led-tok]:hover { background:var(--hover, rgba(127,127,127,.09)); }
+table.req.led tr.sel > td { background:var(--sel, rgba(74,144,217,.16)); }
+tr#led-drow > td { padding:0; background:var(--panel, rgba(127,127,127,.05)); }
+.led-detail { padding:10px 12px; border-left:3px solid var(--accent, #4a90d9); }
+
+/* 요청 원장 시간 막대 — 한 칸에 여러 상태가 섞이므로 **누적** 막대로 그린다 (2026-09-23).
+   예전에는 칸마다 색 하나만 골라서, 같은 1분 안의 완료 50건과 거절 1건이 전부 빨강으로 보였다. */
+.led-hist i { display:flex; flex-direction:column-reverse; overflow:hidden; cursor:pointer; background:none; }
+.led-hist i > u { display:block; width:100%; text-decoration:none; }
+.led-hist i:hover { outline:1px solid var(--line); }
+u.h-done      { background:#4a90d9; }
+u.h-running   { background:#7ec8e3; }
+u.h-slow      { background:#e8a33d; }
+u.h-cancelled { background:#b0a0c0; }
+u.h-timeout   { background:#c0562f; }
+u.h-rejected  { background:#d9534f; }
+u.h-error     { background:#8b1f1f; }
+u.h-unknown   { background:#777; }
+.h-key { display:inline-flex; align-items:center; gap:4px; margin-right:10px; font-size:11px; color:var(--muted); }
+.h-key u { width:10px; height:10px; display:inline-block; border-radius:2px; }

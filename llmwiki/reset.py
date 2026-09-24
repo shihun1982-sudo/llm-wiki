@@ -44,6 +44,9 @@ SCOPES: Dict[str, str] = {
 #: `embedding_cache` 는 내용 주소 캐시라 임베더가 그대로면 다시 쓸 수 있다 — 기본 유지, 옵션으로 삭제.
 DATA_AUX_DIRS = ("requests", "reruns", "sweeps", "graph_profiles", "live")
 LOG_TABLES = ("query_log", "requests", "forensics", "episodes", "trials", "embed_runs", "evolution_log")
+#: 주의 — 여기에 `ledger` 를 **넣지 않는다**. 요청 원장은 "요청이 왜 기록에서 사라졌나" 에 답하는 마지막 근거이고,
+#: `reset logs` 는 DB 행과 보관 파일을 **동시에** 지우므로 원장까지 함께 지우면 그 질문에 답할 수단이 없어진다
+#: (2026-09-23, 요청 4 원인 F). 원장을 비우려면 `--include-ledger` 를 명시해야 한다.
 LOG_AUX_DIRS = ("requests", "reruns", "sweeps", "graph_profiles", "live")
 
 #: settings 범위: 설정 이름 → 되돌리는 방법.
@@ -148,6 +151,8 @@ def _kept(scope: str, opts: Dict[str, Any]) -> List[str]:
         out.append("자가진화 제안 (proposals) — 사람이 검토할 후보라 기본 유지")
     if not opts.get("include_sessions"):
         out.append("로그인 세션 (sessions.json)")
+    if not opts.get("include_ledger"):
+        out.append("요청 원장 (data/ledger) — '요청이 왜 사라졌나' 의 마지막 근거라 기본 유지 (--include-ledger 로 삭제)")
     return out
 
 
@@ -157,7 +162,8 @@ def _options(scope: str, opts: Dict[str, Any]) -> Dict[str, Any]:
                 "clear_embed_cache": bool(opts.get("clear_embed_cache"))}
     if scope == "settings":
         return {"include_security": bool(opts.get("include_security")), "include_env": bool(opts.get("include_env"))}
-    return {"include_proposals": bool(opts.get("include_proposals")), "include_sessions": bool(opts.get("include_sessions"))}
+    return {"include_proposals": bool(opts.get("include_proposals")), "include_sessions": bool(opts.get("include_sessions")),
+            "include_ledger": bool(opts.get("include_ledger"))}
 
 
 def _preview_data(pipe, opts: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -248,6 +254,17 @@ def _preview_logs(pipe, opts: Dict[str, Any]) -> List[Dict[str, Any]]:
         n = _count_files(p)
         if n:
             items.append(_item("dir", p, "부산물 폴더", n, _size(p)))
+    if opts.get("include_ledger"):
+        # 기본은 **지우지 않는다** — 원장은 "요청이 왜 사라졌나" 에 답하는 마지막 근거다 (docs/REQUEST_LEDGER.md).
+        try:
+            from . import reqledger as _led
+            lp = _led.ledger_dir()
+            n = _count_files(lp)
+            if n:
+                items.append(_item("dir", lp, "요청 원장 (모든 요청의 수명 기록 — 지우면 과거 요청을 추적할 수 없습니다)",
+                                   n, _size(lp), "warn"))
+        except Exception:
+            pass
     if opts.get("include_sessions"):
         sp = os.path.join(s.data_dir, "sessions.json")
         if os.path.exists(sp):
@@ -430,6 +447,20 @@ def _run_logs(pipe, opts: Dict[str, Any], actor: str) -> Dict[str, Any]:
             os.makedirs(p, exist_ok=True)
             if n:
                 dirs.append({"dir": p, "files": n})
+    ledger_files = 0
+    try:
+        from . import reqledger as _led
+        if opts.get("include_ledger"):
+            lp = _led.ledger_dir()
+            if os.path.isdir(lp):
+                ledger_files = _count_files(lp)
+                shutil.rmtree(lp, ignore_errors=True)
+                os.makedirs(lp, exist_ok=True)
+        # 지웠든 남겼든 **초기화했다는 사실 자체**를 원장에 남긴다 — 이 시각 이후로 DB 기록이 비어 있는 이유가 된다.
+        _led.note_event("reset_logs", label="로그·이력 초기화 (원장 %s)" % ("삭제" if opts.get("include_ledger") else "보존"),
+                        tables=len(cleared), include_ledger=bool(opts.get("include_ledger")))
+    except Exception:
+        pass
     sessions = 0
     if opts.get("include_sessions"):
         try:
@@ -438,7 +469,8 @@ def _run_logs(pipe, opts: Dict[str, Any], actor: str) -> Dict[str, Any]:
             sessions = 1
         except Exception:
             pass
-    return {"tables": cleared, "log_files_truncated": files, "aux_dirs": dirs, "sessions_reset": sessions}
+    return {"tables": cleared, "log_files_truncated": files, "aux_dirs": dirs, "sessions_reset": sessions,
+            "ledger_files_removed": ledger_files}
 
 
 # ------------------------------------------------------------------ 표시

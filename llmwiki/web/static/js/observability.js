@@ -821,4 +821,324 @@
   }
   $('#btn-console').onclick = runConsole;
   $('#c-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') runConsole(); });
+
+  // ---------------- 요청 원장 (모든 요청 통합) ----------------
+  // 진행 중 작업 · 요청 프로파일 · 질의 로그 · 로그 는 같은 사건을 **원천별로** 쪼개 놓은 화면이다.
+  // 사람이 던지는 질문은 "이 요청 왜 이래?" 하나뿐이라, 여기서 한 줄로 합쳐 보여 주고
+  // 한 건을 누르면 네 원천을 한 패널에 모은다. 거절·시간초과·중단은 **여기에만** 있다.
+  const LED = { rows: [], open: null, timer: null, since: 3600, view: 'all', canAll: false, kinds: [] };
+  const LED_LABEL = { done: '완료', running: '실행 중', queued: '대기', error: '오류', rejected: '거절', timeout: '시간초과', cancelled: '취소', unknown: '중단' };
+  const LED_CLASS = { done: 'ok', running: 'run', queued: 'warn', error: 'bad', rejected: 'bad', timeout: 'bad', cancelled: 'warn', unknown: 'bad' };
+
+  function ledQuery(extra) {
+    const p = new URLSearchParams();
+    p.set('view', LED.view);
+    p.set('limit', $('#led-limit').value || 100);
+    if (LED.range) { p.set('since', String(Math.floor(LED.range[0]))); p.set('until', String(Math.ceil(LED.range[1]))); }
+    else if (LED.since) p.set('since', String(Math.floor(Date.now() / 1000 - LED.since)));
+    const k = $('#led-kind').value, o = $('#led-origin').value, q = $('#led-q').value.trim(), m = $('#led-minms').value;
+    const lq = ($('#led-logq') || {}).value ? $('#led-logq').value.trim() : '';
+    if (k) p.set('kind', k);
+    if (o) p.set('origin', o);
+    if (q) p.set('q', q);
+    if (lq) p.set('log_q', lq);
+    if (m && +m > 0) p.set('min_ms', m);
+    Object.entries(extra || {}).forEach(([a, b]) => p.set(a, b));
+    return p.toString();
+  }
+
+  async function loadLedger() {
+    const j = await api('/api/ledger?' + ledQuery());
+    if (!j || j.error) { $('#led-table').innerHTML = `<div class="banner warn">${esc((j || {}).error || '원장을 읽지 못했습니다')}</div>`; return; }
+    LED.rows = j.rows || []; LED.canAll = !!j.can_all;
+    // 갱신 주기는 **서버가 정한다** (server.json ledger.refresh_ms). 화면은 그 값으로 시작하고
+    // 사용자가 드롭다운으로 더 길게/짧게 바꿀 수 있다 — 접속자가 많으면 폴링이 그만큼 늘기 때문이다.
+    if (!LED.refreshInit) {
+      LED.refreshInit = true;
+      LED.refreshMs = j.refresh_ms != null ? j.refresh_ms : 5000;
+      const sel = $('#led-every');
+      if (sel) {
+        const choices = (j.refresh_choices_ms && j.refresh_choices_ms.length) ? j.refresh_choices_ms : [2000, 5000, 10000, 30000, 0];
+        if (choices.indexOf(LED.refreshMs) < 0) choices.unshift(LED.refreshMs);
+        sel.innerHTML = choices.map((ms) => `<option value="${ms}"${ms === LED.refreshMs ? ' selected' : ''}>${ms ? (ms / 1000) + '초' : '끔'}</option>`).join('');
+      }
+      ledAuto();
+    }
+    renderStrip(j); renderHist(j.histogram || [], j.hist_keys); renderLedTable(j);
+  }
+
+  function renderStrip(j) {
+    const s = j.summary || {}, L = s.ledger || {}, st = L.by_status || {}, lim = s.limits || {};
+    const cls = (s.classes || []).filter((c) => c.max_parallel_set);
+    const bad = (st.rejected || 0) + (st.error || 0) + (st.timeout || 0) + (st.unknown || 0);
+    $('#led-strip').innerHTML =
+      `<b>실행 ${s.running || 0}</b> · 대기 ${s.queued || 0} · 슬롯 상한 ${lim.max_parallel_reads || '-'} · 대기열 상한 ${lim.queue_max || '-'}` +
+      ((s.lock || {}).writer ? ` · <span class="pill bad">쓰기 락 ${esc((s.lock || {}).writer_label || s.lock.writer)}</span>` : ' · 쓰기 락 없음') +
+      `<br>최근 ${fmt(L.days * 24, 0)}시간: 총 ${L.total || 0}건 · ` +
+      Object.keys(LED_LABEL).filter((k) => st[k]).map((k) => `<a href="#" data-led-st="${k}" class="pill ${LED_CLASS[k]}">${LED_LABEL[k]} ${st[k]}</a>`).join(' ') +
+      (bad ? '' : ' <span class="muted">(문제 없음)</span>') +
+      ` · writer 기록 ${(L.writer || {}).written || 0}` +
+      ((L.writer || {}).dropped ? ` <span class="pill bad">드롭 ${L.writer.dropped}</span> <span class="muted small">ledger.queue_max 를 올리세요</span>` : '') +
+      // 깨진 줄 = 여러 프로세스(서버·CLI·MCP stdio)의 쓰기가 한 줄 안에서 섞인 것. 그 줄의 요청은 읽을 때 버려진다.
+      ((L.writer || {}).corrupt ? ` <span class="pill bad">깨진 줄 ${L.writer.corrupt}</span> <span class="muted small">원장 폴더가 네트워크 드라이브인지 확인하세요</span>` : '') +
+      ` · ${fmt(L.mb, 1)}MB` +
+      (cls.length ? `<br>종류별 한도: ${cls.map((c) => `${esc(c.kind)} ${c.max_parallel}/${lim.max_parallel_reads}${c.reserved_for_others ? ` <span class="muted">(다른 종류에 ${c.reserved_for_others} 예약)</span>` : ''}`).join(' · ')}` : '');
+    $$('#led-strip [data-led-st]').forEach((a) => a.onclick = (e) => {
+      e.preventDefault(); LED.view = 'all'; syncViewSeg();
+      $('#led-q').value = ''; loadLedgerStatus(a.dataset.ledSt);
+    });
+    if (!LED.kinds.length) {
+      LED.kinds = Object.keys(L.by_kind || {}).sort();
+      $('#led-kind').innerHTML = '<option value="">all</option>' + LED.kinds.map((k) => `<option>${esc(k)}</option>`).join('');
+    }
+  }
+
+  async function loadLedgerStatus(st) {
+    const j = await api('/api/ledger?' + ledQuery({ status: st }));
+    LED.rows = j.rows || []; renderLedTable(j, `상태 = ${LED_LABEL[st] || st}`);
+  }
+
+  // 한 칸에 여러 상태가 섞이는 것이 정상이므로 **누적 막대**로 그린다.
+  // (예전에는 칸마다 색 하나만 골라서, 같은 1분 안의 완료 50건과 거절 1건이 전부 빨강으로 보였다.)
+  const HIST_LABEL = { done: '완료', running: '진행/대기', slow: '느림', cancelled: '취소', timeout: '시간초과', rejected: '거절', error: '오류', unknown: '중단' };
+
+  function renderHist(h, keys) {
+    const box = $('#led-hist');
+    if (!h || !h.length) { box.innerHTML = ''; return; }
+    const K = (keys && keys.length ? keys : Object.keys(HIST_LABEL));
+    const max = Math.max(1, ...h.map((b) => b.n));
+    const width = h.length > 1 ? (h[1].t - h[0].t) : 60;
+    box.innerHTML = h.map((b) => {
+      const tall = Math.max(b.n ? 8 : 1, Math.round((b.n / max) * 100));
+      const segs = K.filter((k) => b[k]).map((k) =>
+        `<u class="h-${k}" style="flex:${b[k]} 0 0"></u>`).join('');
+      const tip = `${dt(b.t)} (~${fmt(width, 0)}초) · 총 ${b.n}건` +
+        K.filter((k) => b[k]).map((k) => ` · ${HIST_LABEL[k] || k} ${b[k]}`).join('');
+      return `<i style="height:${tall}%" title="${esc(tip)}" data-t="${b.t}" data-w="${width}">${segs}</i>`;
+    }).join('');
+    // 범례 — 어떤 색이 무엇인지 (누적이라 범례가 없으면 읽을 수 없다)
+    const seen = K.filter((k) => h.some((b) => b[k]));
+    $('#led-legend').innerHTML = seen.length
+      ? '<span class="muted small">막대:</span> ' + seen.map((k) => `<span class="h-key"><u class="h-${k}"></u>${HIST_LABEL[k] || k}</span>`).join(' ')
+      : '';
+    // 막대를 누르면 그 구간만 본다
+    $$('#led-hist i').forEach((el) => el.onclick = () => {
+      const t = +el.dataset.t, w = +el.dataset.w;
+      LED.range = [t, t + w];
+      loadLedger();
+    });
+  }
+
+  function renderLedTable(j, note) {
+    const rows = LED.rows;
+    $('#led-chips').innerHTML = `<span class="muted small">${j.total || rows.length}건 중 ${rows.length}건${note ? ' · ' + esc(note) : ''}` +
+      (j.scope === 'mine' ? ' · <b>내 요청만</b> (전체를 보려면 작업 <code>requests all</code> 권한이 필요합니다)' : '') + '</span>';
+    if (!rows.length) { $('#led-table').innerHTML = '<div class="muted">해당하는 요청이 없습니다.</div>'; return; }
+    $('#led-table').innerHTML = '<table class="req led"><tr><th>상태</th><th>시각</th><th>종류/창구</th><th>사용자</th><th>라벨</th><th>대기</th><th>소요</th><th>단계</th><th>결과</th><th></th></tr>' +
+      rows.map((r) => {
+        const badge = `<span class="pill ${LED_CLASS[r.status] || ''}">${LED_LABEL[r.status] || esc(r.status || '?')}</span>`;
+        const res = r.http ? `${r.http}${r.code ? ' ' + esc(r.code) : ''}` : (r.code ? esc(r.code) : '');
+        const links = (r.request_id ? `<a class="mini" href="#" data-led-req="${r.request_id}" title="요청 프로파일">📄</a>` : '')
+          + (r.run_id ? `<a class="mini" href="#" data-led-run="${esc(r.run_id)}" title="로그">📜</a>` : '');
+        const live = r.status === 'running' || r.status === 'queued';
+        // 실행 중이면 '소요' 가 아니라 **경과**다. ms 로 찍으면 93700 같은 숫자가 되어 읽기 어렵다.
+        const took = live
+          ? `<span class="muted">${LW.fmtS(r.elapsed_s || 0)} 경과</span>`
+          : (r.ms != null ? fmt(r.ms, 0) + '<span class="muted small">ms</span>' : '');
+        const stage = live
+          ? (esc(r.stage || (r.status === 'queued' ? '대기열' : '시작 중…'))
+             + (r.pct != null ? ` <span class="muted">${fmt(r.pct, 0)}%</span>` : '')
+             + (r.llm ? ` <span class="muted">· LLM ${esc(r.llm.model || '')} ${fmt(r.llm.elapsed_s, 0)}s</span>` : '')
+             + (r.queue_pos ? ` <span class="muted">· 대기 ${r.queue_pos}번째</span>` : ''))
+          : esc(r.stage || '');
+        return `<tr data-led-tok="${esc(r.token)}" class="${LED_CLASS[r.status] === 'bad' ? 'has-err' : ''}${r.sub ? ' is-sub' : ''}">` +
+          `<td>${badge}</td><td class="small">${ts(r.opened)}</td><td class="small">${esc(r.kind || '')}<span class="muted"> / ${esc(r.origin || '')}</span></td>` +
+          `<td class="small">${esc(r.user || '')}</td><td class="sum">${esc((r.label || '').slice(0, 64))}</td>` +
+          `<td class="num small">${r.queue_wait_s ? fmt(r.queue_wait_s, 1) + 's' : (live && r.queue_pos ? '대기 중' : '')}</td>` +
+          `<td class="num">${took}</td>` +
+          `<td class="small muted">${stage}</td><td class="small">${res}</td><td class="small">${links}</td></tr>`;
+      }).join('') + '</table>';
+    $$('#led-table tr[data-led-tok]').forEach((tr) => tr.onclick = (e) => {
+      if (e.target.closest('[data-led-req]') || e.target.closest('[data-led-run]')) return;
+      openLedDetail(tr.dataset.ledTok, tr);
+    });
+    $$('#led-table [data-led-req]').forEach((a) => a.onclick = (e) => { e.preventDefault(); switchTab('requests'); LW.openRequest(+a.dataset.ledReq); });
+    $$('#led-table [data-led-run]').forEach((a) => a.onclick = (e) => { e.preventDefault(); switchTab('logs'); const f = $('#log-grep'); if (f) { f.value = a.dataset.ledRun; loaders.logs(); } });
+  }
+
+  // 상세는 **누른 줄 바로 아래**에 편다. 목록이 100줄이면 표 아래의 고정 패널은 화면 밖이라
+  // "눌러도 아무것도 안 보인다" 가 된다 (2026-09-23 실사용에서 확인).
+  function ledPanel(trEl) {
+    const table = $('#led-table');
+    let row = $('#led-drow');
+    if (trEl && trEl.parentNode) {
+      if (!row || row.previousElementSibling !== trEl) {
+        if (row) row.remove();
+        row = document.createElement('tr');
+        row.id = 'led-drow';
+        row.innerHTML = '<td colspan="10"></td>';
+        trEl.parentNode.insertBefore(row, trEl.nextSibling);
+      }
+      $$('#led-table tr[data-led-tok]').forEach((t) => t.classList.toggle('sel', t === trEl));
+      return row.firstElementChild;
+    }
+    return table ? table : $('#led-detail');
+  }
+
+  function ledPanelClear() {
+    const row = $('#led-drow');
+    if (row) row.remove();
+    $$('#led-table tr[data-led-tok]').forEach((t) => t.classList.remove('sel'));
+    $('#led-detail').innerHTML = '';
+  }
+
+  async function openLedDetail(token, trEl) {
+    if (LED.open === token) { LED.open = null; ledPanelClear(); return; }
+    LED.open = token;
+    let box = ledPanel(trEl);
+    box.innerHTML = '<div class="muted">불러오는 중…</div>';
+    const j = await api('/api/ledger/' + encodeURIComponent(token));
+    if (LED.open !== token) return;           // 늦게 온 응답은 버린다 (다른 줄을 눌렀다)
+    box = ledPanel(trEl);                     // 그 사이 표가 다시 그려졌을 수 있다
+    if (!j || j.error) {
+      box.innerHTML = `<div class="banner warn">${esc((j || {}).error || '읽지 못했습니다')}</div>`;
+      return;
+    }
+    const badge = `<span class="pill ${LED_CLASS[j.status] || ''}">${LED_LABEL[j.status] || esc(j.status)}</span>`;
+    const rows = (k, v) => (v == null || v === '' ? '' : `<div class="ag-item"><span class="ag-cap">${esc(k)}</span>${esc(String(v))}</div>`);
+    let html = `<div class="req-head">${badge} <b>${esc(j.label || j.token)}</b> <span class="muted small mono">${esc(j.token)}</span>` +
+      (j.status === 'running' ? ` <button class="mini danger" id="led-stop">■ 중지</button>` : '') + '</div>';
+    html += '<div class="ag">' + rows('종류', j.kind) + rows('창구', j.origin) + rows('사용자', j.user) + rows('역할', j.role) +
+      rows('IP', j.ip) + rows('경로', (j.method ? j.method + ' ' : '') + (j.path || '')) +
+      rows('시각', dt(j.opened)) + rows('대기', j.queue_wait_s != null ? j.queue_wait_s + 's' : null) +
+      rows('소요', j.ms != null ? fmt(j.ms, 0) + 'ms' : (j.elapsed_s + 's')) +
+      rows('HTTP', j.http) + rows('사유 코드', j.code) + rows('마지막 단계', j.stage) +
+      rows('락', j.lock_mode) + rows('시간 제한', j.limit_s ? j.limit_s + 's' : null) + '</div>';
+    if (j.error) html += `<div class="banner warn">${esc(j.error)}</div>`;
+    // 거절은 **무엇이 막았는지**를 그 자리에서 보여 준다. 로그 파일에는 거절이 남지 않으므로
+    // 여기 말고는 알 방법이 없다 (2026-09-23).
+    if (j.limit_json) {
+      let L = {};
+      try { L = JSON.parse(j.limit_json); } catch (e) { L = {}; }
+      html += '<h3>왜 거절됐나</h3><div class="ag">' +
+        rows('막은 것', L.what) + rows('대상', L.who) + rows('종류', L.kind) +
+        rows('그때 값', L.current != null ? `${L.current} / ${L.value}` : L.value) +
+        rows('설정 키', L.key) + '</div>' +
+        (L.key ? `<div class="row"><code class="small">python -m llmwiki server limits set ${esc(String(L.key).split(' / ')[0])}=&lt;값&gt;</code> ` +
+                 '<button class="mini secondary" data-led-go="srv">서버 모니터에서 바꾸기</button></div>' : '') +
+        (L.hint ? `<div class="muted small">${esc(L.hint)}</div>` : '');
+    }
+    if (j.status === 'unknown') html += '<div class="banner warn">이 요청은 <b>끝이 기록되지 않았습니다</b>. 서버가 그 사이에 멈췄거나 강제 종료됐을 수 있습니다 — 서버 시작 시각과 대조해 보세요.</div>';
+    // ── 요청 프로파일 · 질의 로그를 **여기서 바로** 보여 준다 (탭을 옮기지 않게) ──
+    if (j.profile_missing) {
+      html += '<div class="banner">이 요청의 <b>단계 프로파일이 정리됐습니다</b> (keep_requests 로 오래된 행이 잘림). 원장 기록은 그대로 남아 있습니다.</div>';
+    }
+    if (j.answer) {
+      const a = j.answer, pr = j.profile || {}, ql = j.qlog || {};
+      const ans = a.text || '';
+      html += '<h3>답변 · 근거 <small class="muted">질의 로그와 같은 원천</small></h3>' +
+        `<div class="ag">${rows('판정', a.verdict)}${rows('groundedness', a.groundedness)}${rows('모드', a.mode)}${rows('모델', a.model)}` +
+        `${rows('인용', (a.cited || []).length ? (a.cited || []).join(', ') : null)}${rows('근거', (a.hits || []).length)}` +
+        `${rows('캐시', a.cached ? '예' : null)}${rows('피드백', ql.feedback === 1 ? '👍' : (ql.feedback === -1 ? '👎' : null))}</div>` +
+        (ans ? `<details${ans.length < 600 ? ' open' : ''}><summary class="muted small">답변 (${ans.length}자)</summary><div class="pre small">${esc(ans)}</div></details>`
+             : '<div class="muted small">저장된 답변이 없습니다.</div>');
+      html += '<h3>단계 프로파일 <small class="muted">요청 프로파일과 같은 원천</small></h3>' +
+        `<div class="ag">${rows('전체', pr.ms != null ? fmt(pr.ms, 0) + 'ms' : null)}${rows('LLM 호출', pr.llm_calls)}` +
+        `${rows('입력 토큰', pr.input_tokens ? fmtK(pr.input_tokens) : null)}${rows('출력 토큰', pr.output_tokens ? fmtK(pr.output_tokens) : null)}` +
+        `${rows('SQL 문', pr.sql_count)}${rows('run_id', (pr.run_id || '').slice(0, 8))}</div>` +
+        `<div class="row"><button class="mini secondary" data-led-trace="${j.token}">단계별 워터폴 펼치기</button></div><div class="led-trace"></div>`;
+    }
+    html += '<h3>사건</h3><table class="req"><tr><th>시각</th><th>구분</th><th>내용</th></tr>' +
+      (j.events || []).map((e) => `<tr><td class="small">${ts(e.ts)}</td><td class="small"><b>${esc(e.ev)}</b></td><td class="small mono">${esc(Object.entries(e).filter(([k]) => !['ev', 'ts', 'token', 'pid'].includes(k)).map(([k, v]) => k + '=' + v).join(' ').slice(0, 220))}</td></tr>`).join('') + '</table>';
+    // 이 요청이 남긴 로그 줄 — 로그 탭으로 옮기지 않고 여기서 본다 (run_id 로 거른 것).
+    // 로그 탭 자체는 남는다: 로그에는 요청에 속하지 않는 줄(빌드 단계·워처·디스크 경고)이 절반쯤 있다.
+    if (j.logs && j.logs.length) {
+      const LV = { ERROR: 'bad', CRITICAL: 'bad', WARNING: 'warn' };
+      html += `<h3>로그 <small class="muted">이 요청의 run_id 로 거른 줄${j.logs_warn ? ` · <span class="pill bad">경고 이상 ${j.logs_warn}</span>` : ''}</small></h3>` +
+        `<details${j.logs_warn ? ' open' : ''}><summary class="muted small">${j.logs.length}줄</summary>` +
+        '<table class="req"><tr><th>시각</th><th>수준</th><th>파일</th><th>내용</th></tr>' +
+        j.logs.map((r) => `<tr class="${LV[String(r.level || '').toUpperCase()] === 'bad' ? 'has-err' : ''}">` +
+          `<td class="small">${ts(r.ts)}</td><td class="small">${esc(r.level || '')}</td>` +
+          `<td class="small muted">${esc(r.file || '')}</td><td class="small">${esc(String(r.msg || '').slice(0, 220))}</td></tr>`).join('') +
+        '</table></details>';
+    } else if (j.logs_run_id) {
+      html += '<div class="muted small">이 요청이 남긴 로그 줄이 없습니다 (경고·실패가 없었다는 뜻입니다).</div>';
+    }
+    const links = [];
+    if (j.request_id) links.push(`<button class="mini" data-led-go="req">📄 요청 프로파일 #${j.request_id}</button>`);
+    if (j.run_id) links.push(`<button class="mini secondary" data-led-go="log">📜 로그 (run ${esc(String(j.run_id).slice(0, 8))})</button>`);
+    if (j.status === 'running') links.push('<button class="mini secondary" data-led-go="act">⏱ 진행 중 작업</button>');
+    if (links.length) html += '<div class="row">' + links.join(' ') + '</div>';
+    if (j.concurrent_hidden) {
+      html += '<div class="muted small">같은 시각의 요청은 전체 조회 권한이 있어야 보입니다 (작업 <code>requests all</code>).</div>';
+    } else {
+      const c = j.concurrent || [];
+      // 기본은 **접어 둔다** — 대부분은 안 보고 지나가는 정보이고, 펼쳐 두면 상세가 길어져
+      // 정작 먼저 봐야 할 것(개요·사건·거절 사유)이 밀린다. 느린 요청을 파고들 때만 편다.
+      html += '<details class="led-con"><summary><b>같은 시각의 요청</b> ' +
+        `<span class="muted small">${c.length ? c.length + '건 겹침 — 느린 이유가 여기 있을 때가 많습니다' : '없음 (이 요청 혼자 돌았습니다)'}</span></summary>` +
+        (c.length ? '<table class="req"><tr><th>겹침</th><th>상태</th><th>종류</th><th>사용자</th><th>라벨</th><th>소요</th></tr>' +
+          c.map((x) => `<tr data-led-tok2="${esc(x.token)}"><td class="num">${fmt(x.overlap_s, 1)}s</td><td><span class="pill ${LED_CLASS[x.status] || ''}">${LED_LABEL[x.status] || esc(x.status)}</span></td><td class="small">${esc(x.kind || '')}</td><td class="small">${esc(x.user || '')}</td><td class="sum">${esc((x.label || '').slice(0, 50))}</td><td class="num">${x.ms != null ? fmt(x.ms, 0) : ''}</td></tr>`).join('') + '</table>'
+          : '<div class="muted small">겹친 요청이 없습니다.</div>') + '</details>';
+    }
+    box.innerHTML = '<div class="led-detail">' + html + '</div>';
+    const scope = box;
+    const stop = scope.querySelector('#led-stop');
+    if (stop) stop.onclick = async () => { await LW.cancelToken(j.client_token || j.token); setTimeout(loadLedger, 500); };
+    scope.querySelectorAll('[data-led-go]').forEach((b) => b.onclick = () => {
+      const w = b.dataset.ledGo;
+      if (w === 'req') { switchTab('requests'); LW.openRequest(j.request_id); }
+      else if (w === 'log') { switchTab('logs'); const f = $('#log-grep'); if (f) { f.value = j.run_id; loaders.logs(); } }
+      else if (w === 'srv') { switchTab('server'); }
+      else { switchTab('activity'); }
+    });
+    // 워터폴은 한 건에 수십 KB 라 **펼칠 때만** 가져온다 (목록을 훑을 때마다 끌고 오지 않게)
+    const tb = scope.querySelector('[data-led-trace]');
+    if (tb) tb.onclick = async () => {
+      const box2 = scope.querySelector('.led-trace');
+      if (box2.innerHTML) { box2.innerHTML = ''; tb.textContent = '단계별 워터폴 펼치기'; return; }
+      box2.innerHTML = '<div class="muted">불러오는 중…</div>';
+      const full = await api('/api/ledger/' + encodeURIComponent(j.token) + '?sections=trace');
+      if (!full || !full.trace) { box2.innerHTML = '<div class="muted">저장된 단계 정보가 없습니다.</div>'; return; }
+      box2.innerHTML = '<div id="led-trace-host"></div>';
+      try { renderTrace(box2.querySelector('#led-trace-host'), full.trace); }
+      catch (e) { box2.innerHTML = `<pre class="pre small">${esc(JSON.stringify(full.trace, null, 1).slice(0, 4000))}</pre>`; }
+      tb.textContent = '워터폴 접기';
+    };
+    scope.querySelectorAll('tr[data-led-tok2]').forEach((tr) => tr.onclick = (e) => {
+      e.stopPropagation();
+      const t2 = tr.dataset.ledTok2;
+      const target = $(`#led-table tr[data-led-tok="${t2}"]`);
+      LED.open = null;                       // 토글이 아니라 '그 요청으로 이동'
+      openLedDetail(t2, target || trEl);
+    });
+    try { box.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* 구형 브라우저 */ }
+  }
+
+  function syncViewSeg() {
+    $$('#led-view button').forEach((b) => b.classList.toggle('active', b.dataset.v === LED.view));
+  }
+
+  // 목록·상태 스트립·시간 막대는 **한 번의 요청으로 함께** 갱신된다 (따로 폴링하지 않는다).
+  // 주기는 server.json 의 ledger.refresh_ms 가 기본이고 사용자가 드롭다운으로 바꾼다. 0 = 끔.
+  function ledAuto() {
+    clearInterval(LED.timer);
+    const ms = LED.refreshMs || 0;
+    $('#led-every-note').textContent = ms ? `목록·막대 모두 ${ms / 1000}초마다` : '자동 갱신 꺼짐 (새로고침 버튼으로)';
+    if (!ms) return;
+    LED.timer = setInterval(() => {
+      if (LW.tabVisible('ledger') && !LED.open) loadLedger();
+    }, ms);
+  }
+
+  $$('#led-view button').forEach((b) => b.onclick = () => { LED.view = b.dataset.v; syncViewSeg(); LED.open = null; ledPanelClear(); loadLedger(); });
+  $('#btn-led-refresh').onclick = () => { LED.range = null; loadLedger(); };
+  $('#led-every').onchange = () => { LED.refreshMs = +$('#led-every').value; ledAuto(); };
+  ['#led-kind', '#led-origin', '#led-since', '#led-limit'].forEach((s) => { const el = $(s); if (el) el.onchange = () => { if (s === '#led-since') { LED.since = +$('#led-since').value; LED.range = null; } loadLedger(); }; });
+  $('#led-minms').onchange = loadLedger;
+  $('#led-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadLedger(); });
+  if ($('#led-logq')) $('#led-logq').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadLedger(); });
+  $('#btn-led-csv').onclick = () => { window.location = '/api/ledger/export?format=csv&' + ledQuery(); };
+  $('#btn-led-jsonl').onclick = () => { window.location = '/api/ledger/export?format=jsonl&' + ledQuery(); };
+  loaders.ledger = () => { LED.since = +$('#led-since').value; LED.range = null; loadLedger(); };
 })(window.LW);

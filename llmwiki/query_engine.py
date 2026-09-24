@@ -537,20 +537,27 @@ class QueryEngine:
         result["ms"] = trace["ms"]
         result["tokens"] = trace["summary"]["llm"]
         result["run_id"] = trace.get("run_id")
-        if log and t.evolve_capture and is_answer:
-            result["query_id"] = p.store.log_query(q, result["config"], [h.chunk_id for h in final], ans["answer"],
-                                                   {"top_fused": final[0].fused if final else 0, "n_hits": len(final), "verdict": verdict, "groundedness": groundedness}, trace)
         # requests 에는 hits 전문 대신 요약(hits_brief) 을 남긴다 — forensic expect 가 '원 요청에서 이 청크가 어디까지 갔나' 를 읽는다
         result["hits_brief"] = [{"chunk_id": h["chunk_id"], "n": h.get("n"), "in_context": bool(h.get("in_context")), "why": h.get("why"),
                                  "fused": h.get("fused"), "rerank": h.get("rerank")} for h in hit_dicts]
-        if self.record_request:
-            result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)}, result["config"], None,
-                                                      keep=s.keep_requests, archive_dir=s.requests_archive_dir())
-            # 질의 로그 ↔ 요청 기록 연결: Observability 질의·로그에서 바로 전체 trace 로 넘어갈 수 있게.
-            if result.get("query_id"):
-                p.store.set_query_request_id(int(result["query_id"]), int(result["request_id"] or 0))
-        else:
-            result["request_id"] = None
+        # 끝 쓰기를 **한 트랜잭션**으로 (2026-09-23, docs/REQUEST_LEDGER.md §3).
+        # 예전에는 query_log · requests · 연결 UPDATE 를 각각 커밋했다. 그래서 (1) 동시 질의가 몰리면
+        # 쓰기 잠금을 여러 번 잡고, (2) 중간 커밋이 실패하면 뒤의 연결 UPDATE 가 끊겨
+        # **query_log.request_id 가 비어 버렸다** (실측 805건 중 63건만 채워져 있었다).
+        # 묶으면 잠금 1회로 줄고 **id 연결이 같은 트랜잭션에서 끝나 100% 채워진다.**
+        result["request_id"] = None
+        with p.store.write_bundle("질의 기록"):
+            if self.record_request:
+                result["request_id"] = p.store.log_request("query", q, trace, {k: v for k, v in result.items() if k not in ("hits",)},
+                                                          result["config"], None, keep=s.keep_requests,
+                                                          archive_dir=s.requests_archive_dir(), commit=False)
+        # 2026-09-23: `query_log` 에 따로 쓰지 않는다. 두 표가 질문·답변·근거·판정·trace 를 **내용까지 같게**
+        # 들고 있었고(trace 는 바이트까지 동일) requests 가 이미 result 를 통째로 담는다.
+        # `query_id` 는 이제 **request_id 와 같은 값**이다 — 피드백(`/api/feedback`)이 이 id 로 온다.
+        # 피드백만은 잘려 나가면 안 되므로 `query_feedback` 표에 따로, 영구 보존한다 (store.set_feedback).
+        # 조건은 예전 log_query 와 **같게** 둔다: 완성 답변이 아닌 출력 모드(fused·reranked·context)나
+        # 기록을 끈 실행에는 피드백을 달 수 없으므로 id 를 주지 않는다 (None 이 곧 '피드백 불가' 신호다).
+        result["query_id"] = result["request_id"] if (log and t.evolve_capture and is_answer) else None
         # ---- 단계 재실행용 중간 결과 저장 ----
         # trace 를 이미 닫은 **뒤에** 저장한다: 저장 자체는 질의 결과가 아니므로 단계로 잡히지 않아야 하고,
         # 실패해도 (디스크 가득·권한) 질의는 성공으로 끝나야 한다.
@@ -914,7 +921,10 @@ class QueryEngine:
             try:
                 ids, mat = store.vector_matrix(p.embedder.name)
                 if ids:
-                    qv = np.asarray(p.embedder.embed([q])[0], dtype=np.float32)
+                    # 2026-09-23: 여기도 `p.embedder.embed([q])` 로 매번 새로 임베딩했다(실측 2.1초).
+                    # 같은 요청 안에서 벌써 두 번째 임베딩이므로 캐시를 지나면 적중한다.
+                    from .retrieval import embed_query as _eq
+                    qv = np.asarray(_eq(store, p.embedder, q)[0], dtype=np.float32)
                     if qv.shape[0] != mat.shape[1]:
                         qv = None
                     else:

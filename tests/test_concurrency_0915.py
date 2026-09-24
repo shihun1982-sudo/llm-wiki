@@ -94,6 +94,10 @@ class _Base(unittest.TestCase):
         for k, v in over.items():
             a, b = k.split(".", 1)
             cfg[a][b] = v
+        # 요청 원장도 이 테스트의 임시 폴더로 보낸다 (2026-09-23).
+        # 그러지 않으면 RequestManager 가 **프로젝트의 data/ledger** 에 기록해,
+        # 실제 운영 기록 사이에 테스트 픽스처(bob·u1 …)가 섞인다 — 실측으로 확인된 문제다.
+        cfg.setdefault("ledger", {})["dir"] = os.path.join(self.tmp, "ledger")
         m = rq.RequestManager(cfg, path=os.path.join(self.tmp, "server.json"), install_publisher=False)
         self.addCleanup(m.stop)
         return m
@@ -1099,6 +1103,7 @@ class ConsoleCliLimitTest(unittest.TestCase):
         cfg["concurrency"]["max_parallel_batch"] = 1
         cfg["concurrency"]["queue_timeout_s"] = 3
         cfg["rate_limit"]["enabled"] = False
+        cfg.setdefault("ledger", {})["dir"] = os.path.join(tmp, "ledger")   # 프로젝트 원장을 오염시키지 않는다
         mgr = reqmgr.RequestManager(cfg, path=os.path.join(tmp, "server.json"), install_publisher=False)
         self.addCleanup(mgr.stop)
 
@@ -1150,8 +1155,9 @@ class ConsoleCliLimitTest(unittest.TestCase):
         from llmwiki import reqmgr
         tmp = tempfile.mkdtemp(prefix="llmwiki-cli-limit-")
         self.addCleanup(shutil.rmtree, tmp, True)
-        mgr = reqmgr.RequestManager(reqmgr.load_config(os.path.join(tmp, "server.json")),
-                                    path=os.path.join(tmp, "server.json"), install_publisher=False)
+        cfg = reqmgr.load_config(os.path.join(tmp, "server.json"))
+        cfg.setdefault("ledger", {})["dir"] = os.path.join(tmp, "ledger")   # 프로젝트 원장을 오염시키지 않는다
+        mgr = reqmgr.RequestManager(cfg, path=os.path.join(tmp, "server.json"), install_publisher=False)
         self.addCleanup(mgr.stop)
         with mgr.ticket("cli", "read", client={"user": "u1", "role": "viewer"}, label="cli:query") as t:
             self.assertEqual(float(t["limit_s"]), float(mgr.cfg["timeouts"]["cli_s"]))
@@ -1220,8 +1226,9 @@ class SurrogateSafetyTest(unittest.TestCase):
         from llmwiki import reqmgr
         tmp = tempfile.mkdtemp(prefix="llmwiki-surrogate-")
         self.addCleanup(shutil.rmtree, tmp, True)
-        mgr = reqmgr.RequestManager(reqmgr.load_config(os.path.join(tmp, "server.json")),
-                                    path=os.path.join(tmp, "server.json"), install_publisher=False)
+        cfg = reqmgr.load_config(os.path.join(tmp, "server.json"))
+        cfg.setdefault("ledger", {})["dir"] = os.path.join(tmp, "ledger")   # 프로젝트 원장을 오염시키지 않는다
+        mgr = reqmgr.RequestManager(cfg, path=os.path.join(tmp, "server.json"), install_publisher=False)
         self.addCleanup(mgr.stop)
         with mgr.ticket("query", "read", client={"user": self.BAD, "role": "viewer", "ip": "1.2.3.4"},
                         label=self.BAD):

@@ -207,13 +207,17 @@ def doc_vector_matrix(store, provider: str):
 
 def doc_vector_search(store, embedder, query: str, k: int, prof) -> List[Tuple[str, float]]:
     """문서 카드 유사도 → 문서 대표 청크(질의 키워드 최다 청크, 없으면 첫 청크) 목록."""
-    from .retrieval import matmul_sims
+    from .retrieval import matmul_sims, embed_query
     with prof.stage("doc_vector_search", k=k, provider=embedder.name) as st:
         ids, mat = doc_vector_matrix(store, embedder.name)
         if not ids:
             st.note(hits=0, reason="no doc vectors (build with doc_vector toggle)")
             return []
-        qv = embedder.embed([query])[0]
+        # 2026-09-23: 예전에는 `embedder.embed([query])` 로 **매번 새로** 임베딩했다. 같은 질의를 한 요청 안에서
+        # vector_search 가 이미 임베딩했는데도 여기서 또 부른 것이다(실측 3.3~3.9초). embed_query 를 지나면
+        # 그 호출이 캐시 적중이 된다 — 같은 글은 같은 벡터라 결과는 바뀌지 않는다.
+        qv, q_cached = embed_query(store, embedder, query)
+        st.note(query_embed_cached=q_cached)
         if qv.shape[0] != mat.shape[1]:
             st.note(hits=0, reason="dim mismatch")
             return []

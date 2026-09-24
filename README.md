@@ -1,4 +1,4 @@
-﻿# LLM Wiki v3 — FTS + Vector + GraphRAG · Self-Evolving (모뎀 HW 제어 임베디드 SW 조직용)
+# LLM Wiki v3 — FTS + Vector + GraphRAG · Self-Evolving (모뎀 HW 제어 임베디드 SW 조직용)
 
 로컬 문서(Issue · Change List · SW/HW 설계 · 코딩 규칙 · 주간 보고 · TC 등)를 색인해 **FTS(BM25) + 벡터 + 그래프** 로 검색하고,
 **근거가 있는 내용만** 구조화된 답변으로 돌려주는 위키형 RAG 시스템입니다. 근거가 부족하면 단계적으로 확장 검색(fallback)하고, 그래도 없으면
@@ -10,7 +10,7 @@
 
 ## 0. 문서 안내 — 무엇을 어떤 순서로 읽나
 
-> **문서가 <!--live:docs-->43개다. 어느 것을 지금의 사실로 믿어야 하는지부터 알고 싶으면 [DOC_MAP.md](docs/DOC_MAP.md) 를 먼저 본다.**
+> **문서가 <!--live:docs-->44개다. 어느 것을 지금의 사실로 믿어야 하는지부터 알고 싶으면 [DOC_MAP.md](docs/DOC_MAP.md) 를 먼저 본다.**
 > 이 저장소의 문서는 **현행 문서**(기능·절차·구조 — 낡으면 고친다)와 **기록 문서**(계획·검증·리뷰 — 그때의 사실이라 고치지 않는다)로 나뉜다.
 > 기록 문서에 적힌 결함과 미완료는 대개 이후 회차에서 처리됐다 — 지금 상태는 현행 문서와 `python tools/verify/verify_all.py` 가 말한다.
 
@@ -29,6 +29,7 @@
 | **일반 사용자(viewer)에게 어떻게 보이는지 확인하고 싶다** | 헤더의 `👁 권한 보기` 에서 viewer 선택 — 서버가 실제로 그 권한으로 처리한다(권한은 낮추기만 한다). 실제 로그인 흐름까지 보려면 `serve --host 0.0.0.0` — [WEB_UI.md](docs/WEB_UI.md) §8 |
 | **내 화면 설정을 계정에 저장하고 어디서나 쓰고 싶다** | [WEB_UI.md](docs/WEB_UI.md) §4 — 헤더의 `💾 내 설정 저장`. 서버 설정은 바뀌지 않는다 |
 | **30명이 동시에 쓰는데 느리거나 거절당한다 / 관리자로 제어하고 싶다** | [CONCURRENCY.md](docs/CONCURRENCY.md) §0 한 장 요약 → §3 `server.json` 권장값 → Web 관리 › 서버 모니터 (또는 `python -m llmwiki server stats`) → §9 문제 해결표 |
+| **동시 질의가 서로를 막는다 / 요청이 기록 없이 사라진다 / 이 변경을 다른 환경에 옮긴다** | [REQUEST_LEDGER.md](docs/REQUEST_LEDGER.md) — 이 문서 하나로 원인·설정·포팅·검증·롤백까지 (§2 슬롯 수 정하는 법 → §9 옮기는 절차 → §10 검증 → §11 문제 해결 → **§13 포팅을 LLM 에게 시키는 프롬프트**) |
 | **정해진 시각·주기로 빌드·수집·evolve 를 돌리고 싶다** | [SCHEDULER.md](docs/SCHEDULER.md) §2 시점 지정 → §3 동작 19종 예시 → `setup/schedule.example.json` 복사 → Web 설정 › 스케줄 또는 `python -m llmwiki schedule add` |
 | **검색이 틀렸을 때 사람이 고쳐 쌓고 싶다 (자가진화)** | [EVOLVE.md](docs/EVOLVE.md) §1 제안 종류 → **§1.5 제안 설명(승인 판단)** → §2 자동 적용 안전장치 → Web Evolve › 제안(HITL) 또는 `python -m llmwiki evolve status` · `evolve show <번호>` · `evolve auto-apply --dry-run` |
 | **오래 걸리는 빌드·질의의 진행률을 보고 중간에 멈추고 싶다** | [CONCURRENCY.md](docs/CONCURRENCY.md) §4 시간 제한과 취소 (Web 진행 패널의 중지 버튼, CLI `Ctrl+C`, `server activity` / `server cancel <token>`) |
@@ -180,6 +181,9 @@ Ask 탭의 **🕘 내 지난 요청**(대기·진행 중·완료를 한 목록�
 
 **[docs/CONCURRENCY.md](docs/CONCURRENCY.md) — 다중 사용자 동시성·요청 관리·취소 (2026-09-15)**
 30명이 함께 쓰는 서버의 운영 문서. §0 한 장 요약표, 예전 전역 락 구조의 문제와 지금 구조(요청 격리 · 읽기/쓰기 락 · 동시 실행 슬롯 · 대기열), `server.json` 키 전부와 30명 기준 권장값, 거절 응답(429/503)의 의미와 대응, 진행률·경과 시간·ETA 표시와 취소(Web·CLI·다른 프로세스 작업까지), 누가 무엇을 보고 제어할 수 있는지, IP/사용자 차단·점검 모드, 역할별 LLM 타임아웃·재시도·백오프·회로 차단과 LLM 이 최종 실패해도 답을 내는 대체 경로, SQLite 동시성(WAL·연결 풀·`database is locked` 대처), 증상별 문제 해결표, 검증 명령.
+
+**[docs/REQUEST_LEDGER.md](docs/REQUEST_LEDGER.md) — 서버로의 **모든 요청**을 한 곳에서: 동시 질의 · 한도 · 관측 · 포팅 (2026-09-24)**
+**다른 환경으로 옮기는 사람(또는 LLM)이 이 문서 하나만 읽으면 되게** 쓴 문서. §1 무엇이 문제였나 — 질의가 커밋 없는 INSERT 하나로 **자기 수명 내내 SQLite 쓰기 잠금을 쥐고 있었다**는 것(실측 재현 포함)과 요청이 기록 없이 사라지는 경로 9가지, §2 **슬롯 수는 LLM 엔드포인트가 정한다**(질의 시간의 75~97%가 LLM 대기 · 용량 계산법 · 포화점 측정), §3~8 변경별 설정 키와 기본값(DB 잠금 수정 · 종류별 한도 · **요청 원장** · 통합 화면 · 비동기 질의 · 질의 로그 통합), §9 옮기는 절차와 설정을 바꾸는 세 경로, §10 검증 명령과 합격 기준, §11 증상별 문제 해결, §12 **변경별 되돌리기**, **§13 이 일을 다른 LLM 에게 시킬 때 그대로 붙여 넣는 프롬프트**(파악 → 적용 → 검증 3단계 + LLM 이 자주 틀리는 곳). 재현 결과: 동시 질의 24건 중 **12건(50%)이 예전 구조에서는 기록 없이 사라졌다** — 원장은 24건 전부를 잡았다. 설계 근거와 기각한 대안은 [IMPLEMENTATION_PLAN_0923.md](docs/history/2026-09-23/IMPLEMENTATION_PLAN_0923.md).
 
 **[docs/history/2026-09-19/DEEP_REVIEW_0919.md](docs/history/2026-09-19/DEEP_REVIEW_0919.md) — 심층 리뷰: 품질·속도·토큰·프로파일·디버깅·다중 사용자 안정성 (2026-09-19)**
 실측에 근거한 개선 보고서. 발견 10건과 이번에 고친 것·남은 것을 한 표로, 그리고 축마다 측정값과 출처. **검색 경로는 22 ms 인데 실 LLM 을 붙이면 25.8초 중 LLM 이 98%** 라는 것, `claim_check` 가 그중 46% 를 쓴다는 것, 토큰은 입력:출력이 1,526:36 이라 출력 상한보다 컨텍스트를 줄이는 쪽이 효과가 크다는 것. 안정성은 soak 4,863건 전부 200·5xx 0건이지만 **멍키가 거짓 OK 를 낸다**는 것과 문서의 청크 수가 세 값이라는 신뢰성 문제까지. 마지막에 우선순위 6가지.
@@ -379,7 +383,7 @@ bash setup/install.sh && python3 -m llmwiki build --full --trace && python3 -m l
 | 서버 운영 | **`server stats|activity|limits [set k=v]|block|unblock|kick|maintenance|circuits|cancel <token>`** — 진행 중·대기 중 요청 보기, 동시성·속도 제한 변경(`server.json` 저장), IP/사용자 차단, 세션 강제 종료, LLM 회로 해제, 작업 중지. `--server URL` 로 원격 서버에도 사용 ([CONCURRENCY.md](docs/CONCURRENCY.md)) |
 | 스케줄 | **`schedule list|show|add|remove|enable|disable|run <name>|history|validate`** — 정해진 시각·주기 작업. 서버가 떠 있으면 서버가 돌리고, `schedule run` 은 OS 스케줄러에서 단발로 부를 때 쓴다 ([SCHEDULER.md](docs/SCHEDULER.md)) |
 | 보안 | `users add|list|set-role|passwd|remove` (역할 viewer/class3/class2/class1/builder/admin) · `security show|init|audit|perms [set k=v|reset]` · `apikey add|list|remove` · `snapshot list|create|restore|prune` — 리빌드/파괴적 명령(`build --full`, `build fts|vector|graph`, `maintenance purge_requests`, `config reset`, `snapshot restore`)은 확인 문구 또는 `--yes`. 전역 `--user <id>`(+`LLMWIKI_PASSWORD`) 로 CLI 실행자 로그인 |
-| 관측 | `requests list|last|show` · **`requests queries [--user|--origin|--q] · requests users`**(질의 로그 — **누가** 무엇을 물었고 👍/👎 가 어디 몰리나. Web Observability › 질의·로그의 사용자 열과 같은 데이터 — [CLI_FLOWS.md](docs/CLI_FLOWS.md)) · `logs tail|grep|files` · **`logs status [--json]`**(`logs/` 총량·상한·동작 — [LOG_QUOTA.md](docs/LOG_QUOTA.md)) · `arch [show|doc|limits] [--flow …]`(**`arch doc` = [OPTIMIZATION_GUIDE.md](docs/OPTIMIZATION_GUIDE.md) 재생성** · **`arch limits` = 단계별 시간 제한** — 그 단계를 끊을 수 있는 값과 어느 파일의 어느 키인지. Web 에서는 trace 의 실측 ms 밑 `≤ 제한` 과 🧭 Pipeline 단계 상세의 '시간 제한' 표가 같은 값을 쓴다 — [CONCURRENCY.md](docs/CONCURRENCY.md)) · **`optimize <id|last> [--focus quality|speed|tokens] [--out bundle.md]`**(가이드+설정+실측+지시문을 한 파일로 — LLM 에게 그대로 준다) · `graph [--provenance …]` · `entity` · `docs` · `stats` |
+| 관측 | **`ledger list [--problems] [--status|--kind|--origin|--user|--q|--min-ms] · ledger show <token> · ledger stats [--days N] · ledger prune`**(요청 원장 — 서버로의 **모든 요청**을 거절·시간초과·취소·중단까지. `data/ledger` 파일을 직접 읽으므로 **서버가 꺼져 있어도** 된다. 실행 중 서버는 `server ledger` — [REQUEST_LEDGER.md](docs/REQUEST_LEDGER.md)) · `requests list|last|show` · **`requests queries [--user|--origin|--q] · requests users`**(질의 이력 — **누가** 무엇을 물었고 👍/👎 가 어디 몰리나. 2026-09-23부터 원천이 `requests` 로 합쳐졌다 — [CLI_FLOWS.md](docs/CLI_FLOWS.md)) · `logs tail|grep|files` · **`logs status [--json]`**(`logs/` 총량·상한·동작 — [LOG_QUOTA.md](docs/LOG_QUOTA.md)) · `arch [show|doc|limits] [--flow …]`(**`arch doc` = [OPTIMIZATION_GUIDE.md](docs/OPTIMIZATION_GUIDE.md) 재생성** · **`arch limits` = 단계별 시간 제한** — 그 단계를 끊을 수 있는 값과 어느 파일의 어느 키인지. Web 에서는 trace 의 실측 ms 밑 `≤ 제한` 과 🧭 Pipeline 단계 상세의 '시간 제한' 표가 같은 값을 쓴다 — [CONCURRENCY.md](docs/CONCURRENCY.md)) · **`optimize <id|last> [--focus quality|speed|tokens] [--out bundle.md]`**(가이드+설정+실측+지시문을 한 파일로 — LLM 에게 그대로 준다) · `graph [--provenance …]` · `entity` · `docs` · `stats` |
 | 인터페이스 | **`--version`**(= [RELEASE_NOTES.md](docs/RELEASE_NOTES.md) 맨 위 절 · `/api/status.version` · MCP serverInfo) · `serve [--port] [--host] [--insecure]` (Web UI + `POST /mcp`; 기본값은 `config.json web_host/web_port` — 바인드 기본이 **0.0.0.0**) · `mcp [--transport stdio|http --host --port] [--connect URL --token …] [--client-config [--url]] [--doctor [--check-sources]]` (기본값 `mcp_transport/mcp_host/mcp_port/mcp_url`; **`--doctor` 는 도구·스키마·플러그인·외부 소스·페더레이션·인증을 한 번에 자가 점검**) |
 | 검증 | **`python tools/verify/verify_all.py`** 한 줄로 전부 — 단위·스트레스(30명 동시)·문서정합·**CLI/Web/MCP 정렬**·**설정 UI↔파일↔서버 양방향**·CLI·Web·MCP 종단·UI 배선·브라우저·버튼·보안화면·단계 재실행·협업 다중접속·**타임아웃/실패 경로**·몽키. 결과는 `tools/verify/verify_all_result.json` 과 [VERIFICATION_0918.md §0](docs/history/2026-09-19/VERIFICATION_0918.md) 표에 **자동으로** 기록된다(손으로 옮기지 않으므로 낡지 않는다). **무엇을 고쳤을 때 무엇을 돌리나**는 [TESTING_GUIDE.md](docs/TESTING_GUIDE.md). 개별 실행: `verify_surface_align.py` **`verify_stage_align.py`**(파이프라인 **단계**가 코드·레지스트리·진행 라벨·토글/튜닝/config 네 곳에서 같은 이름인지 — [PIPELINE_PAGE.md §4.7](docs/PIPELINE_PAGE.md)) `verify_settings_sync.py` `verify_cli.py` `verify_web.py` `verify_mcp.py [--quick]` `verify_docs.py` `verify_responsive.py` `verify_timeouts.py` `verify_buttons.py` `verify_security_ui.py`([SECURITY §8.1](docs/SECURITY.md)) `verify_rerun_ui.py` `verify_monkey.py` |
 | 코퍼스 도구 | `python tools/corpus_ingest.py <경로> --out corpus/imported`(형식 없는 문서를 계약 형식으로 **무손실** 변환, `--verify-only` 로 재검증) · `python tools/fetch_rfc_corpus.py --max-mb 8`(공개 RFC 로 실데이터 코퍼스 구성) |

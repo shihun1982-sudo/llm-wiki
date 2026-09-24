@@ -156,6 +156,18 @@ def set_client(token: str, **client: Any) -> None:
             e["client"].update({k: v for k, v in client.items() if v is not None})
 
 
+def set_result(token: str, **fields: Any) -> None:
+    """끝나고 나서야 알 수 있는 식별자를 붙인다 — `request_id`(요청 프로파일) · `run_id`(로그 필터).
+
+    CLI 질의는 이것을 붙이지 않으면 원장에 남아도 **📄 프로파일·📜 로그로 갈 수 없다**
+    (실측: 완료된 질의의 10%가 링크 없는 채로 남았다 — 전부 CLI 경로였다). 2026-09-24.
+    """
+    with _LOCK:
+        e = _LIVE.get(token)
+        if e:
+            e.update({k: v for k, v in fields.items() if v})
+
+
 def set_queue(token: str, position: Optional[int], waiting: Optional[int] = None) -> None:
     """대기열 위치 표시 (None 이면 대기 종료)."""
     with _LOCK:
@@ -343,6 +355,34 @@ def cli_monitor(token: str, kind: str = "", label: str = "", enabled: bool = Tru
     enabled=False 면 bind 만 하고 출력하지 않는다(--json 등). 예외가 나면 status=error 로, 취소(Ctrl+C·서버 취소)면 cancelled 로 unbind.
     발행자(reqmgr.LiveRegistry)가 등록되어 있으면 2초마다 스냅샷을 파일로 내보내 서버 모니터가 CLI 작업도 보고 취소할 수 있게 한다."""
     bind(token, kind, label, client=dict(client or {}, origin=(client or {}).get("origin") or "cli"))
+    # 원장에도 남긴다 (2026-09-23): data/live 는 **살아 있는 동안만** 보이는 휘발성 파일이라
+    # CLI 빌드·질의가 끝나면 '진행 중 작업' 에서 사라지고 어디에도 기록이 없었다.
+    _led_tok = None
+    try:
+        from . import reqledger as _led
+        if _led.enabled():
+            cl = dict(client or {})
+            _led_tok = _led.open_(_led.new_token(), kind=kind or "cli", origin=cl.get("origin") or "cli",
+                                  user=cl.get("user") or "", role=cl.get("role") or "", label=label or kind,
+                                  client_token=token)
+    except Exception:
+        _led_tok = None
+    _t0 = time.time()
+
+    def _led_close(status: str, err: str = "") -> None:
+        if not _led_tok:
+            return
+        try:
+            from . import reqledger as _led
+            snap = get(token) or {}
+            _led.close(_led_tok, status, ms=round((time.time() - _t0) * 1000, 1), error=err,
+                       stage=snap.get("stage_label") or "",
+                       # 끝나고 나서 붙은 식별자(set_result)를 함께 닫는다 — 원장에서 프로파일·로그로 가는 열쇠다.
+                       request_id=snap.get("request_id"), run_id=snap.get("run_id"))
+            _led.flush(1.0)          # CLI 는 곧 끝나므로 디스크에 닿는 것을 보장한다
+        except Exception:
+            pass
+
     out = stream or sys.stderr
     stop = threading.Event()
     last: List[str] = [""]
@@ -389,15 +429,19 @@ def cli_monitor(token: str, kind: str = "", label: str = "", enabled: bool = Tru
         yield token
     except Cancelled as e:
         unbind("cancelled", str(e)[:200])
+        _led_close("cancelled", str(e)[:200])
         raise
     except KeyboardInterrupt:
         unbind("cancelled", "Ctrl+C")
+        _led_close("cancelled", "Ctrl+C")
         raise
     except BaseException as e:
         unbind("error", str(e)[:200])
+        _led_close("error", "%s: %s" % (type(e).__name__, str(e)[:180]))
         raise
     else:
         unbind("done")
+        _led_close("done")
     finally:
         stop.set()
         if th:

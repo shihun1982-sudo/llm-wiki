@@ -11,7 +11,7 @@
   python -m llmwiki models show|test|set <role>_<provider|model|effort>=...   (역할별 LLM / 임베딩 설정)
   python -m llmwiki requests [list [--kind query] | show <id> | last]        (요청별 프로파일/디버그 trace)
   python -m llmwiki system [--target-docs 3000 --daily-new 20]               (확장성/캐시/워처 상태)
-  python -m llmwiki maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|prune_requests
+  python -m llmwiki maintenance vacuum|fts_optimize|wal_checkpoint|clear_cache|warm_cache|refresh_doc_refs|prune_requests|cache_merge
   python -m llmwiki watch [--interval 300] [--once]                           (코퍼스 변경 감시 → 증분 빌드)
   python -m llmwiki tuning show|set k=v …|reset [k]|doc                         (단계별 튜닝 파라미터, tuning.json / docs/TUNING.md)
   python -m llmwiki arch [--flow query|build|evolve|watch]                    (구조·흐름·토글/CLI 영향 텍스트 도식)
@@ -470,6 +470,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", default=None, help="trigger: admin API 키")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("ledger", help="요청 원장 — 서버로의 **모든 요청**(거절·시간초과·중단 포함): list | show <token> | stats | prune. "
+                                      "서버가 꺼져 있어도 data/ledger 파일을 직접 읽는다 (docs/REQUEST_LEDGER.md)")
+    p.add_argument("action", choices=["list", "show", "stats", "prune"], nargs="?", default="list")
+    p.add_argument("token", nargs="?", help="show <token>")
+    p.add_argument("--status", default=None, help="쉼표로: rejected,timeout,error,cancelled,unknown,done,running,queued")
+    p.add_argument("--kind", default=None, help="query | search | mcp | cli | build | eval | http …")
+    p.add_argument("--origin", default=None, help="web | api | cli | mcp | schedule | watch")
+    p.add_argument("--user", default=None)
+    p.add_argument("--q", default=None, help="라벨·경로·오류에서 찾기")
+    p.add_argument("--min-ms", type=float, default=0.0, help="이보다 오래 걸린 것만")
+    p.add_argument("--days", type=float, default=1.0, help="stats: 집계 기간(일)")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--problems", action="store_true", help="문제만 (거절·시간초과·오류·취소·중단)")
+    p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("requests", help="요청별 프로파일/디버그 trace 조회 · `queries`/`users` 로 질의 로그(누가 무엇을 물었나)")
     p.add_argument("action", choices=["list", "show", "last", "queries", "users"], nargs="?", default="list",
                    help="list|show|last(요청 기록) · queries(질의 로그 — 사용자·창구 포함) · users(사용자별 질의 집계)")
@@ -489,7 +504,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("maintenance", help="DB 유지보수")
     p.add_argument("action", choices=["vacuum", "fts_optimize", "wal_checkpoint", "clear_cache", "warm_cache", "refresh_doc_refs",
-                                      "purge_requests", "prune_requests"])
+                                      "purge_requests", "prune_requests", "cache_merge", "cache_merge_dry",
+                                      "trim_query_log", "trim_query_log_dry"])
     p.add_argument("--yes", action="store_true", help="purge_requests: 확인 문구 생략")
     p.add_argument("--json", action="store_true")
 
@@ -1029,7 +1045,9 @@ def run(argv: Optional[List[str]] = None, settings: Optional[Settings] = None, p
     if ns.cmd in ("query", "build", "eval", "trial", "precompute", "forensic", "schedule", "fusion"):
         try:
             from . import reqmgr as _rq
-            _rq.install_cli_publisher()   # data/live 에 진행 상황 발행 → 실행 중인 서버의 모니터에서 보이고 취소할 수 있다
+            # data/live 에 진행 상황 발행 → 실행 중인 서버의 모니터에서 보이고 취소할 수 있다.
+            # **이 실행의 data_dir** 을 넘긴다 — 임시 설정으로 도는 테스트가 실제 data/ledger 를 오염시키지 않게.
+            _rq.install_cli_publisher(str(getattr(s, "data_dir", "") or ""))
         except Exception:
             pass
     preset_prev = None
@@ -1700,7 +1718,11 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             if not (ns.docs or ns.terms or ns.chunks):
                 print("기대 결과를 하나 이상 주세요: --doc <ext_id|doc_id 부분> · --term <용어> · --chunk <chunk_id>")
                 return 1
-            with _pg.cli_monitor("cli-fx-%d" % int(time.time()), "query", "forensic expect #%d" % rid, enabled=not as_json and not _CAPTURED):
+            # kind 는 'forensic' 이다 — 사용자 질의가 아니라 **이미 남은 질의를 다시 따라가는 분석**이라
+            # 질의로 세면 "완료됐는데 request_id 가 없는 질의" 로 잘못 집계된다 (2026-09-24).
+            with _pg.cli_monitor("cli-fx-%d" % int(time.time()), "forensic", "forensic expect #%d" % rid,
+                                 enabled=not as_json and not _CAPTURED) as _tok:
+                _pg.set_result(_tok, request_id=rid)      # 분석 대상 요청으로 갈 수 있게
                 rep = _fx.trace_expectation(p, rid, ns.docs, ns.terms, ns.chunks, note=ns.note, propose=ns.propose)
             _out(rep, as_json, _fx.format_expectation(rep))
             return 0 if not rep.get("error") else 1
@@ -1984,8 +2006,10 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
             print("!! --set: %s" % getattr(e, "error", e))
             return 2 if getattr(e, "status", 0) == 400 else 5
         with _pg.cli_monitor("cli-query-%d" % int(time.time()), "query", q[:80], enabled=not as_json and not _CAPTURED,
-                             client=_cli_client(ns)):
+                             client=_cli_client(ns)) as _tok:
             res, tr = p.query(q, log=not ns.no_log, overrides=ov or None)
+            # 원장 기록이 📄 요청 프로파일·📜 로그로 이어지게 식별자를 붙인다 (없으면 링크가 끊긴다).
+            _pg.set_result(_tok, request_id=res.get("request_id"), run_id=(tr or {}).get("run_id"))
         if getattr(ns, "analyze", False) and res.get("analysis") and ns.focus != "all" and res["analysis"].get("md"):
             from . import analysis as _an
             r2 = _an.analyze(p, res.get("request_id"), focus=ns.focus)
@@ -2692,6 +2716,9 @@ def _run_cmd(ns: argparse.Namespace, s: Settings, p, as_json: bool) -> int:
         print("변경: models set rerank_provider=ollama rerank_model=llama3.1 answer_model=claude-opus-5 answer_timeout_s=120 answer_retries=2 embed_provider=voyage · 정책 표: models policy · 카탈로그: models list")
         return 0
 
+    if ns.cmd == "ledger":
+        return _cmd_ledger(ns, as_json)
+
     if ns.cmd == "requests":
         from .profiler import flatten_trace
         if ns.action == "queries":
@@ -3159,6 +3186,96 @@ def _server_client(ns, p):
         except Exception as e:
             return 599, {"error": "서버에 연결할 수 없습니다 (%s): %s — serve 가 실행 중인지, --url 이 맞는지 확인" % (url, e)}
     return url, call
+
+
+def _cmd_ledger(ns, as_json: bool) -> int:
+    """요청 원장 — 파일을 직접 읽는다 (서버가 꺼져 있어도 된다. 사후 분석·포팅용).
+
+    실행 중인 서버의 것을 보려면 `server ledger` 를 쓴다 (HTTP, 권한 검사를 지난다).
+    """
+    from . import reqledger as _led, reqmgr as _rq
+    _led.configure((_rq.load_config().get("ledger")), _rq._data_dir())
+    act = ns.action
+
+    if act == "stats":
+        st = _led.stats(days=float(ns.days or 1))
+        if as_json:
+            _out(st, True)
+            return 0
+        print("요청 원장 %s" % st["dir"])
+        print("  기간 %.1f일 · 총 %d건 · 파일 %d개 · %.1f MB" % (st["days"], st["total"], st["files"], st["mb"]))
+        print("  상태: " + ", ".join("%s=%d" % kv for kv in sorted(st["by_status"].items(), key=lambda x: -x[1])))
+        print("  종류: " + ", ".join("%s=%d" % kv for kv in sorted(st["by_kind"].items(), key=lambda x: -x[1])[:8]))
+        print("  창구: " + ", ".join("%s=%d" % kv for kv in sorted(st["by_origin"].items(), key=lambda x: -x[1])[:8]))
+        w = st["writer"]
+        print("  writer: 기록 %d · 드롭 %d · 깨진 줄 %d · 오류 %d%s%s" % (
+            w["written"], w["dropped"], w.get("corrupt", 0), w["errors"],
+            ("  ← 드롭이 0이 아니면 ledger.queue_max 를 올리세요" if w["dropped"] else ""),
+            ("  ← 깨진 줄은 여러 프로세스의 쓰기가 섞인 것입니다 (원장 폴더가 네트워크 드라이브인지 확인하세요)"
+             if w.get("corrupt") else "")))
+        return 0
+
+    if act == "prune":
+        r = _led.prune()
+        _out(r, as_json, "원장 정리: %d개 삭제, %d개 유지 (%s)" % (len(r["removed"]), r["kept"], r["dir"]))
+        return 0
+
+    if act == "show":
+        if not ns.token:
+            print("show <token> 이 필요합니다 (`ledger list` 의 첫 열)")
+            return 2
+        rec = _led.one(ns.token)
+        if not rec:
+            _out({"error": "원장에 없습니다: %s" % ns.token}, as_json, "원장에 없습니다: %s" % ns.token)
+            return 1
+        if as_json:
+            _out(rec, True)
+            return 0
+        print("token   %s" % rec["token"])
+        print("상태    %s%s" % (rec.get("status"), ("  HTTP %s" % rec["http"]) if rec.get("http") else ""))
+        print("종류    %s · 창구 %s · 사용자 %s (%s)" % (rec.get("kind"), rec.get("origin"), rec.get("user"), rec.get("role") or "-"))
+        print("라벨    %s" % (rec.get("label") or ""))
+        print("시각    %s → 경과 %.3fs (대기 %s · 실행 %sms)" % (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(rec.get("opened") or 0)),
+            rec.get("elapsed_s") or 0, rec.get("queue_wait_s"), rec.get("ms")))
+        for k in ("code", "error", "stage", "request_id", "run_id", "note", "lock_mode", "limit_s"):
+            if rec.get(k) not in (None, "", 0):
+                print("%-7s %s" % (k, rec[k]))
+        print("사건")
+        for e in rec.get("events") or []:
+            print("  %s  %-6s %s" % (time.strftime("%H:%M:%S", time.localtime(e.get("ts") or 0)), e.get("ev"),
+                                     " ".join("%s=%s" % (k, v) for k, v in e.items()
+                                              if k not in ("ev", "ts", "token", "pid"))[:110]))
+        con = _led.concurrent_with(ns.token, limit=8)
+        if con:
+            print("같은 시각의 요청 (겹친 시간 순)")
+            for c in con:
+                print("  %5.1fs  %-9s %-7s %s" % (c["overlap_s"], c.get("status"), c.get("kind"), (c.get("label") or "")[:50]))
+        return 0
+
+    status = [s for s in (ns.status or "").split(",") if s]
+    if ns.problems:
+        status = ["rejected", "timeout", "error", "cancelled", "unknown"]
+    rows, total = _led.read(status=status or None, kind=ns.kind or "", origin=ns.origin or "",
+                            user=ns.user or "", q=ns.q or "", min_ms=float(ns.min_ms or 0),
+                            limit=int(ns.limit or 30))
+    if as_json:
+        _out({"rows": rows, "total": total}, True)
+        return 0
+    print("요청 원장 — %d건 중 %d건 (%s)" % (total, len(rows), _led.ledger_dir()))
+    print("%-16s %-8s %-9s %-7s %-10s %8s %8s  %s" % ("시각", "상태", "종류", "창구", "사용자", "대기s", "소요ms", "라벨"))
+    for r in rows:
+        print("%-16s %-8s %-9s %-7s %-10s %8s %8s  %s" % (
+            time.strftime("%m-%d %H:%M:%S", time.localtime(r.get("opened") or 0)),
+            r.get("status") or "?", (r.get("kind") or "")[:9], (r.get("origin") or "")[:7],
+            (r.get("user") or "")[:10], r.get("queue_wait_s") if r.get("queue_wait_s") is not None else "-",
+            round(float(r.get("ms") or 0)) if r.get("ms") is not None else "-",
+            ((r.get("code") + " ") if r.get("code") else "") + (r.get("label") or "")[:48]))
+    if not rows:
+        print("  (없음)  — `ledger stats` 로 원장이 켜져 있는지 확인하세요")
+    else:
+        print("\n한 건 자세히: python -m llmwiki ledger show %s" % rows[0]["token"])
+    return 0
 
 
 def _cmd_server(ns, p, as_json: bool) -> int:

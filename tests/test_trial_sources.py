@@ -72,21 +72,26 @@ class _Base(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def logq(self, q, feedback=None):
+        # 2026-09-23: 질의 이력의 원천이 query_log → requests(kind='query') 로 바뀌었다.
+        # 질의 결과의 `query_id` 가 곧 request id 이므로 그것으로 피드백을 단다.
         r = self.p.query(q, log=True)
-        qid = None
-        try:
-            qid = self.p.store.conn.execute("SELECT MAX(id) FROM query_log").fetchone()[0]
-        except Exception:
-            pass
+        qid = (r[0] or {}).get("query_id")
         if feedback is not None and qid:
-            self.p.store.set_feedback(qid, feedback, "")
+            self.p.store.set_feedback(int(qid), feedback, "")
         return r
+
+    def clear_history(self):
+        """질의 이력을 비운다 (테스트 격리). 원천이 requests 이므로 그쪽도 함께 비운다."""
+        c = self.p.store.conn
+        c.execute("DELETE FROM query_log")
+        c.execute("DELETE FROM requests WHERE kind='query'")
+        c.execute("DELETE FROM query_feedback")
+        c.commit()
 
 
 class FromQueryLogTest(_Base):
     def setUp(self):
-        self.p.store.conn.execute("DELETE FROM query_log")
-        self.p.store.conn.commit()
+        self.clear_history()
 
     def test_takes_questions_from_the_log(self):
         self.logq("RX DMA underrun 원인")
@@ -107,7 +112,10 @@ class FromQueryLogTest(_Base):
 
     def test_old_queries_are_excluded_by_days(self):
         self.logq("RX DMA underrun 원인")
-        self.p.store.conn.execute("UPDATE query_log SET ts=?", (time.time() - 40 * 86400,))
+        # 이력의 원천이 requests 이므로 그쪽 시각을 옮긴다 (2026-09-23)
+        old = time.time() - 40 * 86400
+        self.p.store.conn.execute("UPDATE requests SET ts=? WHERE kind='query'", (old,))
+        self.p.store.conn.execute("UPDATE query_log SET ts=?", (old,))
         self.p.store.conn.commit()
         self.assertEqual(E.from_query_log(self.p.store, days=7, limit=10)["questions"], [])
         self.assertTrue(E.from_query_log(self.p.store, days=90, limit=10)["questions"])

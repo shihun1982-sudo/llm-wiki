@@ -201,13 +201,20 @@ TOOLS: List[Dict[str, Any]] = [
                                                     "wiki_query 는 external_rag 토글이 켜져 있으면 이 결과를 fts/vector/graph 와 함께 융합한다.",
      "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "source": {"type": "string", "description": "소스 이름 (생략=retrieve 매핑이 있는 모든 소스)"},
                                                       "k": {"type": "integer", "default": 5}}, "required": ["query"]}},
-    {"name": "wiki_requests", "description": "이 서버에서 지난 요청(질의·검색·빌드) 목록과 그때의 답을 찾는다. "
+    {"name": "wiki_requests", "description": "이 서버에서 지난 요청 목록과 그때의 답을 찾는다. "
                                              "\"전에 이거 물어본 적 있나?\" 를 확인하거나, 같은 질문을 다시 돌리지 않고 그때 답을 그대로 가져올 때 쓴다. "
-                                             "request_id 를 주면 그 한 건의 저장된 답변·근거 요약을, 주지 않으면 최근 목록을 돌려준다.",
+                                             "source=profile(기본)은 **성공한 요청의 그때 그 답**(requests 테이블) — request_id 로 한 건, 생략하면 최근 목록. "
+                                             "source=ledger 는 **요청 원장**: 서버로 들어온 모든 요청의 수명으로, 거절(429/503)·시간초과·취소·중단처럼 "
+                                             "답이 없어서 profile 에는 남지 않는 것까지 보인다 — \"왜 실패했나 / 왜 기록이 없나\" 를 볼 때 쓴다. "
+                                             "status 로 거르고(rejected,timeout,error,cancelled,unknown), token 을 주면 그 한 건의 사건 타임라인을 돌려준다.",
      "inputSchema": {"type": "object", "properties": {
-         "request_id": {"type": "integer", "description": "한 건 상세 (생략하면 목록)"},
-         "q": {"type": "string", "description": "요약 문자열로 걸러 찾기"},
-         "kind": {"type": "string", "enum": ["query", "search", "build", "eval"], "description": "종류로 걸러 찾기"},
+         "source": {"type": "string", "enum": ["profile", "ledger"], "default": "profile"},
+         "request_id": {"type": "integer", "description": "profile: 한 건 상세 (생략하면 목록)"},
+         "token": {"type": "string", "description": "ledger: 한 건 상세 (생략하면 목록)"},
+         "status": {"type": "string", "description": "ledger: 쉼표로 (rejected,timeout,error,cancelled,unknown,done,running,queued)"},
+         "user": {"type": "string", "description": "ledger: 이 사용자의 요청만"},
+         "q": {"type": "string", "description": "요약·라벨 문자열로 걸러 찾기"},
+         "kind": {"type": "string", "description": "종류로 걸러 찾기 (query | search | build | eval | mcp | cli | http …)"},
          "limit": {"type": "integer", "default": 20}}}},
     {"name": "wiki_rerun", "description": "지난 질의를 **특정 단계부터** 다시 실행한다 (docs/RERUN.md). 저장해 둔 중간 결과로 앞 단계는 재생하고 "
                                           "고른 지점부터만 지금 설정으로 다시 계산하므로, 답변 프롬프트나 검증 임계값만 바꿔 볼 때 훨씬 빠르고 "
@@ -934,6 +941,31 @@ def call_tool(pipe, name: str, args: Dict[str, Any], federate: bool = True) -> D
                 admin=((pipe.actor or {}).get("role") == "admin"))
         return _text(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     if name == "wiki_requests":
+        # source=ledger: 요청 **원장**(거절·시간초과·취소·중단 포함, docs/REQUEST_LEDGER.md).
+        # profile(기본)은 requests 테이블 — 성공한 요청의 '그때 그 답'. 도구를 늘리지 않고 같은 도구에 원천을 더한다:
+        # 붙은 LLM 이 던지는 질문("전에 물어본 적 있나" / "왜 실패했나")이 한 도구 안에서 답이 되게.
+        if str(args.get("source") or "profile").lower() == "ledger":
+            from . import reqledger as _led
+            tok = str(args.get("token") or "")
+            if tok:
+                rec = _led.one(tok)
+                if not rec:
+                    return _err("원장에 없는 요청입니다: %s" % tok)
+                out = _text(json.dumps(rec, ensure_ascii=False, indent=1, default=str))
+                out["structuredContent"] = {k: rec.get(k) for k in ("token", "status", "kind", "http", "ms", "code")}
+                return out
+            st = [s for s in str(args.get("status") or "").split(",") if s]
+            rows, total = _led.read(status=st or None, kind=str(args.get("kind") or ""),
+                                    q=str(args.get("q") or ""), user=str(args.get("user") or ""),
+                                    limit=max(1, min(int(args.get("limit") or 20), 200)))
+            brief = [{k: r.get(k) for k in ("token", "opened", "status", "kind", "origin", "user",
+                                            "label", "http", "code", "ms", "queue_wait_s", "request_id")} for r in rows]
+            out = _text(json.dumps(brief, ensure_ascii=False, indent=1, default=str))
+            # 원장 자체의 건강 상태도 함께 준다 (CLI `ledger stats`·Web 상태 줄과 같은 값).
+            # 버려지거나 깨진 줄이 있으면 목록이 완전하지 않다는 뜻이므로, 붙은 LLM 이 그것을 알아야 한다.
+            out["structuredContent"] = {"count": len(brief), "total": total, "statuses": list(_led.STATUSES),
+                                        "ledger_health": _led.health()}
+            return out
         rid = int(args.get("request_id") or 0)
         if rid:
             r = pipe.store.get_request(rid, archive_dir=pipe.s.requests_archive_dir())

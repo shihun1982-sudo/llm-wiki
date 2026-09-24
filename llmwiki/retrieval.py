@@ -252,14 +252,36 @@ def embed_query(store: Store, embedder: BaseEmbedder, query: str, cache: bool = 
         hit = store.cache_get(name, model, [sha])
         if sha in hit:
             return hit[sha], True
-    except Exception:
-        pass
+    except Exception as e:
+        _warn_cache("질의 임베딩 캐시 조회", e)
     v = embedder.embed([query])[0]
     try:
-        store.cache_put(name, model, [(sha, v)])
-    except Exception:
-        pass      # 캐시에 못 넣어도 검색은 계속된다
+        # commit=True 가 중요하다: 커밋하지 않으면 이 INSERT 가 연 트랜잭션이 **질의가 끝날 때까지**
+        # SQLite 쓰기 잠금을 쥐고, 동시에 들어온 다른 질의가 db_busy_timeout_s 만큼 막힌다 (2026-09-23).
+        store.cache_put(name, model, [(sha, v)], commit=True)
+    except Exception as e:
+        # 예전에는 `except Exception: pass` 였다. 그래서 잠금 때문에 캐시가 통째로 동작하지 않아도
+        # 로그에 한 줄도 남지 않았고, 원인을 추적할 방법이 없었다.
+        _warn_cache("질의 임베딩 캐시 저장", e)
     return v, False
+
+
+#: 캐시 경고는 한 번 나기 시작하면 매 질의마다 나므로 첫 5회만 남긴다 (원인 파악에는 그것으로 충분하다).
+_CACHE_WARNED = [0]
+
+
+def _warn_cache(what: str, e: Exception) -> None:
+    """임베딩 캐시 실패를 **조용히 넘기지 않는다** — 검색은 계속되지만 사실은 남긴다."""
+    _CACHE_WARNED[0] += 1
+    if _CACHE_WARNED[0] > 5:
+        return
+    try:
+        from . import logging_setup as _ls
+        _ls.log("warning", "%s 실패 (%d번째): %s" % (what, _CACHE_WARNED[0], str(e)[:160]), "query",
+                hint="'database is locked' 면 다른 쓰기가 잠금을 쥐고 있습니다. config.json db_busy_timeout_s 와 "
+                     "Observability 의 db_pool.uncommitted_exits 를 보세요.")
+    except Exception:
+        pass
 
 
 def vector_search(store: Store, embedder: BaseEmbedder, query: str, k: int, prof: Profiler,

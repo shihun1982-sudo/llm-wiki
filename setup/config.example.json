@@ -630,6 +630,7 @@
   "doc_acl": true
  },
  "db_busy_timeout_s": 60.0,
+ "db_synchronous": "NORMAL",
  "db_pool_size": 16,
  "_how_db_max_live_connections": "동시에 **빌려 나가 있는** SQLite 연결의 부드러운 상한 (0 = 무제한). 넘으면 db_pool_wait_timeout_s 만큼 반납을 기다렸다가, 그래도 없으면 만들어서라도 진행하고 overflow 로 셉니다 — 질의를 실패시키지 않습니다. 정상 운영에서는 걸리지 않는 값이라 차단 장치가 아니라 경보입니다: 서버 모니터의 db_pool.overflow 가 늘면 세션 누수나 과부하 — docs/CONCURRENCY.md §8.1",
  "db_max_live_connections": 64,

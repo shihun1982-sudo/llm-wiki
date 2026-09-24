@@ -60,6 +60,15 @@ CAPS = [
      "`POST /api/query/rerun` 이 실행이고 `GET /api/rerun` 은 화면이 trace 각 줄에 ⟲ 를 달 수 있게 재시작점 표와 저장된 중간 결과 유무를 준다"),
     ("지난 요청 목록·상세", "requests", "/api/requests /api/request", "wiki_requests",
      "`/api/requests` 는 목록, `/api/request?id=` 는 한 건(`brief=1` 이면 trace 를 빼고 답변 요약만). 남의 요청은 '전체 조회' 권한이 있어야 보인다"),
+    ("요청 원장 — 서버로의 **모든** 요청(거절·시간초과·취소·중단 포함)", "ledger", "/api/ledger", "wiki_requests",
+     "CLI `ledger list|show <token>|stats|prune` 은 **서버가 꺼져 있어도** data/ledger 파일을 직접 읽는다(사후 분석·포팅용), 실행 중 서버는 `server ledger`. "
+     "Web 은 Observability › 📋 요청(전체) — 진행 중 작업·요청 프로파일·질의 로그를 한 목록으로 합치고 한 건을 누르면 진행·답변·단계·로그·**같은 시각의 요청**을 한 패널에서 본다. "
+     "MCP 는 도구를 늘리지 않고 `wiki_requests(source=\"ledger\", status=…, token=…)` 으로 같은 것을 준다 — 붙은 LLM 의 질문('전에 물어봤나'/'왜 실패했나')이 한 도구에서 답이 되게. "
+     "권한은 새로 만들지 않고 기존 작업 `requests all` 을 그대로 쓴다. 설명: docs/REQUEST_LEDGER.md"),
+    ("종류(질의·검색·MCP·CLI)별 동시/대기/속도 한도", "server", "/api/admin/server", "",
+     "CLI `server limits set concurrency.classes.search.max_parallel=6 rate_limit.classes.search.per_user_per_min=90` ↔ Web Observability › 서버 모니터. "
+     "질의 상한을 전체 슬롯보다 작게 잡으면 그 차이가 **빠른 검색의 예약 슬롯**이 된다(별도 예약 설정을 만들지 않는 이유). "
+     "MCP 에는 두지 않는다 — 설정 변경은 MCP 밖이라는 기존 원칙(붙은 LLM 이 자기 한도를 바꾸게 할 수 없다)"),
     ("파라미터 스윕 (값별 단계 비교)", "sweep", "/api/sweep", "wiki_sweep", ""),
     ("규칙 사전 설명 (이 말은 어떻게 퍼지나)", "rules", "/api/query_rules/explain", "wiki_rules", "읽기 전용 explain/test 만 — 편집은 사람이 화면/CLI 에서"),
     ("그래프 진단 프로파일", "graph", "/api/graph/profile", "wiki_graph_profile", ""),

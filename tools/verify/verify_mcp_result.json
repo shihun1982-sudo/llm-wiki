@@ -1,5 +1,5 @@
 {
- "ts": "2026-09-20 21:25:09",
+ "ts": "2026-09-20 21:34:42",
  "total": 129,
  "failed": [],
  "results": [
@@ -126,12 +126,12 @@
   {
    "check": "wiki_status {}",
    "ok": true,
-   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 16898,   \"entities\": 670,   \"relatio"
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 2560,   \"entities\": 0,   \"relations\""
   },
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
    "ok": true,
-   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=11 verdict=sufficient"
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=12 verdict=sufficient"
   },
   {
    "check": "wiki_search {\"channel\": \"fts\", \"query\": \"ISSUE-200",
@@ -171,7 +171,7 @@
   {
    "check": "wiki_entity {\"name\": \"ISSUE-2001\"}",
    "ok": true,
-   "detail": "ISSUE-2001 (issue) degree=0 docs=22 문서: corpus/imported/issues/ISSUE-2001.md · DMA underrun 발생 후 PHY"
+   "detail": "not found. candidates: []"
   },
   {
    "check": "wiki_related {\"text\": \"TX 전력 제어 오동작으로 PA gain 테이블을 ",
@@ -181,12 +181,12 @@
   {
    "check": "wiki_forensic {\"expected_docs\": [\"ISSUE-2001\"]}",
    "ok": true,
-   "detail": "forensic expect — request #3923  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
+   "detail": "forensic expect — request #3925  Q: ISSUE-2001 의 원인과 수정 CL 은? 원 판정=sufficient groundedness=1.0 mode="
   },
   {
    "check": "wiki_analysis {\"focus\": \"speed\"}",
    "ok": true,
-   "detail": "# 질의 상세 분석 리포트 — request #3923  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-20 21:25:04 · ru"
+   "detail": "# 질의 상세 분석 리포트 — request #3925  > 질의: **ISSUE-2001 의 원인과 수정 CL 은?**   > 시각: 2026-09-20 21:34:39 · ru"
   },
   {
    "check": "wiki_sources {}",
@@ -206,12 +206,12 @@
   {
    "check": "wiki_requests {\"limit\": 5}",
    "ok": true,
-   "detail": "[  {   \"id\": 3924,   \"ts\": 1789907104.7421014,   \"kind\": \"search\",   \"ms\": 7.07,   \"summary\": \"relat"
+   "detail": "[  {   \"id\": 3926,   \"ts\": 1789907679.247389,   \"kind\": \"search\",   \"ms\": 6.77,   \"summary\": \"relate"
   },
   {
    "check": "wiki_requests {\"kind\": \"query\", \"limit\": 3}",
    "ok": true,
-   "detail": "[  {   \"id\": 3923,   \"ts\": 1789907104.6769483,   \"kind\": \"query\",   \"ms\": 113.84,   \"summary\": \"ISSU"
+   "detail": "[  {   \"id\": 3925,   \"ts\": 1789907679.2163253,   \"kind\": \"query\",   \"ms\": 102.5,   \"summary\": \"ISSUE"
   },
   {
    "check": "wiki_rerun {}",
@@ -221,7 +221,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_n6m0dfew\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_h51fi4m5\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -231,17 +231,17 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_n6m0dfew\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_h51fi4m5\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
    "ok": true,
-   "detail": "entities=670 suggestions=14 compare=False"
+   "detail": "entities=0 suggestions=1 compare=False"
   },
   {
    "check": "wiki_graph_profile {\"compare\": true}",
    "ok": true,
-   "detail": "entities=670 suggestions=14 compare=True"
+   "detail": "entities=0 suggestions=1 compare=True"
   },
   {
    "check": "wiki_sweep {}",
@@ -256,7 +256,7 @@
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
    "ok": true,
-   "detail": "context 12583자 refs=11"
+   "detail": "context 12867자 refs=13"
   },
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인\", \"overr",
@@ -264,14 +264,14 @@
    "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=10 verdict=sufficient"
   },
   {
-   "check": "wiki_rerun (답변부터, request_id=3927)",
+   "check": "wiki_rerun (답변부터, request_id=3929)",
    "ok": true,
-   "detail": "{  \"rerun_of\": 3927,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
+   "detail": "{  \"rerun_of\": 3929,  \"from\": \"answer_llm\",  \"replayed_stages\": [   \"time_scope\",   \"query_rules\",  "
   },
   {
    "check": "wiki_requests (한 건 상세)",
    "ok": true,
-   "detail": "{  \"id\": 3927,  \"ts\": 1789907105.3882258,  \"kind\": \"query\",  \"ms\": 55.93,  \"query\": \"ISSUE-2001 의 원인"
+   "detail": "{  \"id\": 3929,  \"ts\": 1789907679.6492672,  \"kind\": \"query\",  \"ms\": 41.71,  \"query\": \"ISSUE-2001 의 원인"
   },
   {
    "check": "wiki_sweep (last · rrf_k=[10,60] → record/compare)",
@@ -366,12 +366,12 @@
   {
    "check": "Mcp-Session-Id 발급",
    "ok": true,
-   "detail": "355d57f8e93dbacdb584af7b"
+   "detail": "75f7ee224dd8b603149fadcb"
   },
   {
    "check": "세션 유지 (같은 Mcp-Session-Id)",
    "ok": true,
-   "detail": "355d57f8e93dbacdb584af7b"
+   "detail": "75f7ee224dd8b603149fadcb"
   },
   {
    "check": "알림만 보내면 202",
@@ -401,17 +401,17 @@
   {
    "check": "API 키로 tools/list",
    "ok": true,
-   "detail": "lwk_591372…"
+   "detail": "lwk_de21de…"
   },
   {
    "check": "wiki_status {}",
    "ok": true,
-   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 16898,   \"entities\": 670,   \"relatio"
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 2560,   \"entities\": 0,   \"relations\""
   },
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
    "ok": true,
-   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=11 verdict=sufficient"
+   "detail": "(mock answer) 컨텍스트 기반 요약입니다. [C1] [C2] [ · citations=12 verdict=sufficient"
   },
   {
    "check": "wiki_search {\"channel\": \"fts\", \"query\": \"ISSUE-200",
@@ -446,7 +446,7 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"PDCCH\"}",
    "ok": true,
-   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_n6m0dfew\\query_rules.json  (related_sy"
+   "detail": "'PDCCH' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_h51fi4m5\\query_rules.json  (related_sy"
   },
   {
    "check": "wiki_rules {\"action\": \"test\", \"q\": \"PDCCH 디코딩 실패 ",
@@ -456,17 +456,17 @@
   {
    "check": "wiki_rules {\"action\": \"explain\", \"term\": \"zzz-없는-",
    "ok": true,
-   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_n6m0dfew\\query_rules.json  (relate"
+   "detail": "'zzz-없는-용어' 은(는) 어떻게 퍼지나 — C:\\Users\\user\\AppData\\Local\\Temp\\lwbtn_h51fi4m5\\query_rules.json  (relate"
   },
   {
    "check": "wiki_graph_profile {}",
    "ok": true,
-   "detail": "entities=670 suggestions=14 compare=False"
+   "detail": "entities=0 suggestions=1 compare=False"
   },
   {
    "check": "wiki_graph_profile {\"compare\": true}",
    "ok": true,
-   "detail": "entities=670 suggestions=14 compare=True"
+   "detail": "entities=0 suggestions=1 compare=True"
   },
   {
    "check": "wiki_sweep {}",
@@ -481,7 +481,7 @@
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인과 수정 CL 은",
    "ok": true,
-   "detail": "context 12583자 refs=11"
+   "detail": "context 12867자 refs=13"
   },
   {
    "check": "wiki_query {\"question\": \"ISSUE-2001 의 원인\", \"overr",
@@ -536,7 +536,7 @@
   {
    "check": "브리지 tools/call",
    "ok": true,
-   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 16898,   \"entiti"
+   "detail": "{  \"stats\": {   \"docs\": 352,   \"chunks\": 16898,   \"embeddings\": 2560,   \"entitie"
   },
   {
    "check": "브리지: 원격 인증 실패를 JSON-RPC 오류로",

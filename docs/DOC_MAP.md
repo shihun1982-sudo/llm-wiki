@@ -1,8 +1,8 @@
-﻿# DOC_MAP — 문서 지도: 무엇을 언제 읽나, 무엇을 믿나
+# DOC_MAP — 문서 지도: 무엇을 언제 읽나, 무엇을 믿나
 
 > **규칙 한 줄: `docs/` 바로 아래에 있으면 지금의 사실, `docs/history/<날짜>/` 에 있으면 그날의 사실이다.**
 >
-> 현행 문서 <!--live:docs-->43개 · 기록 <!--live:hist-->28개. 전부 읽을 필요는 없다.
+> 현행 문서 <!--live:docs-->44개 · 기록 <!--live:hist-->30개. 전부 읽을 필요는 없다.
 > 기계적 정합(링크 · 명령 · 설정 키 · API 경로 · 규모 숫자 · 레이아웃)은 `python tools/verify/verify_docs.py` 가 지킨다.
 
 ## 0. 가장 급한 사람을 위한 세 줄
@@ -117,7 +117,7 @@ docs/
 3. **새 현행 문서**는 README §0 색인이나 BRINGUP_GUIDE 에서 링크한다. **새 기록 문서**는
    [history/README.md](history/README.md) 회차 표에 줄을 더한다. 둘 다 빠지면 `verify_docs.py` 가 고아로 잡는다.
 4. **날짜를 파일 이름에 넣지 않는다** — 넣는 순간 그것은 기록이고 `history/<날짜>/` 로 가야 한다.
-5. **지금의 규모를 숫자로 쓸 거면 표시를 붙인다** — `CLI 명령 <!--live:cli-->48개` 처럼.
+5. **지금의 규모를 숫자로 쓸 거면 표시를 붙인다** — `CLI 명령 <!--live:cli-->49개` 처럼.
    화면에는 주석이 안 보이고, 코드와 어긋나면 하네스가 잡는다.
    키: `cli` · `api` · `mcp` · `tests` · `harness` · `docs`(현행 수) · `hist`(기록 수).
 6. **고친 뒤 `python tools/verify/verify_docs.py`**.
